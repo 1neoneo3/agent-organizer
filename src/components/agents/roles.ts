@@ -6,6 +6,8 @@ export const AGENT_ROLES = [
   { id: "security_reviewer", label: "Security Reviewer", color: "red", defaultSprite: 3 },
   { id: "researcher", label: "Researcher", color: "indigo", defaultSprite: 2 },
   { id: "devops", label: "DevOps", color: "orange", defaultSprite: 8 },
+  { id: "designer", label: "Designer", color: "pink", defaultSprite: 9 },
+  { id: "planner", label: "Planner", color: "teal", defaultSprite: 10 },
 ] as const;
 
 export type AgentRoleId = (typeof AGENT_ROLES)[number]["id"];
@@ -22,6 +24,8 @@ const ROLE_COLOR_CLASSES: Record<string, string> = {
   red: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
   indigo: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300",
   orange: "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300",
+  pink: "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-300",
+  teal: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-300",
 };
 
 export function getRoleColorClass(roleId: string | null): string {

@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { RuntimeContext, Agent } from "../types/runtime.js";
 import { DEFAULT_CLI_MODELS } from "../config/runtime.js";
 
-const VALID_ROLES = ["lead_engineer", "tester", "code_reviewer", "architect", "security_reviewer", "researcher", "devops"] as const;
+const VALID_ROLES = ["lead_engineer", "tester", "code_reviewer", "architect", "security_reviewer", "researcher", "devops", "designer", "planner"] as const;
 
 const CreateAgentSchema = z.object({
   name: z.string().min(1).max(100),
