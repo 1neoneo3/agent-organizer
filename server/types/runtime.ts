@@ -66,10 +66,19 @@ export interface Subtask {
   completed_at: number | null;
 }
 
+export type TaskLogKind =
+  | "stdout"
+  | "stderr"
+  | "system"
+  | "thinking"
+  | "assistant"
+  | "tool_call"
+  | "tool_result";
+
 export interface TaskLog {
   id: number;
   task_id: string;
-  kind: "stdout" | "stderr" | "system";
+  kind: TaskLogKind;
   message: string;
   created_at: number;
 }

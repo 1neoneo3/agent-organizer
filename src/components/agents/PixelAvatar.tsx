@@ -3,6 +3,7 @@
  * Each design uses a simple grid of <rect> elements rendered at
  * image-rendering: pixelated so they stay crisp at any size.
  */
+import React from "react";
 
 interface PixelAvatarProps {
   role: string | null;
@@ -204,7 +205,7 @@ const ROLE_PIXELS: Record<string, Pixel[]> = {
   devops: DEVOPS,
 };
 
-function renderPixels(pixels: Pixel[]): JSX.Element[] {
+function renderPixels(pixels: Pixel[]): React.ReactElement[] {
   return pixels.map(([x, y, color], i) => (
     <rect key={i} x={x} y={y} width={1} height={1} fill={color} />
   ));

@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
-import { parseStreamLine, type SubtaskEvent } from "./output-parser.js";
+import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
+import { classifyEvent } from "./event-classifier.js";
 import { buildTaskPrompt } from "./prompt-builder.js";
+import type { TaskLogKind } from "../types/runtime.js";
 import {
   TASK_RUN_IDLE_TIMEOUT_MS,
   TASK_RUN_HARD_TIMEOUT_MS,
@@ -84,6 +86,11 @@ export function spawnAgent(
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
 
+  // Pre-compile prepared statements (avoid re-compiling in hot data handler)
+  const insertLogStmt = db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, ?, ?)"
+  );
+
   // Timeout management
   let idleTimer = resetIdleTimer();
   const hardTimer = setTimeout(() => {
@@ -104,19 +111,48 @@ export function spawnAgent(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
 
-    // Log to file
+    // Log raw text to file
     logStream.write(text);
 
-    // Save to DB
-    db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'stdout', ?)").run(task.id, text);
+    // Classify each line and collect entries
+    const classified: Array<{ kind: TaskLogKind; message: string }> = [];
 
-    // Broadcast
-    ws.broadcast("cli_output", { task_id: task.id, kind: "stdout", message: text });
-
-    // Parse for subtasks
     for (const line of text.split("\n")) {
-      const event = parseStreamLine(agent.cli_provider, line.trim());
-      if (event) handleSubtaskEvent(db, ws, task.id, event, subtaskMap);
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Try to parse as JSON and classify
+      let obj: Record<string, unknown> | null = null;
+      try {
+        obj = JSON.parse(trimmed);
+      } catch {
+        // Not JSON — treat as plain stdout
+      }
+
+      if (obj) {
+        const event = classifyEvent(agent.cli_provider, obj);
+        if (event) {
+          classified.push({ kind: event.kind, message: event.message });
+        } else {
+          classified.push({ kind: "stdout", message: trimmed });
+        }
+
+        // Subtask parsing (reuse pre-parsed object)
+        const subtaskEvent = parseStreamLineFromObj(agent.cli_provider, obj);
+        if (subtaskEvent) handleSubtaskEvent(db, ws, task.id, subtaskEvent, subtaskMap);
+      } else {
+        classified.push({ kind: "stdout", message: trimmed });
+      }
+    }
+
+    // Persist all entries
+    for (const entry of classified) {
+      insertLogStmt.run(task.id, entry.kind, entry.message);
+    }
+
+    // Broadcast as array (consistent shape for clients)
+    if (classified.length > 0) {
+      ws.broadcast("cli_output", classified.map((e) => ({ task_id: task.id, ...e })));
     }
 
     // Check for self-review result

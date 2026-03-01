@@ -8,8 +8,27 @@ export interface SubtaskEvent {
 }
 
 /**
- * Parse a single JSON line from CLI stream output.
+ * Parse a pre-parsed JSON object from CLI stream output.
  * Returns a subtask event if detected, null otherwise.
+ */
+export function parseStreamLineFromObj(
+  provider: string,
+  obj: Record<string, unknown>
+): SubtaskEvent | null {
+  switch (provider) {
+    case "claude":
+      return parseClaudeEvent(obj);
+    case "codex":
+      return parseCodexEvent(obj);
+    case "gemini":
+      return parseGeminiEvent(obj);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Parse a raw JSON line string. Kept for backward compatibility.
  */
 export function parseStreamLine(
   provider: string,
@@ -21,17 +40,7 @@ export function parseStreamLine(
   } catch {
     return null;
   }
-
-  switch (provider) {
-    case "claude":
-      return parseClaudeEvent(obj);
-    case "codex":
-      return parseCodexEvent(obj);
-    case "gemini":
-      return parseGeminiEvent(obj);
-    default:
-      return null;
-  }
+  return parseStreamLineFromObj(provider, obj);
 }
 
 function parseClaudeEvent(obj: Record<string, unknown>): SubtaskEvent | null {
@@ -103,3 +112,4 @@ function parseGeminiEvent(obj: Record<string, unknown>): SubtaskEvent | null {
   }
   return null;
 }
+
