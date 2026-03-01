@@ -78,6 +78,20 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
 );
 
+CREATE TABLE IF NOT EXISTS directives (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  issued_by_type TEXT NOT NULL DEFAULT 'user' CHECK(issued_by_type IN ('user','agent')),
+  issued_by_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','decomposing','active','completed','cancelled')),
+  project_path TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_directives_status ON directives(status);
+
 CREATE TABLE IF NOT EXISTS api_providers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

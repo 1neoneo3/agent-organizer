@@ -14,6 +14,7 @@ export interface Agent {
   cli_reasoning_level: string | null;
   avatar_emoji: string;
   role: string | null;
+  agent_type: "worker" | "ceo";
   personality: string | null;
   status: "idle" | "working" | "offline";
   current_task_id: string | null;
@@ -33,8 +34,21 @@ export interface Task {
   task_size: "small" | "medium" | "large";
   result: string | null;
   review_count: number;
+  directive_id: string | null;
   started_at: number | null;
   completed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Directive {
+  id: string;
+  title: string;
+  content: string;
+  issued_by_type: "user" | "agent";
+  issued_by_id: string | null;
+  status: "pending" | "decomposing" | "active" | "completed" | "cancelled";
+  project_path: string | null;
   created_at: number;
   updated_at: number;
 }

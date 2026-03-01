@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { Task } from "../types/runtime.js";
+import type { Task, Directive } from "../types/runtime.js";
 
 /**
  * Build the full prompt to send to a CLI agent, including task info and skill injections.
@@ -46,6 +46,45 @@ export function buildTaskPrompt(task: Task, opts?: { selfReview?: boolean }): st
       parts.push("");
     }
   }
+
+  return parts.join("\n");
+}
+
+/**
+ * Build a prompt that instructs the AI to decompose a directive into concrete tasks.
+ * The AI must respond with a JSON array.
+ */
+export function buildDecomposePrompt(directive: Directive): string {
+  const parts: string[] = [];
+
+  parts.push("You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks.");
+  parts.push("");
+  parts.push(`# Directive: ${directive.title}`);
+  parts.push("");
+  parts.push(directive.content);
+  parts.push("");
+  if (directive.project_path) {
+    parts.push(`Project path: ${directive.project_path}`);
+    parts.push("");
+  }
+  parts.push("## Instructions");
+  parts.push("");
+  parts.push("Break this directive into 2-8 concrete tasks. Each task should be:");
+  parts.push("- Specific and actionable (a single agent can complete it)");
+  parts.push("- Small to medium in scope");
+  parts.push("- Ordered by dependency (earlier tasks first)");
+  parts.push("");
+  parts.push("Respond with ONLY a JSON array (no markdown fences, no extra text). Each element:");
+  parts.push('```');
+  parts.push(JSON.stringify({
+    title: "Task title",
+    description: "Detailed description of what to do",
+    task_size: "small | medium | large",
+    priority: "0-10 (higher = more important)",
+  }, null, 2));
+  parts.push('```');
+  parts.push("");
+  parts.push("Output the JSON array now:");
 
   return parts.join("\n");
 }
