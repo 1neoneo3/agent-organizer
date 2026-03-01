@@ -61,14 +61,14 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
                 {getRoleLabel(agent.role)}
               </span>
             )}
-            {agent.cli_model && (
-              <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate max-w-[120px]" title={agent.cli_model}>
-                ({agent.cli_model})
-              </span>
-            )}
           </span>
         )}
       </div>
+      {agent?.cli_model && (
+        <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500 truncate" title={agent.cli_model}>
+          {agent.cli_model}
+        </div>
+      )}
 
       {task.status === "inbox" && idleAgents.length > 0 && (
         <div className="mt-2 flex flex-col gap-1.5">
