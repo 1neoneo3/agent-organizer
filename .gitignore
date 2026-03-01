@@ -7,3 +7,5 @@ data/
 .env
 *.log
 tmp/
+test-results/
+playwright-report/
