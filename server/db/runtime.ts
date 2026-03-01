@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SCHEMA_SQL } from "./schema.js";
-import { DB_PATH, REVIEW_SETTINGS_DEFAULTS } from "../config/runtime.js";
+import { DB_PATH, REVIEW_SETTINGS_DEFAULTS, DEFAULT_CLI_MODELS } from "../config/runtime.js";
 
 let db: DatabaseSync | null = null;
 
@@ -19,7 +19,17 @@ export function initializeDb(): DatabaseSync {
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec(SCHEMA_SQL);
   seedDefaults(db);
+  backfillCliModels(db);
   return db;
+}
+
+function backfillCliModels(db: DatabaseSync): void {
+  const update = db.prepare(
+    "UPDATE agents SET cli_model = ? WHERE cli_provider = ? AND cli_model IS NULL"
+  );
+  for (const [provider, model] of Object.entries(DEFAULT_CLI_MODELS)) {
+    update.run(model, provider);
+  }
 }
 
 function seedDefaults(db: DatabaseSync): void {

@@ -20,6 +20,12 @@ export const WS_BATCH_INTERVALS: Record<string, number> = {
 };
 export const WS_MAX_BATCH_QUEUE = 60;
 
+export const DEFAULT_CLI_MODELS: Record<string, string> = {
+  claude: "claude-opus-4-6",
+  codex: "gpt-5.3-codex",
+  gemini: "gemini-2.5-pro",
+};
+
 export const REVIEW_SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"
   review_count: 1,
