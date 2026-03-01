@@ -1,0 +1,96 @@
+export const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  cli_provider TEXT NOT NULL DEFAULT 'claude' CHECK(cli_provider IN ('claude','codex','gemini')),
+  cli_model TEXT,
+  cli_reasoning_level TEXT,
+  avatar_emoji TEXT DEFAULT '🤖',
+  personality TEXT,
+  status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','working','offline')),
+  current_task_id TEXT,
+  stats_tasks_done INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  project_path TEXT NOT NULL UNIQUE,
+  core_goal TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT,
+  assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+  project_path TEXT,
+  status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','in_progress','self_review','pr_review','done','cancelled')),
+  priority INTEGER NOT NULL DEFAULT 0,
+  task_size TEXT NOT NULL DEFAULT 'small' CHECK(task_size IN ('small','medium','large')),
+  result TEXT,
+  review_count INTEGER NOT NULL DEFAULT 0,
+  started_at INTEGER,
+  completed_at INTEGER,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS subtasks (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','in_progress','done','blocked')),
+  assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+  blocked_reason TEXT,
+  cli_tool_use_id TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  completed_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS task_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'stdout' CHECK(kind IN ('stdout','stderr','system','thinking','assistant','tool_call','tool_result')),
+  message TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  sender_type TEXT NOT NULL CHECK(sender_type IN ('user','agent','system')),
+  sender_id TEXT,
+  content TEXT NOT NULL,
+  message_type TEXT NOT NULL DEFAULT 'chat' CHECK(message_type IN ('chat','task_assign','directive','report','status_update')),
+  task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE TABLE IF NOT EXISTS api_providers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('openai','anthropic','google','ollama','openrouter','custom')),
+  base_url TEXT,
+  api_key_enc TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(assigned_agent_id);
+CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, created_at);
+`;
