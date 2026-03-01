@@ -1,8 +1,11 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent } from "../spawner/process-manager.js";
+import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -154,6 +157,40 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       "SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ? OFFSET ?"
     ).all(req.params.id, limit, offset);
     res.json(logs);
+  });
+
+  // Terminal view: pretty-printed log file + DB logs
+  router.get("/tasks/:id/terminal", (req, res) => {
+    const maxLines = Math.min(Number(req.query.lines ?? 2000), 10000);
+    const pretty = req.query.pretty === "1";
+
+    const logPath = join("data", "logs", `${req.params.id}.log`);
+    let rawText = "";
+    let fileExists = false;
+
+    if (existsSync(logPath)) {
+      fileExists = true;
+      try {
+        rawText = readFileSync(logPath, "utf-8");
+      } catch {
+        rawText = "";
+      }
+    }
+
+    // Tail to maxLines
+    const allLines = rawText.split("\n");
+    if (allLines.length > maxLines) {
+      rawText = allLines.slice(-maxLines).join("\n");
+    }
+
+    const text = pretty ? prettyStreamJson(rawText) : rawText;
+
+    // Also fetch recent task_logs from DB for system/stderr entries
+    const taskLogs = db.prepare(
+      "SELECT kind, message, created_at FROM task_logs WHERE task_id = ? AND kind IN ('system', 'stderr') ORDER BY id DESC LIMIT 50"
+    ).all(req.params.id) as Array<{ kind: string; message: string; created_at: number }>;
+
+    res.json({ ok: true, exists: fileExists, text, task_logs: taskLogs });
   });
 
   return router;

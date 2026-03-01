@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, useMemo } from "react";
-import { fetchTaskLogs, fetchMessages } from "../../api/endpoints.js";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { fetchTaskLogs, fetchMessages, fetchTerminal } from "../../api/endpoints.js";
 import type { TaskLog, Message, WSEventType } from "../../types/index.js";
 
-type TabKey = "all" | "output" | "thinking" | "messages";
+type TabKey = "terminal" | "all" | "output" | "thinking" | "messages";
 
 interface Tab {
   key: TabKey;
@@ -11,6 +11,7 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
+  { key: "terminal", label: "Terminal", icon: ">" },
   { key: "all", label: "All", icon: "⚡" },
   { key: "output", label: "Output", icon: "📟" },
   { key: "thinking", label: "Thinking", icon: "🧠" },
@@ -145,7 +146,7 @@ function LogEntry({ log }: { log: TaskLog }) {
   );
 }
 
-function MessageEntry({ message, agents }: { message: Message; agents?: undefined }) {
+function MessageEntry({ message }: { message: Message }) {
   const isUser = message.sender_type === "user";
   const isSystem = message.sender_type === "system";
 
@@ -174,14 +175,128 @@ function MessageEntry({ message, agents }: { message: Message; agents?: undefine
   );
 }
 
+const POLL_INTERVAL = 1500;
+const PAUSE_SCROLL_THRESHOLD = 50;
+
+function TerminalView({ taskId }: { taskId: string }) {
+  const [text, setText] = useState("");
+  const [follow, setFollow] = useState(true);
+  const preRef = useRef<HTMLPreElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const doFetch = useCallback(async () => {
+    try {
+      const resp = await fetchTerminal(taskId);
+      setText(resp.text || "");
+    } catch {
+      // ignore fetch errors
+    }
+  }, [taskId]);
+
+  // Start/stop polling based on visibility
+  useEffect(() => {
+    doFetch();
+
+    const startPolling = () => {
+      if (pollRef.current) return;
+      pollRef.current = setInterval(doFetch, POLL_INTERVAL);
+    };
+
+    const stopPolling = () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+
+    startPolling();
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        doFetch();
+        startPolling();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [doFetch]);
+
+  // Auto-scroll when follow is on and text changes
+  useEffect(() => {
+    if (follow && containerRef.current) {
+      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight });
+    }
+  }, [text, follow]);
+
+  // Detect manual scroll → pause follow
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom > PAUSE_SCROLL_THRESHOLD) {
+      setFollow(false);
+    }
+  };
+
+  const resumeFollow = () => {
+    setFollow(true);
+    containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Follow/Paused indicator */}
+      <div className="flex items-center justify-end px-2 py-0.5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+        <button
+          onClick={follow ? () => setFollow(false) : resumeFollow}
+          className={`text-[10px] font-mono px-2 py-0.5 rounded transition-colors ${
+            follow
+              ? "bg-green-600 text-white"
+              : "bg-yellow-500 text-black hover:bg-yellow-400"
+          }`}
+        >
+          {follow ? "FOLLOW" : "PAUSED"}
+        </button>
+      </div>
+      {/* Terminal content */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto bg-gray-950 dark:bg-black"
+      >
+        {text ? (
+          <pre
+            ref={preRef}
+            className="text-xs leading-relaxed text-green-400 dark:text-green-300 p-3 font-mono whitespace-pre-wrap break-words m-0"
+          >
+            {text}
+          </pre>
+        ) : (
+          <div className="flex items-center justify-center h-full text-gray-500 text-xs">
+            Waiting for output...
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [activeTab, setActiveTab] = useState<TabKey>("all");
+  const [activeTab, setActiveTab] = useState<TabKey>("terminal");
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load initial logs + messages
+  // Load initial logs + messages (for non-terminal tabs)
   useEffect(() => {
     fetchTaskLogs(taskId).then((data) => {
       setLogs(data.reverse());
@@ -224,8 +339,10 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
     });
   }, [taskId, on]);
 
-  // Build filtered timeline
+  // Build filtered timeline (for non-terminal tabs)
   const timeline = useMemo((): TimelineEntry[] => {
+    if (activeTab === "terminal") return [];
+
     const entries: TimelineEntry[] = [];
 
     for (const log of logs) {
@@ -250,14 +367,14 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
     return entries;
   }, [logs, messages, activeTab]);
 
-  // Auto-scroll
+  // Auto-scroll (non-terminal tabs)
   useEffect(() => {
-    if (autoScroll && scrollRef.current) {
+    if (activeTab !== "terminal" && autoScroll && scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight });
     }
-  }, [timeline, autoScroll]);
+  }, [timeline, autoScroll, activeTab]);
 
-  // Detect manual scroll
+  // Detect manual scroll (non-terminal tabs)
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -267,7 +384,7 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
 
   // Tab counts
   const counts = useMemo(() => {
-    const c = { all: 0, output: 0, thinking: 0, messages: messages.length };
+    const c = { terminal: 0, all: 0, output: 0, thinking: 0, messages: messages.length };
     for (const log of logs) {
       const tab = classifyLog(log.kind);
       c[tab]++;
@@ -276,6 +393,8 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
     c.all += messages.length;
     return c;
   }, [logs, messages]);
+
+  const isTerminalTab = activeTab === "terminal";
 
   return (
     <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden flex flex-col h-96">
@@ -288,12 +407,14 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
               onClick={() => setActiveTab(tab.key)}
               className={`px-2 py-0.5 text-[11px] rounded transition-colors ${
                 activeTab === tab.key
-                  ? "bg-blue-600 text-white font-medium"
+                  ? tab.key === "terminal"
+                    ? "bg-gray-900 dark:bg-black text-green-400 font-mono font-medium"
+                    : "bg-blue-600 text-white font-medium"
                   : "text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
               }`}
             >
               {tab.icon} {tab.label}
-              {counts[tab.key] > 0 && (
+              {tab.key !== "terminal" && counts[tab.key] > 0 && (
                 <span className={`ml-1 text-[9px] ${activeTab === tab.key ? "opacity-75" : "opacity-50"}`}>
                   {counts[tab.key]}
                 </span>
@@ -305,7 +426,7 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
           <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono">
             {taskId.slice(0, 8)}
           </span>
-          {!autoScroll && (
+          {!isTerminalTab && !autoScroll && (
             <button
               onClick={() => {
                 setAutoScroll(true);
@@ -325,21 +446,25 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
         </div>
       </div>
 
-      {/* Timeline */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-2">
-        {timeline.length === 0 && (
-          <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-xs">
-            No activity yet
-          </div>
-        )}
-        {timeline.map((entry, i) =>
-          entry.type === "log" ? (
-            <LogEntry key={`log-${entry.data.id}`} log={entry.data} />
-          ) : (
-            <MessageEntry key={`msg-${entry.data.id}`} message={entry.data} />
-          )
-        )}
-      </div>
+      {/* Content */}
+      {isTerminalTab ? (
+        <TerminalView taskId={taskId} />
+      ) : (
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-2">
+          {timeline.length === 0 && (
+            <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-xs">
+              No activity yet
+            </div>
+          )}
+          {timeline.map((entry) =>
+            entry.type === "log" ? (
+              <LogEntry key={`log-${entry.data.id}`} log={entry.data} />
+            ) : (
+              <MessageEntry key={`msg-${entry.data.id}`} message={entry.data} />
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 }

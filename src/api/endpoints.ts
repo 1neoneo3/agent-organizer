@@ -19,6 +19,16 @@ export const stopTask = (id: string) => api.post<{ stopped: boolean }>(`/tasks/$
 export const fetchTaskLogs = (id: string, limit = 200) =>
   api.get<TaskLog[]>(`/tasks/${id}/logs?limit=${limit}`);
 
+export interface TerminalResponse {
+  ok: boolean;
+  exists: boolean;
+  text: string;
+  task_logs: Array<{ kind: string; message: string; created_at: number }>;
+}
+
+export const fetchTerminal = (id: string, lines = 2000, pretty = true) =>
+  api.get<TerminalResponse>(`/tasks/${id}/terminal?lines=${lines}&pretty=${pretty ? "1" : "0"}`);
+
 // Messages
 export const fetchMessages = (taskId?: string, limit = 50) =>
   api.get<Message[]>(taskId ? `/messages?task_id=${taskId}&limit=${limit}` : `/messages?limit=${limit}`);
