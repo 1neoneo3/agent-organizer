@@ -7,6 +7,7 @@ import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { createTask, runTask, stopTask, createAgent } from "../../api/endpoints.js";
 import { AgentForm, type AgentFormData } from "../agents/AgentForm.js";
 import { getRoleLabel } from "../agents/roles.js";
+import { PixelAvatar } from "../agents/PixelAvatar.js";
 import type { Task, Agent } from "../../types/index.js";
 import { useWebSocket } from "../../hooks/useWebSocket.js";
 
@@ -67,7 +68,7 @@ export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
                   className={`px-2 py-0.5 rounded ${a.status === "working" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"}`}
                   title={`${a.name} (${a.status})`}
                 >
-                  {a.avatar_emoji} {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}
+                  <PixelAvatar role={a.role} size={16} className="inline-block align-middle" /> {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}
                 </span>
               ))}
             </div>

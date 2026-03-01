@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { AgentForm, type AgentFormData } from "./AgentForm.js";
 import { getRoleLabel, getRoleColorClass } from "./roles.js";
+import { PixelAvatar } from "./PixelAvatar.js";
 import { createAgent, updateAgent, deleteAgent } from "../../api/endpoints.js";
 import type { Agent } from "../../types/index.js";
 
@@ -84,7 +85,7 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
               key={agent.id}
               className="bg-white dark:bg-gray-800 rounded-lg p-4 flex items-center gap-4 border border-gray-200 dark:border-gray-700"
             >
-              <span className="text-2xl">{agent.avatar_emoji}</span>
+              <PixelAvatar role={agent.role} size={36} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{agent.name}</span>
