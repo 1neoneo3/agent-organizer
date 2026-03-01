@@ -2,12 +2,13 @@ import { BrowserRouter, Routes, Route } from "react-router";
 import { AppLayout } from "./components/layout/AppLayout.js";
 import { TaskBoard } from "./components/tasks/TaskBoard.js";
 import { AgentList } from "./components/agents/AgentList.js";
+import { DirectivesPage } from "./components/directives/DirectivesPage.js";
 import { SettingsPanel } from "./components/settings/SettingsPanel.js";
 import { useAppData } from "./hooks/useAppData.js";
 import { useTheme } from "./hooks/useTheme.js";
 
 export default function App() {
-  const { agents, tasks, settings, cliStatus, loading, connected, reload } = useAppData();
+  const { agents, tasks, directives, settings, cliStatus, loading, connected, reload } = useAppData();
   const { theme, toggleTheme } = useTheme();
 
   if (loading) {
@@ -25,6 +26,10 @@ export default function App() {
           <Route
             index
             element={<TaskBoard tasks={tasks} agents={agents} onReload={reload} />}
+          />
+          <Route
+            path="directives"
+            element={<DirectivesPage directives={directives} tasks={tasks} onReload={reload} />}
           />
           <Route
             path="agents"

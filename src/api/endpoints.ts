@@ -38,6 +38,10 @@ export const sendMessage = (data: Partial<Message>) => api.post<Message>("/messa
 export const fetchSettings = () => api.get<Settings>("/settings");
 export const updateSettings = (data: Settings) => api.put<Settings>("/settings", data);
 
+// Task Feedback
+export const sendTaskFeedback = (taskId: string, content: string) =>
+  api.post<{ sent: boolean; feedback_path: string }>(`/tasks/${taskId}/feedback`, { content });
+
 // Directives
 export const fetchDirectives = (status?: string) =>
   api.get<Directive[]>(status ? `/directives?status=${status}` : "/directives");

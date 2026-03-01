@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
+import { sendTaskFeedback } from "../../api/endpoints.js";
 import type { Task, Agent, WSEventType } from "../../types/index.js";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -39,9 +40,24 @@ interface TaskDetailModalProps {
 
 export function TaskDetailModal({ task, agents, on, onClose, onRun, onStop }: TaskDetailModalProps) {
   const [showTerminal, setShowTerminal] = useState(task.status !== "inbox");
+  const [feedbackText, setFeedbackText] = useState("");
+  const [sendingFeedback, setSendingFeedback] = useState(false);
   const agent = agents.find((a) => a.id === task.assigned_agent_id);
   const idleAgents = agents.filter((a) => a.status === "idle");
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
+
+  const handleSendFeedback = async () => {
+    if (!feedbackText.trim()) return;
+    setSendingFeedback(true);
+    try {
+      await sendTaskFeedback(task.id, feedbackText.trim());
+      setFeedbackText("");
+    } catch (err) {
+      console.error("Failed to send feedback:", err);
+    } finally {
+      setSendingFeedback(false);
+    }
+  };
   const status = STATUS_LABELS[task.status] ?? { label: task.status, color: "bg-gray-600" };
   const size = SIZE_LABELS[task.task_size] ?? { label: task.task_size, color: "bg-gray-500" };
 
@@ -201,6 +217,30 @@ export function TaskDetailModal({ task, agents, on, onClose, onRun, onStop }: Ta
               </button>
             )}
           </div>
+
+          {/* CEO Feedback */}
+          {task.status === "in_progress" && (
+            <div className="mb-4">
+              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                CEO Feedback
+              </h3>
+              <div className="flex gap-2">
+                <textarea
+                  className="flex-1 bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm h-16 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  placeholder="Send feedback to the running agent..."
+                />
+                <button
+                  onClick={handleSendFeedback}
+                  disabled={!feedbackText.trim() || sendingFeedback}
+                  className="px-3 py-2 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors font-medium self-end disabled:opacity-50"
+                >
+                  {sendingFeedback ? "..." : "Send"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Terminal */}
           {showTerminal && (

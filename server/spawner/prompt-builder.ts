@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Task, Directive } from "../types/runtime.js";
@@ -45,6 +45,16 @@ export function buildTaskPrompt(task: Task, opts?: { selfReview?: boolean }): st
       parts.push(skill.content.slice(0, 500)); // truncate for prompt budget
       parts.push("");
     }
+  }
+
+  // CEO Feedback file reference
+  const feedbackPath = join("data", "feedback", `${task.id}.md`);
+  if (existsSync(feedbackPath)) {
+    parts.push("## CEO Feedback");
+    parts.push("");
+    parts.push(`There is active CEO feedback for this task. Read the file at: ${feedbackPath}`);
+    parts.push("Check this file periodically for new directives and adjust your work accordingly.");
+    parts.push("");
   }
 
   return parts.join("\n");
