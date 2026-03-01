@@ -33,14 +33,12 @@ app.use("/api", authMiddleware);
 // Routes
 app.use("/api", mountRoutes(ctx));
 
-// Serve static files from dist/ in production
-if (!IS_DEV) {
-  const distPath = resolve(__dirname, "..", "dist");
-  app.use(express.static(distPath));
-  app.get("/{*splat}", (_req, res) => {
-    res.sendFile(resolve(distPath, "index.html"));
-  });
-}
+// Serve static files from dist/ when it exists
+const distPath = resolve(__dirname, "..", "dist");
+app.use(express.static(distPath));
+app.get("/{*splat}", (_req, res) => {
+  res.sendFile(resolve(distPath, "index.html"));
+});
 
 // HTTP server
 const server = createServer(app);

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getRoleLabel, getRoleColorClass } from "../../components/agents/roles.js";
+import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
 import type { Task, Agent } from "../../types/index.js";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -54,7 +55,7 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
         )}
         {agent && (
           <span className="flex items-center gap-1">
-            {agent.avatar_emoji} {agent.name}
+            <PixelAvatar role={agent.role} size={18} /> {agent.name}
             {getRoleLabel(agent.role) && (
               <span className={`px-1 py-0.5 rounded text-[10px] font-medium ${getRoleColorClass(agent.role)}`}>
                 {getRoleLabel(agent.role)}
