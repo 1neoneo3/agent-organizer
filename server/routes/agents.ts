@@ -13,6 +13,7 @@ const CreateAgentSchema = z.object({
   cli_reasoning_level: z.string().nullish(),
   avatar_emoji: z.string().default("🤖"),
   role: z.enum(VALID_ROLES).nullish(),
+  agent_type: z.enum(["worker", "ceo"]).default("worker"),
   personality: z.string().nullish(),
 });
 
@@ -39,13 +40,13 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
 
     const id = randomUUID();
     const now = Date.now();
-    const { name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, personality } = parsed.data;
+    const { name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, agent_type, personality } = parsed.data;
     const resolvedModel = cli_model ?? DEFAULT_CLI_MODELS[cli_provider] ?? null;
 
     db.prepare(
-      `INSERT INTO agents (id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, personality, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, name, cli_provider, resolvedModel, cli_reasoning_level ?? null, avatar_emoji, role ?? null, personality ?? null, now, now);
+      `INSERT INTO agents (id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, agent_type, personality, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, name, cli_provider, resolvedModel, cli_reasoning_level ?? null, avatar_emoji, role ?? null, agent_type, personality ?? null, now, now);
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(id);
     ws.broadcast("agent_status", agent);

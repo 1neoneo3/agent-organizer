@@ -47,6 +47,11 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
         <span className={`px-1.5 py-0.5 rounded ${SIZE_BADGES[task.task_size]}`}>
           {task.task_size}
         </span>
+        {task.directive_id && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300">
+            Directive
+          </span>
+        )}
         {agent && (
           <span className="flex items-center gap-1">
             {agent.avatar_emoji} {agent.name}

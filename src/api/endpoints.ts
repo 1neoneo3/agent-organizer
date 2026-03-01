@@ -1,5 +1,5 @@
 import { api } from "./index.js";
-import type { Agent, Task, TaskLog, Message, Settings, CliStatus } from "../types/index.js";
+import type { Agent, Task, TaskLog, Message, Settings, CliStatus, Directive } from "../types/index.js";
 
 // Agents
 export const fetchAgents = () => api.get<Agent[]>("/agents");
@@ -37,6 +37,24 @@ export const sendMessage = (data: Partial<Message>) => api.post<Message>("/messa
 // Settings
 export const fetchSettings = () => api.get<Settings>("/settings");
 export const updateSettings = (data: Settings) => api.put<Settings>("/settings", data);
+
+// Task Feedback
+export const sendTaskFeedback = (taskId: string, content: string) =>
+  api.post<{ sent: boolean; feedback_path: string }>(`/tasks/${taskId}/feedback`, { content });
+
+// Directives
+export const fetchDirectives = (status?: string) =>
+  api.get<Directive[]>(status ? `/directives?status=${status}` : "/directives");
+export const createDirective = (data: { title: string; content: string; project_path?: string; auto_decompose?: boolean }) =>
+  api.post<Directive>("/directives", data);
+export const updateDirective = (id: string, data: Partial<Directive>) =>
+  api.put<Directive>(`/directives/${id}`, data);
+export const deleteDirective = (id: string) =>
+  api.delete<{ deleted: boolean }>(`/directives/${id}`);
+export const decomposeDirective = (id: string) =>
+  api.post<{ started: boolean; directive_id: string }>(`/directives/${id}/decompose`);
+export const fetchDirectiveTasks = (id: string) =>
+  api.get<Task[]>(`/directives/${id}/tasks`);
 
 // CLI Status
 export const fetchCliStatus = () => api.get<CliStatus>("/cli-status");

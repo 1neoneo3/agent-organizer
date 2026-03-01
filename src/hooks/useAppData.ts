@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { fetchAgents, fetchTasks, fetchSettings, fetchCliStatus } from "../api/endpoints.js";
+import { fetchAgents, fetchTasks, fetchSettings, fetchCliStatus, fetchDirectives } from "../api/endpoints.js";
 import { useWebSocket } from "./useWebSocket.js";
-import type { Agent, Task, Settings, CliStatus } from "../types/index.js";
+import type { Agent, Task, Directive, Settings, CliStatus } from "../types/index.js";
 
 export function useAppData() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [directives, setDirectives] = useState<Directive[]>([]);
   const [settings, setSettings] = useState<Settings>({});
   const [cliStatus, setCliStatus] = useState<CliStatus>({});
   const [loading, setLoading] = useState(true);
@@ -13,14 +14,16 @@ export function useAppData() {
 
   const reload = useCallback(async () => {
     try {
-      const [a, t, s, c] = await Promise.all([
+      const [a, t, d, s, c] = await Promise.all([
         fetchAgents(),
         fetchTasks(),
+        fetchDirectives(),
         fetchSettings(),
         fetchCliStatus(),
       ]);
       setAgents(a);
       setTasks(t);
+      setDirectives(d);
       setSettings(s);
       setCliStatus(c);
     } catch (err) {
@@ -60,9 +63,20 @@ export function useAppData() {
           return prev.map((a) => (a.id === update.id ? { ...a, ...update } : a));
         });
       }),
+      on("directive_update", (payload) => {
+        const update = payload as Partial<Directive> & { id: string };
+        setDirectives((prev) => {
+          const idx = prev.findIndex((d) => d.id === update.id);
+          if (idx === -1) {
+            void reload();
+            return prev;
+          }
+          return prev.map((d) => (d.id === update.id ? { ...d, ...update } : d));
+        });
+      }),
     ];
     return () => unsubs.forEach((fn) => fn());
   }, [on, reload]);
 
-  return { agents, tasks, settings, cliStatus, loading, connected, reload };
+  return { agents, tasks, directives, settings, cliStatus, loading, connected, reload };
 }

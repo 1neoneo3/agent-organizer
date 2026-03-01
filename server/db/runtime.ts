@@ -19,6 +19,8 @@ export function initializeDb(): DatabaseSync {
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec(SCHEMA_SQL);
   migrateAddRoleColumn(db);
+  migrateAddAgentType(db);
+  migrateAddDirectiveId(db);
   seedDefaults(db);
   backfillCliModels(db);
   return db;
@@ -28,6 +30,20 @@ function migrateAddRoleColumn(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "role")) {
     db.exec("ALTER TABLE agents ADD COLUMN role TEXT");
+  }
+}
+
+function migrateAddAgentType(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "agent_type")) {
+    db.exec("ALTER TABLE agents ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'worker' CHECK(agent_type IN ('worker','ceo'))");
+  }
+}
+
+function migrateAddDirectiveId(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "directive_id")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN directive_id TEXT REFERENCES directives(id) ON DELETE SET NULL");
   }
 }
 

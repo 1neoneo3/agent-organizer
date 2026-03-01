@@ -6,6 +6,7 @@ import { createTasksRouter } from "./tasks.js";
 import { createMessagesRouter } from "./messages.js";
 import { createSettingsRouter } from "./settings.js";
 import { createKanbanRouter } from "./integrations/kanban.js";
+import { createDirectivesRouter } from "./directives.js";
 import type { RuntimeContext } from "../types/runtime.js";
 
 export function mountRoutes(ctx: RuntimeContext): Router {
@@ -37,6 +38,7 @@ export function mountRoutes(ctx: RuntimeContext): Router {
   router.use("/", createMessagesRouter(ctx));
   router.use("/", createSettingsRouter(ctx));
   router.use("/", createKanbanRouter(ctx));
+  router.use("/", createDirectivesRouter(ctx));
 
   return router;
 }

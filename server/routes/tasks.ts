@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
@@ -191,6 +191,48 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ).all(req.params.id) as Array<{ kind: string; message: string; created_at: number }>;
 
     res.json({ ok: true, exists: fileExists, text, task_logs: taskLogs });
+  });
+
+  // CEO Feedback: send directive to an in-progress task
+  router.post("/tasks/:id/feedback", (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (task.status !== "in_progress") {
+      return res.status(409).json({ error: "task_not_in_progress", current_status: task.status });
+    }
+
+    const schema = z.object({ content: z.string().min(1) });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const { content } = parsed.data;
+    const now = Date.now();
+    const timestamp = new Date(now).toISOString();
+
+    // 1. Append to feedback file
+    const feedbackDir = join("data", "feedback");
+    mkdirSync(feedbackDir, { recursive: true });
+    const feedbackPath = join(feedbackDir, `${task.id}.md`);
+    appendFileSync(feedbackPath, `\n---\n## CEO Feedback (${timestamp})\n\n${content}\n`, "utf-8");
+
+    // 2. Save as message
+    const msgId = randomUUID();
+    db.prepare(
+      `INSERT INTO messages (id, sender_type, sender_id, content, message_type, task_id, created_at)
+       VALUES (?, 'user', NULL, ?, 'directive', ?, ?)`
+    ).run(msgId, content, task.id, now);
+
+    // 3. Add system log
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    ).run(task.id, `CEO feedback received: ${content.slice(0, 200)}`);
+
+    // 4. Broadcast
+    const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(msgId);
+    ws.broadcast("message_new", message);
+    ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: `[CEO Feedback] ${content}` });
+
+    res.json({ sent: true, feedback_path: feedbackPath });
   });
 
   return router;

@@ -7,6 +7,7 @@ export interface AgentFormData {
   cli_model: string | null;
   avatar_emoji: string;
   role: string | null;
+  agent_type: "worker" | "ceo";
   personality: string | null;
 }
 
@@ -17,6 +18,7 @@ interface AgentFormProps {
     cli_model?: string | null;
     avatar_emoji?: string;
     role?: string | null;
+    agent_type?: "worker" | "ceo";
     personality?: string | null;
   };
   onSubmit: (data: AgentFormData) => void;
@@ -30,6 +32,7 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
   const [model, setModel] = useState(initial?.cli_model ?? "");
   const [emoji, setEmoji] = useState(initial?.avatar_emoji ?? "🤖");
   const [role, setRole] = useState(initial?.role ?? "");
+  const [agentType, setAgentType] = useState<"worker" | "ceo">(initial?.agent_type ?? "worker");
   const [personality, setPersonality] = useState(initial?.personality ?? "");
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -41,6 +44,7 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
       cli_model: model.trim() || null,
       avatar_emoji: emoji,
       role: role || null,
+      agent_type: agentType,
       personality: personality.trim() || null,
     });
   };
@@ -85,6 +89,16 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
           {AGENT_ROLES.map((r) => (
             <option key={r.id} value={r.id}>{r.label}</option>
           ))}
+        </select>
+
+        <label className="text-sm text-gray-500 dark:text-gray-400">Type</label>
+        <select
+          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={agentType}
+          onChange={(e) => setAgentType(e.target.value as "worker" | "ceo")}
+        >
+          <option value="worker">Worker</option>
+          <option value="ceo">CEO</option>
         </select>
 
         <label className="text-sm text-gray-500 dark:text-gray-400">Model</label>
