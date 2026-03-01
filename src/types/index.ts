@@ -5,6 +5,7 @@ export interface Agent {
   cli_model: string | null;
   cli_reasoning_level: string | null;
   avatar_emoji: string;
+  role: string | null;
   personality: string | null;
   status: "idle" | "working" | "offline";
   current_task_id: string | null;

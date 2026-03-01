@@ -18,9 +18,17 @@ export function initializeDb(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
   db.exec(SCHEMA_SQL);
+  migrateAddRoleColumn(db);
   seedDefaults(db);
   backfillCliModels(db);
   return db;
+}
+
+function migrateAddRoleColumn(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "role")) {
+    db.exec("ALTER TABLE agents ADD COLUMN role TEXT");
+  }
 }
 
 function backfillCliModels(db: DatabaseSync): void {

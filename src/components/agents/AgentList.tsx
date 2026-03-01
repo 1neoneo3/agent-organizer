@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AgentForm, type AgentFormData } from "./AgentForm.js";
+import { getRoleLabel, getRoleColorClass } from "./roles.js";
 import { createAgent, updateAgent, deleteAgent } from "../../api/endpoints.js";
 import type { Agent } from "../../types/index.js";
 
@@ -87,6 +88,11 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{agent.name}</span>
+                  {getRoleLabel(agent.role) && (
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${getRoleColorClass(agent.role)}`}>
+                      {getRoleLabel(agent.role)}
+                    </span>
+                  )}
                   <span className={`w-2 h-2 rounded-full ${STATUS_DOTS[agent.status]}`} />
                   <span className="text-xs text-gray-500">{agent.status}</span>
                 </div>

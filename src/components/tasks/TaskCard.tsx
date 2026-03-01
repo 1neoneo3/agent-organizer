@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getRoleLabel, getRoleColorClass } from "../../components/agents/roles.js";
 import type { Task, Agent } from "../../types/index.js";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -49,6 +50,11 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
         {agent && (
           <span className="flex items-center gap-1">
             {agent.avatar_emoji} {agent.name}
+            {getRoleLabel(agent.role) && (
+              <span className={`px-1 py-0.5 rounded text-[10px] font-medium ${getRoleColorClass(agent.role)}`}>
+                {getRoleLabel(agent.role)}
+              </span>
+            )}
             {agent.cli_model && (
               <span className="text-[10px] text-gray-400 dark:text-gray-500 truncate max-w-[120px]" title={agent.cli_model}>
                 ({agent.cli_model})
@@ -71,7 +77,7 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
           >
             {idleAgents.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.avatar_emoji} {a.name}{a.cli_model ? ` (${a.cli_model})` : ""}
+                {a.avatar_emoji} {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
               </option>
             ))}
           </select>

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
+import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import type { Task, Agent, WSEventType } from "../../types/index.js";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -64,14 +65,21 @@ export function TaskDetailModal({ task, agents, on, onClose, onRun, onStop }: Ta
                 {size.label}
               </span>
               {agent && (
-                <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
-                  {agent.avatar_emoji} {agent.name}
-                  {agent.cli_model && (
-                    <span className="ml-1 text-gray-400 dark:text-gray-500" title={agent.cli_model}>
-                      ({agent.cli_model})
+                <>
+                  <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                    {agent.avatar_emoji} {agent.name}
+                    {agent.cli_model && (
+                      <span className="ml-1 text-gray-400 dark:text-gray-500" title={agent.cli_model}>
+                        ({agent.cli_model})
+                      </span>
+                    )}
+                  </span>
+                  {getRoleLabel(agent.role) && (
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${getRoleColorClass(agent.role)}`}>
+                      {getRoleLabel(agent.role)}
                     </span>
                   )}
-                </span>
+                </>
               )}
             </div>
           </div>
@@ -163,7 +171,7 @@ export function TaskDetailModal({ task, agents, on, onClose, onRun, onStop }: Ta
                 >
                   {idleAgents.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.avatar_emoji} {a.name}{a.cli_model ? ` (${a.cli_model})` : ""}
+                      {a.avatar_emoji} {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
                     </option>
                   ))}
                 </select>

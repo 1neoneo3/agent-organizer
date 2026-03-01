@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS agents (
   cli_model TEXT,
   cli_reasoning_level TEXT,
   avatar_emoji TEXT DEFAULT '🤖',
+  role TEXT,
   personality TEXT,
   status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','working','offline')),
   current_task_id TEXT,

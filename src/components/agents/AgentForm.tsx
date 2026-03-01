@@ -1,10 +1,12 @@
 import { useState } from "react";
+import { AGENT_ROLES } from "./roles.js";
 
 export interface AgentFormData {
   name: string;
   cli_provider: string;
   cli_model: string | null;
   avatar_emoji: string;
+  role: string | null;
   personality: string | null;
 }
 
@@ -14,6 +16,7 @@ interface AgentFormProps {
     cli_provider?: string;
     cli_model?: string | null;
     avatar_emoji?: string;
+    role?: string | null;
     personality?: string | null;
   };
   onSubmit: (data: AgentFormData) => void;
@@ -26,6 +29,7 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
   const [provider, setProvider] = useState(initial?.cli_provider ?? "claude");
   const [model, setModel] = useState(initial?.cli_model ?? "");
   const [emoji, setEmoji] = useState(initial?.avatar_emoji ?? "🤖");
+  const [role, setRole] = useState(initial?.role ?? "");
   const [personality, setPersonality] = useState(initial?.personality ?? "");
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -36,6 +40,7 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
       cli_provider: provider,
       cli_model: model.trim() || null,
       avatar_emoji: emoji,
+      role: role || null,
       personality: personality.trim() || null,
     });
   };
@@ -68,6 +73,18 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
           <option value="claude">Claude Code</option>
           <option value="codex">Codex CLI</option>
           <option value="gemini">Gemini CLI</option>
+        </select>
+
+        <label className="text-sm text-gray-500 dark:text-gray-400">Role</label>
+        <select
+          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+        >
+          <option value="">— None —</option>
+          {AGENT_ROLES.map((r) => (
+            <option key={r.id} value={r.id}>{r.label}</option>
+          ))}
         </select>
 
         <label className="text-sm text-gray-500 dark:text-gray-400">Model</label>
