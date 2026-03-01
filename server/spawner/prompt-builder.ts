@@ -9,6 +9,9 @@ import type { Task, Directive } from "../types/runtime.js";
 export function buildTaskPrompt(task: Task, opts?: { selfReview?: boolean }): string {
   const parts: string[] = [];
 
+  parts.push("## Language");
+  parts.push("Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.");
+  parts.push("");
   parts.push(`# Task: ${task.title}`);
   parts.push("");
   if (task.description) {
@@ -67,6 +70,9 @@ export function buildTaskPrompt(task: Task, opts?: { selfReview?: boolean }): st
 export function buildDecomposePrompt(directive: Directive): string {
   const parts: string[] = [];
 
+  parts.push("## Language");
+  parts.push("Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.");
+  parts.push("");
   parts.push("You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks.");
   parts.push("");
   parts.push(`# Directive: ${directive.title}`);
