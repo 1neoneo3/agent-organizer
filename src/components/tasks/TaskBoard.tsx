@@ -56,7 +56,7 @@ export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
   };
 
   return (
-    <div className="flex flex-col h-full gap-4">
+    <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold">Task Board</h2>
@@ -103,7 +103,7 @@ export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
         </div>
       )}
 
-      <div className="flex gap-3 flex-1 overflow-x-auto min-h-0">
+      <div className="flex gap-3 overflow-x-auto">
         {COLUMNS.map((col) => {
           const colTasks = tasks.filter((t) => t.status === col.key);
           return (
@@ -114,7 +114,7 @@ export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
                   <span className="text-xs text-gray-500">{colTasks.length}</span>
                 </div>
               </div>
-              <div className="flex flex-col gap-2 overflow-y-auto max-h-[calc(100vh-320px)]">
+              <div className="flex flex-col gap-2">
                 {colTasks.map((task) => (
                   <TaskCard
                     key={task.id}
