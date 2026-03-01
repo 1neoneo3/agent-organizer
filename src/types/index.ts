@@ -24,6 +24,8 @@ export interface Task {
   status: "inbox" | "in_progress" | "self_review" | "pr_review" | "done" | "cancelled";
   priority: number;
   task_size: "small" | "medium" | "large";
+  task_number: string | null;
+  depends_on: string | null;
   result: string | null;
   review_count: number;
   directive_id: string | null;

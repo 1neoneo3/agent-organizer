@@ -1,5 +1,6 @@
+import { useState, useEffect } from "react";
 import type { Directive, Task } from "../../types/index.js";
-import { decomposeDirective as triggerDecompose } from "../../api/endpoints.js";
+import { decomposeDirective as triggerDecompose, fetchDirectivePlan } from "../../api/endpoints.js";
 
 const STATUS_STYLES: Record<string, { label: string; color: string }> = {
   pending: { label: "Pending", color: "bg-gray-600" },
@@ -25,6 +26,27 @@ function formatTimestamp(ts: number): string {
   });
 }
 
+function parseDependsOn(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function sortByTaskNumber(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => {
+    if (a.task_number && b.task_number) return a.task_number.localeCompare(b.task_number);
+    if (a.task_number) return -1;
+    if (b.task_number) return 1;
+    return 0;
+  });
+}
+
+type TabView = "tasks" | "plan";
+
 interface DirectiveDetailModalProps {
   directive: Directive;
   tasks: Task[];
@@ -33,10 +55,26 @@ interface DirectiveDetailModalProps {
 }
 
 export function DirectiveDetailModal({ directive, tasks, onClose, onReload }: DirectiveDetailModalProps) {
-  const linkedTasks = tasks.filter((t) => t.directive_id === directive.id);
+  const linkedTasks = sortByTaskNumber(tasks.filter((t) => t.directive_id === directive.id));
   const status = STATUS_STYLES[directive.status] ?? { label: directive.status, color: "bg-gray-600" };
   const doneCount = linkedTasks.filter((t) => t.status === "done").length;
   const progress = linkedTasks.length > 0 ? Math.round((doneCount / linkedTasks.length) * 100) : 0;
+
+  const [activeTab, setActiveTab] = useState<TabView>("tasks");
+  const [planContent, setPlanContent] = useState<string | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState(false);
+
+  useEffect(() => {
+    if (activeTab === "plan" && planContent === null && !planLoading) {
+      setPlanLoading(true);
+      setPlanError(false);
+      fetchDirectivePlan(directive.id)
+        .then((res) => setPlanContent(res.content))
+        .catch(() => setPlanError(true))
+        .finally(() => setPlanLoading(false));
+    }
+  }, [activeTab, directive.id, planContent, planLoading]);
 
   const handleDecompose = async () => {
     try {
@@ -121,25 +159,75 @@ export function DirectiveDetailModal({ directive, tasks, onClose, onReload }: Di
             </div>
           )}
 
-          {/* Linked tasks */}
+          {/* Tabs: Tasks / Plan */}
           {linkedTasks.length > 0 && (
-            <div>
-              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+            <div className="mb-3 flex gap-1 border-b border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => setActiveTab("tasks")}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === "tasks" ? "border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"}`}
+              >
                 Tasks ({linkedTasks.length})
-              </h3>
-              <div className="flex flex-col gap-1.5">
-                {linkedTasks.map((t) => (
+              </button>
+              <button
+                onClick={() => setActiveTab("plan")}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === "plan" ? "border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"}`}
+              >
+                Plan
+              </button>
+            </div>
+          )}
+
+          {/* Tasks tab */}
+          {activeTab === "tasks" && linkedTasks.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {linkedTasks.map((t) => {
+                const deps = parseDependsOn(t.depends_on);
+                return (
                   <div
                     key={t.id}
                     className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-sm"
                   >
-                    <span className="text-gray-800 dark:text-gray-200 truncate mr-2">{t.title}</span>
+                    <div className="flex-1 min-w-0 mr-2">
+                      <div className="flex items-center gap-1.5">
+                        {t.task_number && (
+                          <span className="text-blue-500 font-mono text-xs font-bold shrink-0">{t.task_number}</span>
+                        )}
+                        <span className="text-gray-800 dark:text-gray-200 truncate">{t.title}</span>
+                      </div>
+                      {deps.length > 0 && (
+                        <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                          &larr; depends on: {deps.join(", ")}
+                        </div>
+                      )}
+                    </div>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-medium shrink-0 ${TASK_STATUS_COLORS[t.status] ?? "bg-gray-200 text-gray-600"}`}>
                       {t.status.replace("_", " ")}
                     </span>
                   </div>
-                ))}
-              </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Plan tab */}
+          {activeTab === "plan" && (
+            <div>
+              {planLoading && (
+                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                  <span className="animate-spin">&#9696;</span>
+                  Loading plan...
+                </div>
+              )}
+              {planError && (
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  No plan available for this directive.
+                </div>
+              )}
+              {planContent && (
+                <pre className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap bg-gray-50 dark:bg-gray-900 rounded-lg p-3 border border-gray-200 dark:border-gray-700 overflow-x-auto">
+                  {planContent}
+                </pre>
+              )}
             </div>
           )}
 

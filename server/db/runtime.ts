@@ -21,6 +21,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddRoleColumn(db);
   migrateAddAgentType(db);
   migrateAddDirectiveId(db);
+  migrateAddTaskNumbering(db);
   seedDefaults(db);
   backfillCliModels(db);
   return db;
@@ -44,6 +45,16 @@ function migrateAddDirectiveId(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "directive_id")) {
     db.exec("ALTER TABLE tasks ADD COLUMN directive_id TEXT REFERENCES directives(id) ON DELETE SET NULL");
+  }
+}
+
+function migrateAddTaskNumbering(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "task_number")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN task_number TEXT");
+  }
+  if (!cols.some((c) => c.name === "depends_on")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT");
   }
 }
 

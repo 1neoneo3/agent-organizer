@@ -55,6 +55,8 @@ export const decomposeDirective = (id: string) =>
   api.post<{ started: boolean; directive_id: string }>(`/directives/${id}/decompose`);
 export const fetchDirectiveTasks = (id: string) =>
   api.get<Task[]>(`/directives/${id}/tasks`);
+export const fetchDirectivePlan = (id: string) =>
+  api.get<{ directive_id: string; content: string }>(`/directives/${id}/plan`);
 
 // CLI Status
 export const fetchCliStatus = () => api.get<CliStatus>("/cli-status");

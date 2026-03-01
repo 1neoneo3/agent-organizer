@@ -64,8 +64,8 @@ export function buildTaskPrompt(task: Task, opts?: { selfReview?: boolean }): st
 }
 
 /**
- * Build a prompt that instructs the AI to decompose a directive into concrete tasks.
- * The AI must respond with a JSON array.
+ * Build a prompt that instructs the AI to decompose a directive into numbered tasks
+ * with dependency tracking, plus a Markdown implementation plan.
  */
 export function buildDecomposePrompt(directive: Directive): string {
   const parts: string[] = [];
@@ -73,7 +73,7 @@ export function buildDecomposePrompt(directive: Directive): string {
   parts.push("## Language");
   parts.push("Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.");
   parts.push("");
-  parts.push("You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks.");
+  parts.push("You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks with numbered IDs and dependency tracking.");
   parts.push("");
   parts.push(`# Directive: ${directive.title}`);
   parts.push("");
@@ -88,19 +88,53 @@ export function buildDecomposePrompt(directive: Directive): string {
   parts.push("Break this directive into 2-8 concrete tasks. Each task should be:");
   parts.push("- Specific and actionable (a single agent can complete it)");
   parts.push("- Small to medium in scope");
-  parts.push("- Ordered by dependency (earlier tasks first)");
+  parts.push("- Numbered sequentially (T01, T02, T03...)");
+  parts.push("- Include dependency information (which tasks must complete before this one)");
   parts.push("");
-  parts.push("Respond with ONLY a JSON array (no markdown fences, no extra text). Each element:");
-  parts.push('```');
-  parts.push(JSON.stringify({
-    title: "Task title",
-    description: "Detailed description of what to do",
-    task_size: "small | medium | large",
-    priority: "0-10 (higher = more important)",
-  }, null, 2));
-  parts.push('```');
+  parts.push("Respond with TWO sections separated by the exact line `---PLAN---`:");
   parts.push("");
-  parts.push("Output the JSON array now:");
+  parts.push("**SECTION 1**: JSON array of tasks (no markdown fences, no extra text before or after the JSON):");
+  parts.push("```");
+  parts.push(JSON.stringify([
+    {
+      task_id: "T01",
+      title: "Set up database schema",
+      description: "Detailed description of what to do",
+      task_size: "small",
+      priority: 10,
+      depends_on: [],
+    },
+    {
+      task_id: "T02",
+      title: "Implement API endpoints",
+      description: "Detailed description",
+      task_size: "medium",
+      priority: 8,
+      depends_on: ["T01"],
+    },
+  ], null, 2));
+  parts.push("```");
+  parts.push("");
+  parts.push("---PLAN---");
+  parts.push("");
+  parts.push("**SECTION 2**: Implementation plan in Markdown:");
+  parts.push("```");
+  parts.push("# Implementation Plan: {directive title}");
+  parts.push("## Overview");
+  parts.push("Brief summary of the implementation approach.");
+  parts.push("## Task Dependency Graph");
+  parts.push("Show which tasks depend on which (e.g. T01 → T02 → T03).");
+  parts.push("## Implementation Order");
+  parts.push("Recommended execution order with rationale.");
+  parts.push("## Risk Analysis");
+  parts.push("Potential risks and mitigations.");
+  parts.push("## Prerequisites");
+  parts.push("What needs to be in place before starting.");
+  parts.push("## Estimated Effort");
+  parts.push("Rough estimates per task.");
+  parts.push("```");
+  parts.push("");
+  parts.push("Output SECTION 1 (JSON) followed by ---PLAN--- followed by SECTION 2 (Markdown) now:");
 
   return parts.join("\n");
 }

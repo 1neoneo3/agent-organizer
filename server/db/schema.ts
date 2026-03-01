@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','in_progress','self_review','pr_review','done','cancelled')),
   priority INTEGER NOT NULL DEFAULT 0,
   task_size TEXT NOT NULL DEFAULT 'small' CHECK(task_size IN ('small','medium','large')),
+  task_number TEXT,
+  depends_on TEXT,
   result TEXT,
   review_count INTEGER NOT NULL DEFAULT 0,
   started_at INTEGER,

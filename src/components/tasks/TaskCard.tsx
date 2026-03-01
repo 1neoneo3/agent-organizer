@@ -38,7 +38,12 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
       onClick={() => onSelect?.(task.id)}
     >
       <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 line-clamp-2">{task.title}</h3>
+        <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 line-clamp-2">
+          {task.task_number && (
+            <span className="text-blue-500 font-mono mr-1">{task.task_number}</span>
+          )}
+          {task.title}
+        </h3>
         <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase text-white ${STATUS_COLORS[task.status] ?? "bg-gray-600"}`}>
           {task.status.replace("_", " ")}
         </span>
@@ -53,6 +58,11 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
             Directive
           </span>
         )}
+        {task.depends_on && (() => { try { const deps = JSON.parse(task.depends_on); return deps.length > 0 ? (
+          <span className="text-[10px] text-gray-400 dark:text-gray-500">
+            &larr; {deps.join(", ")}
+          </span>
+        ) : null; } catch { return null; } })()}
         {agent && (
           <span className="flex items-center gap-1">
             <PixelAvatar role={agent.role} size={18} /> {agent.name}

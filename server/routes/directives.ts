@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Directive } from "../types/runtime.js";
 import { decomposeDirective } from "../spawner/decomposer.js";
@@ -129,9 +131,19 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
     if (!directive) return res.status(404).json({ error: "not_found" });
 
     const tasks = db.prepare(
-      "SELECT * FROM tasks WHERE directive_id = ? ORDER BY priority DESC, created_at ASC"
+      "SELECT * FROM tasks WHERE directive_id = ? ORDER BY task_number ASC, priority DESC, created_at ASC"
     ).all(req.params.id);
     res.json(tasks);
+  });
+
+  // Get plan document for a directive
+  router.get("/directives/:id/plan", (req, res) => {
+    const planPath = join(process.cwd(), "data", "plans", `${req.params.id}.md`);
+    if (!existsSync(planPath)) {
+      return res.status(404).json({ error: "plan_not_found" });
+    }
+    const content = readFileSync(planPath, "utf-8");
+    res.json({ directive_id: req.params.id, content });
   });
 
   return router;
