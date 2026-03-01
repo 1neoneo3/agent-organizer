@@ -2,6 +2,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { RuntimeContext, Agent } from "../types/runtime.js";
+import { DEFAULT_CLI_MODELS } from "../config/runtime.js";
 
 const CreateAgentSchema = z.object({
   name: z.string().min(1).max(100),
@@ -36,11 +37,12 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
     const id = randomUUID();
     const now = Date.now();
     const { name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, personality } = parsed.data;
+    const resolvedModel = cli_model ?? DEFAULT_CLI_MODELS[cli_provider] ?? null;
 
     db.prepare(
       `INSERT INTO agents (id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, personality, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, name, cli_provider, cli_model ?? null, cli_reasoning_level ?? null, avatar_emoji, personality ?? null, now, now);
+    ).run(id, name, cli_provider, resolvedModel, cli_reasoning_level ?? null, avatar_emoji, personality ?? null, now, now);
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(id);
     ws.broadcast("agent_status", agent);
