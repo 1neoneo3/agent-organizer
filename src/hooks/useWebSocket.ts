@@ -4,6 +4,10 @@ import type { WSEventType } from "../types/index.js";
 
 type Listener = (payload: unknown) => void;
 
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 15000;
+const DISCONNECT_GRACE_MS = 3000;
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const listenersRef = useRef<Map<WSEventType, Set<Listener>>>(new Map());
@@ -12,6 +16,8 @@ export function useWebSocket() {
   useEffect(() => {
     let alive = true;
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let graceTimer: ReturnType<typeof setTimeout>;
+    let attempt = 0;
 
     async function connect() {
       if (!alive) return;
@@ -19,11 +25,11 @@ export function useWebSocket() {
       try {
         const ok = await bootstrapSession();
         if (!ok) {
-          reconnectTimer = setTimeout(connect, 2000);
+          scheduleReconnect();
           return;
         }
       } catch {
-        reconnectTimer = setTimeout(connect, 2000);
+        scheduleReconnect();
         return;
       }
 
@@ -33,13 +39,20 @@ export function useWebSocket() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (alive) setConnected(true);
+        if (!alive) return;
+        attempt = 0;
+        clearTimeout(graceTimer);
+        setConnected(true);
       };
 
       ws.onclose = () => {
         if (!alive) return;
-        setConnected(false);
-        reconnectTimer = setTimeout(connect, 2000);
+        // Grace period before showing "Disconnected" — allows quick reconnects
+        clearTimeout(graceTimer);
+        graceTimer = setTimeout(() => {
+          if (alive) setConnected(false);
+        }, DISCONNECT_GRACE_MS);
+        scheduleReconnect();
       };
 
       ws.onerror = () => ws.close();
@@ -47,7 +60,7 @@ export function useWebSocket() {
       ws.onmessage = (e) => {
         if (!alive) return;
         try {
-          const evt = JSON.parse(e.data);
+          const evt = JSON.parse(e.data as string);
           const listeners = listenersRef.current.get(evt.type);
           if (listeners) {
             for (const fn of listeners) fn(evt.payload);
@@ -58,11 +71,18 @@ export function useWebSocket() {
       };
     }
 
+    function scheduleReconnect() {
+      const delay = Math.min(RECONNECT_BASE_MS * Math.pow(1.5, attempt), RECONNECT_MAX_MS);
+      attempt++;
+      reconnectTimer = setTimeout(connect, delay);
+    }
+
     void connect();
 
     return () => {
       alive = false;
       clearTimeout(reconnectTimer);
+      clearTimeout(graceTimer);
       wsRef.current?.close();
     };
   }, []);

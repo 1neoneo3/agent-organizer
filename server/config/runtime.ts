@@ -1,13 +1,39 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export const PORT = Number(process.env.PORT ?? 8791);
 export const NODE_ENV = process.env.NODE_ENV ?? "development";
 export const IS_DEV = NODE_ENV === "development";
 
-export const SESSION_AUTH_TOKEN =
-  process.env.SESSION_AUTH_TOKEN && process.env.SESSION_AUTH_TOKEN !== "change-me-to-random-secret"
-    ? process.env.SESSION_AUTH_TOKEN
-    : randomBytes(32).toString("hex");
+function resolveAuthToken(): string {
+  if (process.env.SESSION_AUTH_TOKEN && process.env.SESSION_AUTH_TOKEN !== "change-me-to-random-secret") {
+    return process.env.SESSION_AUTH_TOKEN;
+  }
+
+  // Persist token to data/.session-token so it survives restarts
+  const tokenPath = resolve(__dirname, "..", "..", "data", ".session-token");
+  try {
+    const stored = readFileSync(tokenPath, "utf8").trim();
+    if (stored.length >= 32) return stored;
+  } catch {
+    // File doesn't exist yet
+  }
+
+  const token = randomBytes(32).toString("hex");
+  try {
+    mkdirSync(dirname(tokenPath), { recursive: true });
+    writeFileSync(tokenPath, token, { mode: 0o600 });
+  } catch {
+    // Fall back to ephemeral token if write fails
+  }
+  return token;
+}
+
+export const SESSION_AUTH_TOKEN = resolveAuthToken();
 
 export const DB_PATH = process.env.DB_PATH ?? "data/agent-organizer.db";
 
@@ -25,6 +51,10 @@ export const DEFAULT_CLI_MODELS: Record<string, string> = {
   codex: "gpt-5.3-codex",
   gemini: "gemini-2.5-pro",
 };
+
+export const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
+export const REDIS_ENABLED = process.env.REDIS_ENABLED !== "false";
+export const CACHE_KEY_PREFIX = "ao:";
 
 export const REVIEW_SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"
