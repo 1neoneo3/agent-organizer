@@ -81,9 +81,9 @@ export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, on
       {/* Card header: title + status */}
       <div style={{ padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "6px" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="eb-heading" style={{ fontSize: "8px", lineHeight: "1.4" }}>
+          <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--eb-text)", fontFamily: "system-ui, -apple-system, sans-serif" }}>
             {task.task_number && (
-              <span style={{ color: "var(--eb-highlight)", marginRight: "4px" }}>{task.task_number}</span>
+              <span className="eb-heading" style={{ color: "var(--eb-highlight)", marginRight: "4px", fontSize: "9px" }}>{task.task_number}</span>
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
