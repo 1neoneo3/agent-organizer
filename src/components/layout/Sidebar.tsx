@@ -43,7 +43,7 @@ const FLAVOR_COLORS: Record<Flavor, string> = {
   strawberry: "#f06888",
   banana: "#f0d848",
   peanut: "#d0a060",
-  blueberry: "#4878f0",
+  blueberry: "#60a8ff",
   plain: "#9898b0",
 };
 
