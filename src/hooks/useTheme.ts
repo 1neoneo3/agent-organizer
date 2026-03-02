@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 
-export type Flavor = "mint" | "strawberry" | "banana" | "peanut" | "plain";
+export type Flavor = "mint" | "strawberry" | "banana" | "peanut" | "blueberry" | "plain";
 export type TimeOfDay = "day" | "night";
 
-const FLAVORS: Flavor[] = ["mint", "strawberry", "banana", "peanut", "plain"];
+const FLAVORS: Flavor[] = ["mint", "strawberry", "banana", "peanut", "blueberry", "plain"];
 
 export function useTheme() {
   const [flavor, setFlavorState] = useState<Flavor>(() => {
