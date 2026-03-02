@@ -116,6 +116,9 @@ export function spawnAgent(
     child.stdin.end();
   }
 
+  // Dedup: track recent assistant messages to skip duplicates from multiple event formats
+  const recentAssistantMessages = new Set<string>();
+
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
 
@@ -183,14 +186,28 @@ export function spawnAgent(
       }
     }
 
+    // Deduplicate assistant messages (CLI emits same text in multiple event formats)
+    const deduped = classified.filter((entry) => {
+      if (entry.kind !== "assistant") return true;
+      const key = entry.message.slice(0, 500);
+      if (recentAssistantMessages.has(key)) return false;
+      recentAssistantMessages.add(key);
+      // Keep set bounded
+      if (recentAssistantMessages.size > 50) {
+        const first = recentAssistantMessages.values().next().value!;
+        recentAssistantMessages.delete(first);
+      }
+      return true;
+    });
+
     // Persist all entries
-    for (const entry of classified) {
+    for (const entry of deduped) {
       insertLogStmt.run(task.id, entry.kind, entry.message);
     }
 
     // Broadcast as array (consistent shape for clients)
-    if (classified.length > 0) {
-      ws.broadcast("cli_output", classified.map((e) => ({ task_id: task.id, ...e })));
+    if (deduped.length > 0) {
+      ws.broadcast("cli_output", deduped.map((e) => ({ task_id: task.id, ...e })));
     }
 
     // Check for self-review result
