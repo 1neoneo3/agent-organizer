@@ -181,6 +181,18 @@ export function buildTaskPrompt(
     parts.push("");
   }
 
+  // PR creation workflow (default for tasks that produce file changes)
+  parts.push("## Git Workflow");
+  parts.push("");
+  parts.push("If your work produces file changes, you MUST follow this workflow:");
+  parts.push("1. Create a new branch from main: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
+  parts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
+  parts.push("2. Make your changes and commit with conventional commit messages");
+  parts.push("3. Push the branch: `git push -u origin <branch-name>`");
+  parts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`");
+  parts.push("5. **NEVER commit directly to main**");
+  parts.push("");
+
   // Inject relevant skills
   const skills = loadSkillSnippets();
   if (skills.length > 0) {
