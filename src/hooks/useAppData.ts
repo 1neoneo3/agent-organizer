@@ -78,5 +78,5 @@ export function useAppData() {
     return () => unsubs.forEach((fn) => fn());
   }, [on, reload]);
 
-  return { agents, tasks, directives, settings, cliStatus, loading, connected, reload };
+  return { agents, tasks, directives, settings, cliStatus, loading, connected, reload, on };
 }

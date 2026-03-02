@@ -1,6 +1,15 @@
-import { useState, useEffect } from "react";
-import type { Directive, Task } from "../../types/index.js";
-import { decomposeDirective as triggerDecompose, fetchDirectivePlan } from "../../api/endpoints.js";
+import { useState, useEffect, useRef } from "react";
+import type { Directive, Task, WSEventType } from "../../types/index.js";
+import { decomposeDirective as triggerDecompose, fetchDirectivePlan, fetchDecomposeLogs } from "../../api/endpoints.js";
+import type { DecomposeLogEntry } from "../../api/endpoints.js";
+
+type WsOnFn = (type: WSEventType, fn: (payload: unknown) => void) => () => void;
+
+const LOG_KIND_COLORS: Record<string, string> = {
+  stdout: "text-green-400",
+  stderr: "text-red-400",
+  system: "text-yellow-400",
+};
 
 const STATUS_STYLES: Record<string, { label: string; color: string }> = {
   pending: { label: "Pending", color: "bg-gray-600" },
@@ -47,14 +56,65 @@ function sortByTaskNumber(tasks: Task[]): Task[] {
 
 type TabView = "tasks" | "plan";
 
+function DecomposeLogView({ directiveId, onWsEvent }: { directiveId: string; onWsEvent: WsOnFn }) {
+  const [logs, setLogs] = useState<DecomposeLogEntry[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch buffered logs on mount
+  useEffect(() => {
+    fetchDecomposeLogs(directiveId)
+      .then((buffered) => setLogs(buffered))
+      .catch(() => { /* no buffered logs */ });
+  }, [directiveId]);
+
+  // Subscribe to real-time updates
+  useEffect(() => {
+    return onWsEvent("decompose_output", (payload) => {
+      const entry = payload as DecomposeLogEntry;
+      if (entry.directive_id !== directiveId) return;
+      setLogs((prev) => {
+        const next = [...prev, entry];
+        return next.length > 500 ? next.slice(next.length - 500) : next;
+      });
+    });
+  }, [directiveId, onWsEvent]);
+
+  // Auto-scroll
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="bg-gray-900 rounded-lg p-3 font-mono text-xs leading-relaxed overflow-y-auto max-h-48 border border-gray-700"
+    >
+      {logs.length === 0 ? (
+        <div className="flex items-center gap-2 text-yellow-400">
+          <span className="animate-spin">&#9696;</span>
+          Waiting for output...
+        </div>
+      ) : (
+        logs.map((log, i) => (
+          <div key={i} className={`${LOG_KIND_COLORS[log.kind] ?? "text-gray-400"} whitespace-pre-wrap break-all`}>
+            {log.message}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 interface DirectiveDetailModalProps {
   directive: Directive;
   tasks: Task[];
   onClose: () => void;
   onReload: () => void;
+  onWsEvent: WsOnFn;
 }
 
-export function DirectiveDetailModal({ directive, tasks, onClose, onReload }: DirectiveDetailModalProps) {
+export function DirectiveDetailModal({ directive, tasks, onClose, onReload, onWsEvent }: DirectiveDetailModalProps) {
   const linkedTasks = sortByTaskNumber(tasks.filter((t) => t.directive_id === directive.id));
   const status = STATUS_STYLES[directive.status] ?? { label: directive.status, color: "bg-gray-600" };
   const doneCount = linkedTasks.filter((t) => t.status === "done").length;
@@ -232,9 +292,11 @@ export function DirectiveDetailModal({ directive, tasks, onClose, onReload }: Di
           )}
 
           {directive.status === "decomposing" && (
-            <div className="flex items-center gap-2 text-sm text-yellow-600 dark:text-yellow-400 mt-2">
-              <span className="animate-spin">&#9696;</span>
-              Decomposing directive into tasks...
+            <div className="mt-2">
+              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                Decompose Output
+              </h3>
+              <DecomposeLogView directiveId={directive.id} onWsEvent={onWsEvent} />
             </div>
           )}
         </div>

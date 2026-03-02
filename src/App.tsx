@@ -8,7 +8,7 @@ import { useAppData } from "./hooks/useAppData.js";
 import { useTheme } from "./hooks/useTheme.js";
 
 export default function App() {
-  const { agents, tasks, directives, settings, cliStatus, loading, connected, reload } = useAppData();
+  const { agents, tasks, directives, settings, cliStatus, loading, connected, reload, on } = useAppData();
   const { theme, toggleTheme } = useTheme();
 
   if (loading) {
@@ -29,7 +29,7 @@ export default function App() {
           />
           <Route
             path="directives"
-            element={<DirectivesPage directives={directives} tasks={tasks} onReload={reload} />}
+            element={<DirectivesPage directives={directives} tasks={tasks} onReload={reload} onWsEvent={on} />}
           />
           <Route
             path="agents"

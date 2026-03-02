@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Directive } from "../types/runtime.js";
-import { decomposeDirective } from "../spawner/decomposer.js";
+import { decomposeDirective, getDecomposeLogs } from "../spawner/decomposer.js";
 
 const CreateDirectiveSchema = z.object({
   title: z.string().min(1).max(500),
@@ -123,6 +123,12 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
     });
 
     res.json({ started: true, directive_id: directive.id });
+  });
+
+  // Get decompose logs (buffered) for a directive
+  router.get("/directives/:id/decompose-logs", (req, res) => {
+    const logs = getDecomposeLogs(req.params.id);
+    res.json(logs);
   });
 
   // Get tasks linked to a directive

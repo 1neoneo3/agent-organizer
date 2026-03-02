@@ -8,6 +8,36 @@ import { buildDecomposePrompt } from "./prompt-builder.js";
 import { withCliPathFallback } from "./cli-tools.js";
 
 const PLAN_SEPARATOR = "---PLAN---";
+const MAX_LOG_LINES = 500;
+
+export interface DecomposeLogEntry {
+  directive_id: string;
+  kind: "stdout" | "stderr" | "system";
+  message: string;
+  ts: number;
+}
+
+/** In-memory buffer for decompose logs, keyed by directive ID */
+const decomposeLogBuffers = new Map<string, DecomposeLogEntry[]>();
+
+export function getDecomposeLogs(directiveId: string): DecomposeLogEntry[] {
+  return decomposeLogBuffers.get(directiveId) ?? [];
+}
+
+function appendLog(directiveId: string, kind: DecomposeLogEntry["kind"], message: string): DecomposeLogEntry {
+  const entry: DecomposeLogEntry = { directive_id: directiveId, kind, message, ts: Date.now() };
+  let buf = decomposeLogBuffers.get(directiveId);
+  if (!buf) {
+    buf = [];
+    decomposeLogBuffers.set(directiveId, buf);
+  }
+  buf.push(entry);
+  // Trim oldest entries if over limit
+  if (buf.length > MAX_LOG_LINES) {
+    buf.splice(0, buf.length - MAX_LOG_LINES);
+  }
+  return entry;
+}
 
 const DecomposedTaskSchema = z.object({
   task_id: z.string().regex(/^T\d{2,3}$/),
@@ -42,8 +72,19 @@ export async function decomposeDirective(
   ws.broadcast("directive_update", { ...directive, status: "decomposing", updated_at: now });
 
   try {
+    // Broadcast start
+    const startEntry = appendLog(directive.id, "system", "Decomposition started");
+    ws.broadcast("decompose_output", startEntry);
+
     const prompt = buildDecomposePrompt(directive);
-    const output = await runClaudeprint(prompt, directive.project_path);
+    const output = await runClaudeprint({
+      prompt,
+      cwd: directive.project_path,
+      onChunk: (stream, text) => {
+        const entry = appendLog(directive.id, stream === "stdout" ? "stdout" : "stderr", text);
+        ws.broadcast("decompose_output", entry);
+      },
+    });
     const { tasks, plan } = parseDecomposeOutput(output);
 
     // Validate dependency references
@@ -71,23 +112,44 @@ export async function decomposeDirective(
       writeFileSync(join(planDir, `${directive.id}.md`), plan, "utf-8");
     }
 
+    // Broadcast completion
+    const doneEntry = appendLog(directive.id, "system", `Decomposition complete: ${tasks.length} tasks created`);
+    ws.broadcast("decompose_output", doneEntry);
+
     // Mark directive as active
     const finishTime = Date.now();
     db.prepare("UPDATE directives SET status = 'active', updated_at = ? WHERE id = ?").run(finishTime, directive.id);
     ws.broadcast("directive_update", { ...directive, status: "active", updated_at: finishTime });
   } catch (err) {
+    // Broadcast error
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errEntry = appendLog(directive.id, "system", `Decomposition failed: ${errMsg}`);
+    ws.broadcast("decompose_output", errEntry);
+
     // Revert to pending on failure
     const errTime = Date.now();
     db.prepare("UPDATE directives SET status = 'pending', updated_at = ? WHERE id = ?").run(errTime, directive.id);
     ws.broadcast("directive_update", { ...directive, status: "pending", updated_at: errTime });
     throw err;
+  } finally {
+    // Clean up buffer after 5 minutes
+    setTimeout(() => {
+      decomposeLogBuffers.delete(directive.id);
+    }, 5 * 60 * 1000);
   }
 }
 
 /**
- * Run claude CLI in --print mode (no interactive session, just text output).
+ * Run claude CLI in --print mode with stream-json output for real-time streaming.
+ * Parses JSONL lines: extracts text chunks for onChunk, returns final result text.
  */
-function runClaudeprint(prompt: string, cwd?: string | null): Promise<string> {
+interface RunClaudePrintOptions {
+  prompt: string;
+  cwd?: string | null;
+  onChunk?: (stream: "stdout" | "stderr", text: string) => void;
+}
+
+function runClaudeprint({ prompt, cwd, onChunk }: RunClaudePrintOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const cleanEnv = { ...process.env };
     delete cleanEnv.CLAUDECODE;
@@ -96,26 +158,83 @@ function runClaudeprint(prompt: string, cwd?: string | null): Promise<string> {
     cleanEnv.NO_COLOR = "1";
     cleanEnv.FORCE_COLOR = "0";
 
-    const child = spawn("claude", ["--print"], {
+    const child = spawn("claude", [
+      "--print", "--model", "claude-opus-4-6",
+      "--output-format", "stream-json", "--verbose",
+      "--include-partial-messages",
+      "--tools", "",
+      "--no-session-persistence",
+      "--disable-slash-commands",
+    ], {
       cwd: cwd ?? process.cwd(),
       env: cleanEnv,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
 
-    let stdout = "";
+    let resultText = "";
     let stderr = "";
+    let lineBuf = "";
+    // Track previously seen text length to emit only deltas
+    let lastSeenTextLen = 0;
+
+    // Parse each JSONL line from stdout
+    function processLine(line: string) {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const evt = JSON.parse(trimmed);
+
+        // assistant message with text content
+        // With --include-partial-messages, each event contains cumulative text.
+        // We emit only the delta (new characters since last event).
+        if (evt.type === "assistant" && evt.message?.content) {
+          for (const block of evt.message.content) {
+            if (block.type === "text" && typeof block.text === "string") {
+              const fullText = block.text;
+              if (fullText.length > lastSeenTextLen) {
+                const delta = fullText.slice(lastSeenTextLen);
+                onChunk?.("stdout", delta);
+                lastSeenTextLen = fullText.length;
+              }
+            }
+          }
+        }
+
+        // final result → capture the full text
+        if (evt.type === "result" && typeof evt.result === "string") {
+          resultText = evt.result;
+        }
+      } catch {
+        // Not valid JSON, forward raw line
+        onChunk?.("stdout", trimmed);
+      }
+    }
 
     child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString("utf8");
+      lineBuf += data.toString("utf8");
+      const lines = lineBuf.split("\n");
+      // Keep last incomplete line in buffer
+      lineBuf = lines.pop() ?? "";
+      for (const line of lines) {
+        processLine(line);
+      }
     });
+
     child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString("utf8");
+      const text = data.toString("utf8");
+      stderr += text;
+      onChunk?.("stderr", text);
     });
 
     child.on("close", (code) => {
-      if (code === 0) {
-        resolve(stdout);
+      // Process any remaining buffered line
+      if (lineBuf.trim()) processLine(lineBuf);
+
+      if (code === 0 && resultText) {
+        resolve(resultText);
+      } else if (code === 0) {
+        reject(new Error("claude --print stream-json: no result event received"));
       } else {
         reject(new Error(`claude --print exited with code ${code}: ${stderr}`));
       }
@@ -129,11 +248,11 @@ function runClaudeprint(prompt: string, cwd?: string | null): Promise<string> {
       child.stdin.end();
     }
 
-    // 2 minute timeout for decomposition
+    // 10 minute timeout for Opus 4.6 decomposition
     setTimeout(() => {
       try { child.kill("SIGTERM"); } catch { /* already dead */ }
-      reject(new Error("Decomposition timed out after 120s"));
-    }, 120_000);
+      reject(new Error("Decomposition timed out after 600s"));
+    }, 600_000);
   });
 }
 

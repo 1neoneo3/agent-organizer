@@ -21,13 +21,18 @@ function formatTimestamp(ts: number): string {
   });
 }
 
+import type { WSEventType } from "../../types/index.js";
+
+type WsOnFn = (type: WSEventType, fn: (payload: unknown) => void) => () => void;
+
 interface DirectivesPageProps {
   directives: Directive[];
   tasks: Task[];
   onReload: () => void;
+  onWsEvent: WsOnFn;
 }
 
-export function DirectivesPage({ directives, tasks, onReload }: DirectivesPageProps) {
+export function DirectivesPage({ directives, tasks, onReload, onWsEvent }: DirectivesPageProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -117,6 +122,7 @@ export function DirectivesPage({ directives, tasks, onReload }: DirectivesPagePr
           tasks={tasks}
           onClose={() => setSelectedId(null)}
           onReload={onReload}
+          onWsEvent={onWsEvent}
         />
       )}
     </div>

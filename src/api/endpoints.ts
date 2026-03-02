@@ -58,5 +58,15 @@ export const fetchDirectiveTasks = (id: string) =>
 export const fetchDirectivePlan = (id: string) =>
   api.get<{ directive_id: string; content: string }>(`/directives/${id}/plan`);
 
+export interface DecomposeLogEntry {
+  directive_id: string;
+  kind: "stdout" | "stderr" | "system";
+  message: string;
+  ts: number;
+}
+
+export const fetchDecomposeLogs = (id: string) =>
+  api.get<DecomposeLogEntry[]>(`/directives/${id}/decompose-logs`);
+
 // CLI Status
 export const fetchCliStatus = () => api.get<CliStatus>("/cli-status");

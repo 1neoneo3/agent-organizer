@@ -71,7 +71,8 @@ export type WSEventType =
   | "cli_output"
   | "subtask_update"
   | "message_new"
-  | "directive_update";
+  | "directive_update"
+  | "decompose_output";
 
 export interface WSEvent {
   type: WSEventType;
