@@ -10,7 +10,7 @@ import { useTheme } from "./hooks/useTheme.js";
 
 function AppRoutes() {
   const { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on } = useAppData();
-  const { theme, toggleTheme } = useTheme();
+  const { theme, toggleTheme, flavor, setFlavor, timeOfDay, toggleTimeOfDay, flavors } = useTheme();
   const navigate = useNavigate();
 
   const handleNavigateToTask = (taskId: string) => {
@@ -19,8 +19,8 @@ function AppRoutes() {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 text-gray-500 dark:text-gray-400">
-        Loading...
+      <div className="h-screen flex items-center justify-center" style={{ background: "var(--eb-bg)", color: "var(--eb-text-sub)" }}>
+        <span className="eb-heading" style={{ fontSize: "12px" }}>Loading...</span>
       </div>
     );
   }
@@ -28,7 +28,18 @@ function AppRoutes() {
   return (
     <>
       <Routes>
-        <Route element={<AppLayout connected={connected} theme={theme} toggleTheme={toggleTheme} />}>
+        <Route element={
+          <AppLayout
+            connected={connected}
+            theme={theme}
+            toggleTheme={toggleTheme}
+            flavor={flavor}
+            setFlavor={setFlavor}
+            timeOfDay={timeOfDay}
+            toggleTimeOfDay={toggleTimeOfDay}
+            flavors={flavors}
+          />
+        }>
           <Route
             index
             element={<TaskBoard tasks={tasks} agents={agents} interactivePrompts={interactivePrompts} onReload={reload} />}

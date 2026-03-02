@@ -2,10 +2,404 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ========================================
+   EarthBound (MOTHER 2) Design System
+   ======================================== */
+
+/* --- Flavor: Mint (default) --- */
+:root {
+  --eb-bg: #d0f0e8;
+  --eb-bg-deep: #a0d8c0;
+  --eb-border-out: #306850;
+  --eb-border-in: #58a888;
+  --eb-text: #183828;
+  --eb-text-sub: #407058;
+  --eb-highlight: #48d8a0;
+  --eb-shadow: #204838;
+  --eb-font-heading: "Press Start 2P", monospace;
+  --eb-font-body: "Silkscreen", "Press Start 2P", monospace;
+}
+
+[data-flavor="strawberry"] {
+  --eb-bg: #f8d0d8;
+  --eb-bg-deep: #e8a0b0;
+  --eb-border-out: #882848;
+  --eb-border-in: #c06080;
+  --eb-text: #381018;
+  --eb-text-sub: #884050;
+  --eb-highlight: #f06888;
+  --eb-shadow: #501828;
+}
+
+[data-flavor="banana"] {
+  --eb-bg: #f8f0c0;
+  --eb-bg-deep: #e8d888;
+  --eb-border-out: #887820;
+  --eb-border-in: #c0a840;
+  --eb-text: #383010;
+  --eb-text-sub: #887040;
+  --eb-highlight: #f0d848;
+  --eb-shadow: #504818;
+}
+
+[data-flavor="peanut"] {
+  --eb-bg: #e8d8c0;
+  --eb-bg-deep: #d0b898;
+  --eb-border-out: #785830;
+  --eb-border-in: #a88860;
+  --eb-text: #302010;
+  --eb-text-sub: #786040;
+  --eb-highlight: #d0a060;
+  --eb-shadow: #483018;
+}
+
+[data-flavor="plain"] {
+  --eb-bg: #e0e0e8;
+  --eb-bg-deep: #b8b8c8;
+  --eb-border-out: #484858;
+  --eb-border-in: #787888;
+  --eb-text: #181820;
+  --eb-text-sub: #585868;
+  --eb-highlight: #9898b0;
+  --eb-shadow: #303040;
+}
+
+/* --- Night mode overrides --- */
+.dark {
+  --eb-bg: #181828;
+  --eb-bg-deep: #101018;
+  --eb-text: #d0d0e0;
+  --eb-text-sub: #8888a0;
+}
+
+.dark[data-flavor="mint"] {
+  --eb-bg: #0c1c18;
+  --eb-bg-deep: #081410;
+  --eb-border-out: #48d8a0;
+  --eb-border-in: #306850;
+  --eb-text: #c0f0d8;
+  --eb-text-sub: #68a888;
+  --eb-highlight: #48d8a0;
+  --eb-shadow: #08100c;
+}
+
+.dark[data-flavor="strawberry"] {
+  --eb-bg: #1c0c10;
+  --eb-bg-deep: #14080c;
+  --eb-border-out: #f06888;
+  --eb-border-in: #882848;
+  --eb-text: #f0c0d0;
+  --eb-text-sub: #c06080;
+  --eb-highlight: #f06888;
+  --eb-shadow: #100810;
+}
+
+.dark[data-flavor="banana"] {
+  --eb-bg: #1c1808;
+  --eb-bg-deep: #141004;
+  --eb-border-out: #f0d848;
+  --eb-border-in: #887820;
+  --eb-text: #f0e8b8;
+  --eb-text-sub: #c0a840;
+  --eb-highlight: #f0d848;
+  --eb-shadow: #100c04;
+}
+
+.dark[data-flavor="peanut"] {
+  --eb-bg: #18100c;
+  --eb-bg-deep: #100c08;
+  --eb-border-out: #d0a060;
+  --eb-border-in: #785830;
+  --eb-text: #e8d0b8;
+  --eb-text-sub: #a88860;
+  --eb-highlight: #d0a060;
+  --eb-shadow: #0c0804;
+}
+
+.dark[data-flavor="plain"] {
+  --eb-bg: #141418;
+  --eb-bg-deep: #0c0c10;
+  --eb-border-out: #9898b0;
+  --eb-border-in: #484858;
+  --eb-text: #d0d0e0;
+  --eb-text-sub: #787888;
+  --eb-highlight: #9898b0;
+  --eb-shadow: #08080c;
+}
+
+/* ========================================
+   Base & Reset
+   ======================================== */
+
 html, body, #root {
   height: 100%;
   margin: 0;
+  font-family: var(--eb-font-body);
+  background: var(--eb-bg);
+  color: var(--eb-text);
 }
+
+/* ========================================
+   Typography
+   ======================================== */
+
+.eb-heading {
+  font-family: var(--eb-font-heading);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--eb-text);
+}
+
+.eb-body {
+  font-family: var(--eb-font-body);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--eb-text);
+}
+
+.eb-label {
+  font-family: var(--eb-font-heading);
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--eb-text-sub);
+}
+
+/* ========================================
+   EB Window Frame
+   ======================================== */
+
+.eb-window {
+  background: var(--eb-bg);
+  border: 3px solid var(--eb-border-out);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 0 0 2px var(--eb-border-in),
+    4px 4px 0 var(--eb-shadow);
+  overflow: hidden;
+}
+
+.eb-window-header {
+  font-family: var(--eb-font-heading);
+  font-size: 10px;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--eb-border-in);
+  color: var(--eb-text);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.eb-window-body {
+  background: var(--eb-bg-deep);
+  padding: 10px 12px;
+}
+
+/* ========================================
+   Buttons
+   ======================================== */
+
+.eb-btn {
+  font-family: var(--eb-font-heading);
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border: 2px solid var(--eb-border-out);
+  border-radius: 4px;
+  background: var(--eb-bg);
+  color: var(--eb-text);
+  cursor: pointer;
+  box-shadow:
+    inset 0 0 0 1px var(--eb-border-in),
+    2px 2px 0 var(--eb-shadow);
+  transition: transform 0.05s, box-shadow 0.05s;
+  white-space: nowrap;
+}
+
+.eb-btn:hover {
+  background: var(--eb-bg-deep);
+}
+
+.eb-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow:
+    inset 0 0 0 1px var(--eb-border-in),
+    0 0 0 var(--eb-shadow);
+}
+
+.eb-btn--primary {
+  background: var(--eb-border-out);
+  color: var(--eb-bg);
+  border-color: var(--eb-highlight);
+  box-shadow:
+    inset 0 0 0 1px var(--eb-border-in),
+    2px 2px 0 var(--eb-shadow);
+}
+
+.eb-btn--primary:hover {
+  background: var(--eb-highlight);
+  color: var(--eb-shadow);
+}
+
+.eb-btn--danger {
+  background: #882020;
+  color: #ffd0d0;
+  border-color: #cc4040;
+  box-shadow:
+    inset 0 0 0 1px #aa3030,
+    2px 2px 0 #401010;
+}
+
+.eb-btn--danger:hover {
+  background: #aa3030;
+}
+
+.eb-btn--danger:active {
+  transform: translate(2px, 2px);
+  box-shadow:
+    inset 0 0 0 1px #aa3030,
+    0 0 0 #401010;
+}
+
+/* ========================================
+   HP Bar
+   ======================================== */
+
+.eb-hp-bar {
+  height: 6px;
+  background: var(--eb-shadow);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--eb-border-in);
+}
+
+.eb-hp-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+  background: linear-gradient(90deg, #20c048, #60e868);
+}
+
+.eb-hp-fill--warning {
+  background: linear-gradient(90deg, #d8a020, #e8c840);
+}
+
+.eb-hp-fill--danger {
+  background: linear-gradient(90deg, #c02020, #e84040);
+}
+
+/* ========================================
+   Cursor
+   ======================================== */
+
+.eb-cursor::before {
+  content: "\25B6";
+  display: inline-block;
+  margin-right: 6px;
+  animation: eb-blink 0.6s steps(1) infinite;
+  color: var(--eb-highlight);
+  font-size: 10px;
+}
+
+@keyframes eb-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* ========================================
+   Overworld Background
+   ======================================== */
+
+.eb-overworld-bg {
+  background-color: var(--eb-bg);
+  background-image:
+    linear-gradient(45deg, var(--eb-bg-deep) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--eb-bg-deep) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--eb-bg-deep) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--eb-bg-deep) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  animation: eb-checker-scroll 4s linear infinite;
+}
+
+@keyframes eb-checker-scroll {
+  0% { background-position: 0 0, 0 10px, 10px -10px, -10px 0; }
+  100% { background-position: 20px 20px, 20px 30px, 30px 10px, 10px 20px; }
+}
+
+/* ========================================
+   Sprite Animations
+   ======================================== */
+
+.eb-sprite-idle {
+  animation: eb-idle-bob 1.2s ease-in-out infinite;
+}
+
+@keyframes eb-idle-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+.eb-sprite-working {
+  animation: eb-working-bounce 0.4s ease-in-out infinite;
+}
+
+@keyframes eb-working-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+/* ========================================
+   Form Elements (EB style)
+   ======================================== */
+
+.eb-select,
+.eb-input,
+.eb-textarea {
+  font-family: var(--eb-font-body);
+  font-size: 11px;
+  padding: 5px 8px;
+  background: var(--eb-bg-deep);
+  color: var(--eb-text);
+  border: 2px solid var(--eb-border-in);
+  border-radius: 4px;
+  outline: none;
+}
+
+.eb-select:focus,
+.eb-input:focus,
+.eb-textarea:focus {
+  border-color: var(--eb-highlight);
+  box-shadow: 0 0 0 1px var(--eb-highlight);
+}
+
+/* ========================================
+   Flavor Swatch
+   ======================================== */
+
+.eb-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid var(--eb-border-in);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.eb-swatch:hover {
+  transform: scale(1.15);
+}
+
+.eb-swatch--active {
+  border-color: var(--eb-highlight);
+  box-shadow: 0 0 0 2px var(--eb-highlight);
+  transform: scale(1.15);
+}
+
+/* ========================================
+   Utility: Existing animations
+   ======================================== */
 
 @keyframes slide-in {
   from {
