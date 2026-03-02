@@ -450,3 +450,77 @@ html, body, #root {
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+/* ========================================
+   Office page: agent transition animations
+   ======================================== */
+
+/* Agent sits down at desk (task started) */
+@keyframes office-enter-desk {
+  0% {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.9);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(2px) scale(1.02);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+.office-enter-desk {
+  animation: office-enter-desk 0.5s ease-out;
+}
+
+/* Agent leaves desk (task completed / went idle) */
+@keyframes office-leave-desk {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+  100% {
+    opacity: 0.7;
+    transform: translateY(6px);
+  }
+}
+.office-leave-desk {
+  animation: office-leave-desk 0.5s ease-in forwards;
+}
+
+/* Agent goes offline */
+@keyframes office-go-offline {
+  0% {
+    opacity: 1;
+    filter: saturate(1);
+  }
+  100% {
+    opacity: 0.5;
+    filter: saturate(0.3);
+  }
+}
+.office-go-offline {
+  animation: office-go-offline 0.6s ease-out forwards;
+}
+
+/* Agent comes back online */
+@keyframes office-come-online {
+  0% {
+    opacity: 0.5;
+    filter: saturate(0.3);
+  }
+  50% {
+    filter: saturate(1.3);
+  }
+  100% {
+    opacity: 1;
+    filter: saturate(1);
+  }
+}
+.office-come-online {
+  animation: office-come-online 0.6s ease-out;
+}

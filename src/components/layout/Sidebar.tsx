@@ -34,6 +34,7 @@ type NavItem = { to: string; label: string; rpgLabel: string; icon: ReactNode };
 const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Tasks", rpgLabel: "QUESTS", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>Q</span> },
   { to: "/directives", label: "Directives", rpgLabel: "ORDERS", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>O</span> },
+  { to: "/office", label: "Office", rpgLabel: "OFFICE", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>F</span> },
   { to: "/agents", label: "Agents", rpgLabel: "PARTY", icon: <PixelHuman /> },
   { to: "/settings", label: "Settings", rpgLabel: "CONFIG", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>C</span> },
 ];

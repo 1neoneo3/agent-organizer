@@ -3,6 +3,7 @@ import { AppLayout } from "./components/layout/AppLayout.js";
 import { TaskBoard } from "./components/tasks/TaskBoard.js";
 import { AgentList } from "./components/agents/AgentList.js";
 import { DirectivesPage } from "./components/directives/DirectivesPage.js";
+import { OfficePage } from "./components/office/OfficePage.js";
 import { SettingsPanel } from "./components/settings/SettingsPanel.js";
 import { InteractivePromptToast } from "./components/layout/InteractivePromptToast.js";
 import { useAppData } from "./hooks/useAppData.js";
@@ -47,6 +48,10 @@ function AppRoutes() {
           <Route
             path="directives"
             element={<DirectivesPage directives={directives} tasks={tasks} onReload={reload} onWsEvent={on} />}
+          />
+          <Route
+            path="office"
+            element={<OfficePage agents={agents} tasks={tasks} on={on} />}
           />
           <Route
             path="agents"
