@@ -22,9 +22,9 @@ export function withCliPathFallback(currentPath: string): string {
 
 export function buildAgentArgs(
   provider: string,
-  opts?: { model?: string; reasoningLevel?: string; noTools?: boolean }
+  opts?: { model?: string; reasoningLevel?: string; noTools?: boolean; resumeSessionId?: string }
 ): string[] {
-  const { model, reasoningLevel, noTools } = opts ?? {};
+  const { model, reasoningLevel, noTools, resumeSessionId } = opts ?? {};
 
   switch (provider) {
     case "claude": {
@@ -37,6 +37,7 @@ export function buildAgentArgs(
         "--max-turns",
         "200",
       ];
+      if (resumeSessionId) args.push("--resume", resumeSessionId);
       if (model) args.push("--model", model);
       return args;
     }

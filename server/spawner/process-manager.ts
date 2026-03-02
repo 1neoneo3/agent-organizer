@@ -17,31 +17,60 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
+const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
+const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 
 export function getActiveProcesses(): Map<string, ChildProcess> {
   return activeProcesses;
+}
+
+export function getCapturedSessionId(taskId: string): string | undefined {
+  return capturedSessionIds.get(taskId);
+}
+
+/** Queue feedback for a running task: kills the process and respawns with --resume */
+export function queueFeedbackAndRestart(taskId: string, message: string, previousStatus: string): boolean {
+  const child = activeProcesses.get(taskId);
+  if (!child) return false;
+
+  pendingFeedback.set(taskId, { message, previousStatus });
+
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // already dead
+  }
+
+  return true;
 }
 
 export function spawnAgent(
   db: DatabaseSync,
   ws: WsHub,
   agent: Agent,
-  task: Task
+  task: Task,
+  options?: { continuePrompt?: string; previousStatus?: string }
 ): { pid: number } {
+  const isContinue = !!options?.continuePrompt;
+  const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
     reasoningLevel: agent.cli_reasoning_level ?? undefined,
+    resumeSessionId,
   });
 
-  // Determine if self-review applies
+  // Determine if self-review applies (skip for continue mode)
   const selfReviewThreshold = getSetting(db, "self_review_threshold") ?? "small";
-  const selfReview =
+  const selfReview = !isContinue && (
     selfReviewThreshold === "all" ||
     (selfReviewThreshold === "medium" && (task.task_size === "small" || task.task_size === "medium")) ||
-    (selfReviewThreshold === "small" && task.task_size === "small");
+    (selfReviewThreshold === "small" && task.task_size === "small")
+  );
 
   const isReviewRun = task.review_count > 0;
-  const prompt = isReviewRun ? buildReviewPrompt(task) : buildTaskPrompt(task, { selfReview });
+  const prompt = isContinue
+    ? options!.continuePrompt!
+    : (isReviewRun ? buildReviewPrompt(task) : buildTaskPrompt(task, { selfReview }));
 
   // Log directory
   const logDir = join("data", "logs");
@@ -71,13 +100,15 @@ export function spawnAgent(
 
   activeProcesses.set(task.id, child);
 
-  // Update task and agent status
-  const now = Date.now();
-  db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?").run(now, now, task.id);
-  db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
+  // Update task and agent status (skip for continue — already in_progress)
+  if (!isContinue) {
+    const now = Date.now();
+    db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?").run(now, now, task.id);
+    db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
 
-  ws.broadcast("task_update", { id: task.id, status: "in_progress", started_at: now });
-  ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
+    ws.broadcast("task_update", { id: task.id, status: "in_progress", started_at: now });
+    ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
+  }
 
   // Send prompt via stdin
   if (child.stdin) {
@@ -132,6 +163,11 @@ export function spawnAgent(
       }
 
       if (obj) {
+        // Capture session_id for resume on feedback
+        if (!capturedSessionIds.has(task.id) && typeof obj.session_id === "string") {
+          capturedSessionIds.set(task.id, obj.session_id);
+        }
+
         const event = classifyEvent(agent.cli_provider, obj);
         if (event) {
           classified.push({ kind: event.kind, message: event.message });
@@ -179,7 +215,49 @@ export function spawnAgent(
     activeProcesses.delete(task.id);
     logStream.end();
 
+    // Check for pending feedback — respawn with --continue instead of finalizing
+    const feedback = pendingFeedback.get(task.id);
+    if (feedback) {
+      pendingFeedback.delete(task.id);
+
+      insertLogStmt.run(task.id, "system", "Restarting with user feedback (--resume)");
+      ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: "Restarting with user feedback..." }]);
+
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+      const freshAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agent.id) as unknown as Agent | undefined;
+
+      if (freshTask && freshAgent) {
+        spawnAgent(db, ws, freshAgent, freshTask, {
+          continuePrompt: feedback.message,
+          previousStatus: feedback.previousStatus,
+        });
+      }
+      return;
+    }
+
     const finishTime = Date.now();
+
+    // Feedback respawn completed: restore previous status instead of finalizing as done
+    if (isContinue) {
+      const restoreStatus = options?.previousStatus ?? "in_progress";
+
+      db.prepare(
+        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?"
+      ).run(restoreStatus, finishTime, task.id);
+
+      db.prepare(
+        "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
+      ).run(finishTime, agent.id);
+
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+      ).run(task.id, `Feedback response complete. Restored status: ${restoreStatus}`);
+
+      ws.broadcast("task_update", { id: task.id, status: restoreStatus });
+      ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+      return;
+    }
+
     const finalStatus = code === 0 ? determineCompletionStatus(db, task, selfReview) : "cancelled";
 
     db.prepare(

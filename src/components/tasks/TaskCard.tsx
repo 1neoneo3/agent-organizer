@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { getRoleLabel, getRoleColorClass } from "../../components/agents/roles.js";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
+import { sendTaskFeedback } from "../../api/endpoints.js";
 import type { Task, Agent } from "../../types/index.js";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -31,6 +32,30 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
   const agent = agents.find((a) => a.id === task.assigned_agent_id);
   const idleAgents = agents.filter((a) => a.status === "idle");
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
+  const [showMessageForm, setShowMessageForm] = useState(false);
+  const [messageText, setMessageText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (showMessageForm) inputRef.current?.focus();
+  }, [showMessageForm]);
+
+  const handleSendMessage = async () => {
+    if (!messageText.trim() || sending) return;
+    setSending(true);
+    try {
+      await sendTaskFeedback(task.id, messageText.trim());
+      setMessageText("");
+      setSent(true);
+      setTimeout(() => setSent(false), 1500);
+    } catch {
+      // silently fail — user can retry
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <div
@@ -131,6 +156,46 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
             className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded transition-colors"
           >
             Log
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMessageForm((v) => !v);
+            }}
+            title="Send message"
+            className={`px-2 py-1 text-xs rounded transition-colors ${showMessageForm ? "bg-indigo-600 text-white" : "bg-gray-600 hover:bg-gray-500 text-white"}`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 inline-block">
+              <path fillRule="evenodd" d="M3.43 2.524A41.29 41.29 0 0 1 10 2c2.236 0 4.43.18 6.57.524 1.437.231 2.43 1.49 2.43 2.902v5.148c0 1.413-.993 2.67-2.43 2.902a41.1 41.1 0 0 1-3.55.414.783.783 0 0 0-.64.413l-1.713 3.293a.75.75 0 0 1-1.334 0l-1.713-3.293a.783.783 0 0 0-.64-.413 41.1 41.1 0 0 1-3.55-.414C1.993 13.245 1 11.986 1 10.574V5.426c0-1.413.993-2.67 2.43-2.902ZM7 8.5a1 1 0 1 1 2 0 1 1 0 0 1-2 0Zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {showMessageForm && (
+        <div
+          className="mt-2 flex gap-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) handleSendMessage();
+              if (e.key === "Escape") setShowMessageForm(false);
+            }}
+            placeholder={task.status === "in_progress" ? "Send feedback..." : "Send message..."}
+            disabled={sending}
+            className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+          <button
+            onClick={handleSendMessage}
+            disabled={!messageText.trim() || sending}
+            className="px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors disabled:opacity-50 whitespace-nowrap"
+          >
+            {sending ? "..." : sent ? "Sent!" : "Send"}
           </button>
         </div>
       )}

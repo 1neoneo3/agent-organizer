@@ -4,7 +4,7 @@ import { readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
-import { spawnAgent, killAgent } from "../spawner/process-manager.js";
+import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId } from "../spawner/process-manager.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 
@@ -200,13 +200,10 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     res.json({ ok: true, exists: fileExists, text, task_logs: taskLogs });
   });
 
-  // CEO Feedback: send directive to an in-progress task
+  // CEO Feedback: send directive to a task (in_progress or finished)
   router.post("/tasks/:id/feedback", (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
-    if (task.status !== "in_progress") {
-      return res.status(409).json({ error: "task_not_in_progress", current_status: task.status });
-    }
 
     const schema = z.object({ content: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
@@ -239,7 +236,32 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("message_new", message);
     ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: `[CEO Feedback] ${content}` });
 
-    res.json({ sent: true, feedback_path: feedbackPath });
+    // 5. Deliver feedback to agent
+    const previousStatus = task.status;
+
+    if (task.status === "in_progress") {
+      // Running task: kill + respawn with --resume
+      const restarted = queueFeedbackAndRestart(task.id, content, previousStatus);
+      return res.json({ sent: true, restarted, feedback_path: feedbackPath });
+    }
+
+    // Finished task: respawn agent with --resume to handle the new directive
+    const agentId = task.assigned_agent_id;
+    if (!agentId) return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
+
+    const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
+    if (!agent || agent.status === "working") {
+      return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
+    }
+
+    // Set task back to in_progress and respawn
+    db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?").run(now, task.id);
+    ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+
+    const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus });
+
+    res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
   });
 
   return router;
