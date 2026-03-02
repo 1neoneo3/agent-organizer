@@ -33,6 +33,14 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
   const idleAgents = agents.filter((a) => a.status === "idle");
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
   const [showMessageForm, setShowMessageForm] = useState(false);
+
+  // Sync selectedAgentId when idle agents change (e.g. after another task is run)
+  useEffect(() => {
+    setSelectedAgentId((prev) => {
+      const idleIds = agents.filter((a) => a.status === "idle").map((a) => a.id);
+      return idleIds.includes(prev) ? prev : (idleIds[0] ?? "");
+    });
+  }, [agents]);
   const [messageText, setMessageText] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
