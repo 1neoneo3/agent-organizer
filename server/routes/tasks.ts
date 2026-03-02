@@ -28,6 +28,13 @@ const UpdateTaskSchema = z.object({
   result: z.string().nullish(),
 });
 
+function nextTaskNumber(db: RuntimeContext["db"]): string {
+  const row = db.prepare(
+    "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
+  ).get() as { max_num: number | null } | undefined;
+  return `#${(row?.max_num ?? 0) + 1}`;
+}
+
 export function createTasksRouter(ctx: RuntimeContext): Router {
   const router = Router();
   const { db, ws } = ctx;
@@ -54,12 +61,13 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const id = randomUUID();
     const now = Date.now();
+    const taskNumber = nextTaskNumber(db);
     const { title, description, assigned_agent_id, project_path, priority, task_size } = parsed.data;
 
     db.prepare(
-      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, now, now);
+      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, now, now);
 
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
     ws.broadcast("task_update", task);

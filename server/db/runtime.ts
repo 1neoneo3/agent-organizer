@@ -22,6 +22,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddAgentType(db);
   migrateAddDirectiveId(db);
   migrateAddTaskNumbering(db);
+  backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
   return db;
@@ -55,6 +56,24 @@ function migrateAddTaskNumbering(db: DatabaseSync): void {
   }
   if (!cols.some((c) => c.name === "depends_on")) {
     db.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT");
+  }
+}
+
+function backfillTaskNumbers(db: DatabaseSync): void {
+  const rows = db.prepare(
+    "SELECT id FROM tasks WHERE task_number IS NULL ORDER BY created_at ASC"
+  ).all() as Array<{ id: string }>;
+  if (rows.length === 0) return;
+
+  const maxRow = db.prepare(
+    "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
+  ).get() as { max_num: number | null } | undefined;
+  let seq = (maxRow?.max_num ?? 0) + 1;
+
+  const update = db.prepare("UPDATE tasks SET task_number = ? WHERE id = ?");
+  for (const row of rows) {
+    update.run(`#${seq}`, row.id);
+    seq++;
   }
 }
 
