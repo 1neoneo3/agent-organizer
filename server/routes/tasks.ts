@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent } from "../spawner/process-manager.js";
+import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 
 const CreateTaskSchema = z.object({
@@ -94,8 +95,14 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     values.push(req.params.id);
 
     db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
     ws.broadcast("task_update", task);
+
+    // Trigger auto-review on manual status change to pr_review
+    if (updates.status === "pr_review") {
+      setTimeout(() => triggerAutoReview(db, ws, task), 500);
+    }
+
     res.json(task);
   });
 

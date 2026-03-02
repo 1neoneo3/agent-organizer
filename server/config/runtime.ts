@@ -30,4 +30,5 @@ export const REVIEW_SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"
   review_count: 1,
   self_review_threshold: "small" as const, // task size for auto self-review: "small" | "medium" | "all" | "none"
+  auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
 };

@@ -214,6 +214,56 @@ export function buildTaskPrompt(
  * Build a prompt that instructs the AI to decompose a directive into numbered tasks
  * with dependency tracking, plus a Markdown implementation plan.
  */
+/**
+ * Build a prompt for an automated code review run.
+ * The reviewer agent checks the implementation and outputs a verdict marker.
+ */
+export function buildReviewPrompt(task: Task): string {
+  const parts: string[] = [];
+
+  parts.push("## Language");
+  parts.push(
+    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
+  );
+  parts.push("");
+
+  // Inject CLAUDE.md + rules
+  appendSharedContext(parts, task.project_path);
+
+  parts.push("# Code Review Task");
+  parts.push("");
+  parts.push(`You are reviewing the implementation for: **${task.title}**`);
+  parts.push("");
+  if (task.description) {
+    parts.push("## Original Task Description");
+    parts.push(task.description);
+    parts.push("");
+  }
+  if (task.project_path) {
+    parts.push(`Project path: ${task.project_path}`);
+    parts.push("");
+  }
+
+  parts.push("## Review Instructions");
+  parts.push("");
+  parts.push("1. Run `git diff HEAD~1` and `git log --oneline -5` to understand recent changes");
+  parts.push("2. Review the changes for:");
+  parts.push("   - **Correctness**: Does the implementation match the task requirements?");
+  parts.push("   - **Code Quality**: Clean code, proper naming, no duplication");
+  parts.push("   - **Security**: No hardcoded secrets, injection vulnerabilities, or unsafe patterns");
+  parts.push("   - **Tests**: Are there adequate tests? Do they pass?");
+  parts.push("   - **Edge Cases**: Are boundary conditions handled?");
+  parts.push("");
+  parts.push("3. Write a brief review summary (in Japanese)");
+  parts.push("");
+  parts.push("4. Output your verdict as the **final line** of your response:");
+  parts.push("   - `[REVIEW:PASS]` — if the implementation is acceptable");
+  parts.push("   - `[REVIEW:NEEDS_CHANGES]` — if changes are required (explain what)");
+  parts.push("");
+
+  return parts.join("\n");
+}
+
 export function buildDecomposePrompt(directive: Directive): string {
   const parts: string[] = [];
 

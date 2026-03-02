@@ -69,6 +69,21 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
             </label>
 
             <label className="block">
+              <span className="text-sm text-gray-500 dark:text-gray-400">Auto Review</span>
+              <select
+                className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={local.auto_review ?? "true"}
+                onChange={(e) => update("auto_review", e.target.value)}
+              >
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Automatically trigger a review agent when a task enters "PR Review" status.
+              </p>
+            </label>
+
+            <label className="block">
               <span className="text-sm text-gray-500 dark:text-gray-400">Self-Review Threshold</span>
               <select
                 className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"

@@ -6,7 +6,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent } from "./event-classifier.js";
-import { buildTaskPrompt } from "./prompt-builder.js";
+import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
+import { triggerAutoReview } from "./auto-reviewer.js";
 import type { TaskLogKind } from "../types/runtime.js";
 import {
   TASK_RUN_IDLE_TIMEOUT_MS,
@@ -39,7 +40,8 @@ export function spawnAgent(
     (selfReviewThreshold === "medium" && (task.task_size === "small" || task.task_size === "medium")) ||
     (selfReviewThreshold === "small" && task.task_size === "small");
 
-  const prompt = buildTaskPrompt(task, { selfReview });
+  const isReviewRun = task.review_count > 0;
+  const prompt = isReviewRun ? buildReviewPrompt(task) : buildTaskPrompt(task, { selfReview });
 
   // Log directory
   const logDir = join("data", "logs");
@@ -194,6 +196,12 @@ export function spawnAgent(
 
     ws.broadcast("task_update", { id: task.id, status: finalStatus, completed_at: finishTime });
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+
+    // Trigger auto-review if task landed in pr_review
+    if (finalStatus === "pr_review") {
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+      setTimeout(() => triggerAutoReview(db, ws, freshTask), 500);
+    }
   });
 
   return { pid: child.pid ?? 0 };
@@ -204,6 +212,17 @@ function determineCompletionStatus(
   task: Task,
   selfReview: boolean
 ): string {
+  // Auto-review completion: review_count > 0 means this was a review run
+  if (task.review_count > 0) {
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'stdout' ORDER BY id DESC LIMIT 50"
+    ).all(task.id) as Array<{ message: string }>;
+
+    const needsChanges = logs.some((l) => l.message.includes("[REVIEW:NEEDS_CHANGES]"));
+    if (needsChanges) return "inbox"; // Send back for rework
+    return "done"; // Review passed (or no explicit marker = pass)
+  }
+
   if (!selfReview) {
     // Check review_mode setting
     const reviewMode = getSetting(db, "review_mode") ?? "pr_only";
