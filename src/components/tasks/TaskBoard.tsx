@@ -4,7 +4,7 @@ import { TaskCard } from "./TaskCard.js";
 import { CreateTaskModal } from "./CreateTaskModal.js";
 import { TaskDetailModal } from "./TaskDetailModal.js";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
-import { createTask, runTask, stopTask, updateTask, createAgent } from "../../api/endpoints.js";
+import { createTask, runTask, stopTask, updateTask, deleteTask, createAgent } from "../../api/endpoints.js";
 import { AgentForm, type AgentFormData } from "../agents/AgentForm.js";
 import { getRoleLabel } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
@@ -62,6 +62,12 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
 
   const handleDone = async (taskId: string) => {
     await updateTask(taskId, { status: "done" });
+    onReload();
+  };
+
+  const handleDelete = async (taskId: string) => {
+    if (!window.confirm("このタスクを削除しますか？")) return;
+    await deleteTask(taskId);
     onReload();
   };
 
@@ -142,6 +148,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
                     onDone={handleDone}
                     onSelect={setSelectedTaskId}
                     onShowLog={setLogTaskId}
+                    onDelete={handleDelete}
                   />
                 ))}
               </div>

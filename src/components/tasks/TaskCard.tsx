@@ -28,9 +28,10 @@ interface TaskCardProps {
   onDone?: (taskId: string) => void;
   onSelect?: (taskId: string) => void;
   onShowLog?: (taskId: string) => void;
+  onDelete?: (taskId: string) => void;
 }
 
-export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, onDone, onSelect, onShowLog }: TaskCardProps) {
+export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
   const agent = agents.find((a) => a.id === task.assigned_agent_id);
   const idleAgents = agents.filter((a) => a.status === "idle");
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
@@ -122,6 +123,23 @@ export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, on
         </div>
       )}
 
+      {task.status === "inbox" && idleAgents.length === 0 && (
+        <div className="mt-2 flex gap-1">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete?.(task.id);
+            }}
+            title="Delete task"
+            className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 inline-block">
+              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {task.status === "inbox" && idleAgents.length > 0 && (
         <div className="mt-2 flex flex-col gap-1.5">
           <select
@@ -139,16 +157,30 @@ export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, on
               </option>
             ))}
           </select>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              if (selectedAgentId) onRun?.(task.id, selectedAgentId);
-            }}
-            disabled={!selectedAgentId}
-            className="w-full px-2 py-1 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded transition-colors disabled:opacity-50"
-          >
-            ▶ Run
-          </button>
+          <div className="flex gap-1">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (selectedAgentId) onRun?.(task.id, selectedAgentId);
+              }}
+              disabled={!selectedAgentId}
+              className="flex-1 px-2 py-1 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded transition-colors disabled:opacity-50"
+            >
+              ▶ Run
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete?.(task.id);
+              }}
+              title="Delete task"
+              className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 
@@ -195,6 +227,18 @@ export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, on
           >
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 inline-block">
               <path fillRule="evenodd" d="M3.43 2.524A41.29 41.29 0 0 1 10 2c2.236 0 4.43.18 6.57.524 1.437.231 2.43 1.49 2.43 2.902v5.148c0 1.413-.993 2.67-2.43 2.902a41.1 41.1 0 0 1-3.55.414.783.783 0 0 0-.64.413l-1.713 3.293a.75.75 0 0 1-1.334 0l-1.713-3.293a.783.783 0 0 0-.64-.413 41.1 41.1 0 0 1-3.55-.414C1.993 13.245 1 11.986 1 10.574V5.426c0-1.413.993-2.67 2.43-2.902ZM7 8.5a1 1 0 1 1 2 0 1 1 0 0 1-2 0Zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete?.(task.id);
+            }}
+            title="Delete task"
+            className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 inline-block">
+              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clipRule="evenodd" />
             </svg>
           </button>
         </div>
