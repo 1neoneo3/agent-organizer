@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { fetchTaskLogs, fetchMessages, fetchTerminal } from "../../api/endpoints.js";
-import type { TaskLog, Message, WSEventType } from "../../types/index.js";
+import { fetchTaskLogs, fetchTerminal } from "../../api/endpoints.js";
+import type { TaskLog, WSEventType } from "../../types/index.js";
 
-type TabKey = "terminal" | "all" | "output" | "thinking" | "messages";
+type TabKey = "terminal" | "all" | "output";
 
 interface Tab {
   key: TabKey;
@@ -14,13 +14,9 @@ const TABS: Tab[] = [
   { key: "terminal", label: "Terminal", icon: ">" },
   { key: "all", label: "All", icon: "⚡" },
   { key: "output", label: "Output", icon: "📟" },
-  { key: "thinking", label: "Thinking", icon: "🧠" },
-  { key: "messages", label: "Messages", icon: "💬" },
 ];
 
-type TimelineEntry =
-  | { type: "log"; data: TaskLog }
-  | { type: "message"; data: Message };
+type TimelineEntry = { type: "log"; data: TaskLog };
 
 interface TerminalPanelProps {
   taskId: string;
@@ -28,18 +24,8 @@ interface TerminalPanelProps {
   onClose: () => void;
 }
 
-function classifyLog(kind: TaskLog["kind"]): TabKey {
-  switch (kind) {
-    case "thinking":
-      return "thinking";
-    case "assistant":
-      return "messages";
-    case "tool_call":
-    case "tool_result":
-      return "output";
-    default:
-      return "output";
-  }
+function classifyLog(_kind: TaskLog["kind"]): TabKey {
+  return "output";
 }
 
 function formatTime(ts: number): string {
@@ -141,35 +127,6 @@ function LogEntry({ log }: { log: TaskLog }) {
             </button>
           )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function MessageEntry({ message }: { message: Message }) {
-  const isUser = message.sender_type === "user";
-  const isSystem = message.sender_type === "system";
-
-  return (
-    <div className={`mb-2 flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs shadow-md ${
-          isUser
-            ? "bg-blue-500 text-white border-2 border-blue-600"
-            : isSystem
-              ? "bg-amber-50 dark:bg-amber-50 text-amber-900 dark:text-amber-900 border-2 border-amber-300 dark:border-amber-300"
-              : "bg-white dark:bg-white text-gray-900 dark:text-gray-900 border-2 border-gray-300 dark:border-gray-300"
-        }`}
-      >
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <span className="font-medium text-[10px] opacity-75">
-            {message.sender_type === "agent" ? "🤖 Agent" : message.sender_type === "user" ? "👤 User" : "⚙ System"}
-          </span>
-          <span className="text-[10px] opacity-50">
-            {formatTime(message.created_at)}
-          </span>
-        </div>
-        <div className="whitespace-pre-wrap">{message.content}</div>
       </div>
     </div>
   );
@@ -278,18 +235,14 @@ function TerminalView({ taskId }: { taskId: string }) {
 
 export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
   const [logs, setLogs] = useState<TaskLog[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("terminal");
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load initial logs + messages (for non-terminal tabs)
+  // Load initial logs (for non-terminal tabs)
   useEffect(() => {
     fetchTaskLogs(taskId).then((data) => {
       setLogs(data.reverse());
-    });
-    fetchMessages(taskId).then((data) => {
-      setMessages(data);
     });
   }, [taskId]);
 
@@ -316,16 +269,6 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
     });
   }, [taskId, on]);
 
-  // WebSocket: New messages
-  useEffect(() => {
-    return on("message_new", (payload) => {
-      const msg = payload as Message;
-      if (msg.task_id === taskId) {
-        setMessages((prev) => [...prev, msg]);
-      }
-    });
-  }, [taskId, on]);
-
   // Build filtered timeline (for non-terminal tabs)
   const timeline = useMemo((): TimelineEntry[] => {
     if (activeTab === "terminal") return [];
@@ -339,20 +282,10 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
       }
     }
 
-    if (activeTab === "all" || activeTab === "messages") {
-      for (const msg of messages) {
-        entries.push({ type: "message", data: msg });
-      }
-    }
-
-    entries.sort((a, b) => {
-      const tsA = a.type === "log" ? a.data.created_at : a.data.created_at;
-      const tsB = b.type === "log" ? b.data.created_at : b.data.created_at;
-      return tsA - tsB;
-    });
+    entries.sort((a, b) => a.data.created_at - b.data.created_at);
 
     return entries;
-  }, [logs, messages, activeTab]);
+  }, [logs, activeTab]);
 
   // Auto-scroll (non-terminal tabs)
   useEffect(() => {
@@ -371,15 +304,14 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
 
   // Tab counts
   const counts = useMemo(() => {
-    const c = { terminal: 0, all: 0, output: 0, thinking: 0, messages: messages.length };
+    const c = { terminal: 0, all: 0, output: 0 };
     for (const log of logs) {
       const tab = classifyLog(log.kind);
       c[tab]++;
       c.all++;
     }
-    c.all += messages.length;
     return c;
-  }, [logs, messages]);
+  }, [logs]);
 
   const isTerminalTab = activeTab === "terminal";
 
@@ -443,13 +375,9 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
               No activity yet
             </div>
           )}
-          {timeline.map((entry) =>
-            entry.type === "log" ? (
-              <LogEntry key={`log-${entry.data.id}`} log={entry.data} />
-            ) : (
-              <MessageEntry key={`msg-${entry.data.id}`} message={entry.data} />
-            )
-          )}
+          {timeline.map((entry) => (
+            <LogEntry key={`log-${entry.data.id}`} log={entry.data} />
+          ))}
         </div>
       )}
     </div>
