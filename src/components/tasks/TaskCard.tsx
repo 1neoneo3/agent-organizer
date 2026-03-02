@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { getRoleLabel, getRoleColorClass } from "../../components/agents/roles.js";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
-import { sendTaskFeedback } from "../../api/endpoints.js";
+import { sendTaskFeedback, sendInteractiveResponse } from "../../api/endpoints.js";
 import { useSfx } from "../../hooks/useSfx.js";
-import type { Task, Agent } from "../../types/index.js";
+import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 
 const SIZE_TO_LV: Record<string, string> = {
   small: "LV.1",
@@ -24,6 +24,7 @@ interface TaskCardProps {
   task: Task;
   agents: Agent[];
   hasInteractivePrompt?: boolean;
+  interactivePrompt?: InteractivePrompt;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
   onDone?: (taskId: string) => void;
@@ -32,12 +33,47 @@ interface TaskCardProps {
   onDelete?: (taskId: string) => void;
 }
 
-export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
+export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
   const agent = agents.find((a) => a.id === task.assigned_agent_id);
   const idleAgents = agents.filter((a) => a.status === "idle");
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
   const [showMessageForm, setShowMessageForm] = useState(false);
+  const [sendingPromptResponse, setSendingPromptResponse] = useState(false);
   const { play } = useSfx();
+
+  const handleApprove = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!interactivePrompt || sendingPromptResponse) return;
+    setSendingPromptResponse(true);
+    try {
+      play("confirm");
+      await sendInteractiveResponse(interactivePrompt.task_id, {
+        promptType: interactivePrompt.promptType,
+        approved: true,
+      });
+    } catch {
+      // silently fail
+    } finally {
+      setSendingPromptResponse(false);
+    }
+  };
+
+  const handleReject = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!interactivePrompt || sendingPromptResponse) return;
+    setSendingPromptResponse(true);
+    try {
+      play("cancel");
+      await sendInteractiveResponse(interactivePrompt.task_id, {
+        promptType: interactivePrompt.promptType,
+        approved: false,
+      });
+    } catch {
+      // silently fail
+    } finally {
+      setSendingPromptResponse(false);
+    }
+  };
 
   useEffect(() => {
     setSelectedAgentId((prev) => {
@@ -112,6 +148,60 @@ export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, on
           </span>
         </div>
       </div>
+
+      {/* Plan Approval — show directly on card */}
+      {interactivePrompt?.promptType === "exit_plan_mode" && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            padding: "8px 10px",
+            background: "var(--eb-shadow)",
+            borderTop: "2px solid var(--eb-highlight)",
+            borderBottom: "2px solid var(--eb-highlight)",
+          }}
+        >
+          <div className="eb-label" style={{ fontSize: "8px", color: "var(--eb-highlight)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ animation: "eb-blink 0.6s steps(1) infinite" }}>!</span>
+            PLAN APPROVAL
+          </div>
+          <div style={{ display: "flex", gap: "6px" }}>
+            <button
+              onClick={handleApprove}
+              disabled={sendingPromptResponse}
+              className="eb-btn eb-btn--primary"
+              style={{ flex: 1, fontSize: "8px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
+            >
+              {sendingPromptResponse ? "..." : "APPROVE"}
+            </button>
+            <button
+              onClick={handleReject}
+              disabled={sendingPromptResponse}
+              className="eb-btn eb-btn--danger"
+              style={{ flex: 1, fontSize: "8px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
+            >
+              {sendingPromptResponse ? "..." : "REJECT"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Agent Question — prompt to open modal */}
+      {interactivePrompt?.promptType === "ask_user_question" && (
+        <div
+          style={{
+            padding: "6px 10px",
+            background: "var(--eb-shadow)",
+            borderTop: "2px solid var(--eb-highlight)",
+            borderBottom: "2px solid var(--eb-highlight)",
+            textAlign: "center",
+          }}
+        >
+          <div className="eb-label" style={{ fontSize: "8px", color: "var(--eb-highlight)", display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+            <span style={{ animation: "eb-blink 0.6s steps(1) infinite" }}>?</span>
+            CLICK TO ANSWER
+          </div>
+        </div>
+      )}
 
       {/* Card body */}
       <div className="eb-window-body" style={{ padding: "6px 10px" }}>

@@ -182,6 +182,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
                     task={task}
                     agents={agents}
                     hasInteractivePrompt={interactivePrompts.has(task.id)}
+                    interactivePrompt={interactivePrompts.get(task.id)}
                     onRun={handleRun}
                     onStop={handleStop}
                     onDone={handleDone}
