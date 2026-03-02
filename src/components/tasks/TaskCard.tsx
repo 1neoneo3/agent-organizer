@@ -22,13 +22,15 @@ const SIZE_BADGES: Record<string, string> = {
 interface TaskCardProps {
   task: Task;
   agents: Agent[];
+  hasInteractivePrompt?: boolean;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
+  onDone?: (taskId: string) => void;
   onSelect?: (taskId: string) => void;
   onShowLog?: (taskId: string) => void;
 }
 
-export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: TaskCardProps) {
+export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, onDone, onSelect, onShowLog }: TaskCardProps) {
   const agent = agents.find((a) => a.id === task.assigned_agent_id);
   const idleAgents = agents.filter((a) => a.status === "idle");
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
@@ -77,9 +79,16 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
           )}
           {task.title}
         </h3>
-        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase text-white ${STATUS_COLORS[task.status] ?? "bg-gray-600"}`}>
-          {task.status.replace("_", " ")}
-        </span>
+        <div className="flex items-center gap-1 shrink-0">
+          {hasInteractivePrompt && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500 text-white animate-pulse">
+              Needs Input
+            </span>
+          )}
+          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase text-white ${STATUS_COLORS[task.status] ?? "bg-gray-600"}`}>
+            {task.status.replace("_", " ")}
+          </span>
+        </div>
       </div>
 
       <div className="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -154,6 +163,17 @@ export function TaskCard({ task, agents, onRun, onStop, onSelect, onShowLog }: T
               className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
             >
               Stop
+            </button>
+          )}
+          {task.status === "pr_review" && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDone?.(task.id);
+              }}
+              className="px-2 py-1 text-xs bg-green-700 hover:bg-green-600 text-white rounded transition-colors"
+            >
+              Done
             </button>
           )}
           <button

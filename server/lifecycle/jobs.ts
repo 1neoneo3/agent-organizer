@@ -1,10 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
-import { getActiveProcesses } from "../spawner/process-manager.js";
+import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import type { WsHub } from "../ws/hub.js";
+
+const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 /**
  * Orphan recovery: find tasks marked as in_progress but with no active process.
  * Runs periodically to handle crashes or unclean shutdowns.
+ * Skips tasks with a pending interactive prompt (unless timed out).
  */
 export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, intervalMs = 60_000): ReturnType<typeof setInterval> {
   return setInterval(() => {
@@ -15,6 +18,21 @@ export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, intervalMs = 60
 
     for (const task of inProgress) {
       if (!active.has(task.id)) {
+        // Skip tasks awaiting interactive prompt (unless timed out)
+        const pending = getPendingInteractivePrompt(task.id);
+        if (pending) {
+          const elapsed = Date.now() - pending.createdAt;
+          if (elapsed < INTERACTIVE_PROMPT_TIMEOUT_MS) {
+            continue; // Still waiting for user response
+          }
+          // Timed out — clear and cancel
+          clearPendingInteractivePrompt(task.id);
+          db.prepare(
+            "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'Interactive prompt timed out after 2 hours')"
+          ).run(task.id);
+          ws.broadcast("interactive_prompt_resolved", { task_id: task.id });
+        }
+
         const now = Date.now();
         db.prepare(
           "UPDATE tasks SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE id = ?"

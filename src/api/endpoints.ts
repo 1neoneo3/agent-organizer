@@ -68,5 +68,16 @@ export interface DecomposeLogEntry {
 export const fetchDecomposeLogs = (id: string) =>
   api.get<DecomposeLogEntry[]>(`/directives/${id}/decompose-logs`);
 
+// Interactive Prompt Response
+export const sendInteractiveResponse = (
+  taskId: string,
+  payload: {
+    promptType: "exit_plan_mode" | "ask_user_question";
+    approved?: boolean;
+    selectedOptions?: Record<string, string | string[]>;
+    freeText?: string;
+  }
+) => api.post<{ sent: boolean; restarted: boolean }>(`/tasks/${taskId}/interactive-response`, payload);
+
 // CLI Status
 export const fetchCliStatus = () => api.get<CliStatus>("/cli-status");

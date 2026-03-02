@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
-import { classifyEvent } from "./event-classifier.js";
+import { classifyEvent, parseInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import type { TaskLogKind } from "../types/runtime.js";
@@ -19,6 +19,15 @@ import type { Agent, Task } from "../types/runtime.js";
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
+const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
+
+export function getPendingInteractivePrompt(taskId: string): { data: InteractivePromptData; createdAt: number } | undefined {
+  return pendingInteractivePrompts.get(taskId);
+}
+
+export function clearPendingInteractivePrompt(taskId: string): boolean {
+  return pendingInteractivePrompts.delete(taskId);
+}
 
 export function getActiveProcesses(): Map<string, ChildProcess> {
   return activeProcesses;
@@ -178,6 +187,14 @@ export function spawnAgent(
           classified.push({ kind: "stdout", message: trimmed });
         }
 
+        // Detect interactive prompts (ExitPlanMode / AskUserQuestion)
+        const interactivePrompt = parseInteractivePrompt(obj);
+        if (interactivePrompt && !pendingInteractivePrompts.has(task.id)) {
+          pendingInteractivePrompts.set(task.id, { data: interactivePrompt, createdAt: Date.now() });
+          ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
+          insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId})`);
+        }
+
         // Subtask parsing (reuse pre-parsed object)
         const subtaskEvent = parseStreamLineFromObj(agent.cli_provider, obj);
         if (subtaskEvent) handleSubtaskEvent(db, ws, task.id, subtaskEvent, subtaskMap);
@@ -231,6 +248,19 @@ export function spawnAgent(
     clearTimeout(hardTimer);
     activeProcesses.delete(task.id);
     logStream.end();
+
+    // Check for pending interactive prompt — keep task in_progress, don't finalize
+    if (pendingInteractivePrompts.has(task.id) && !pendingFeedback.has(task.id)) {
+      const finishTime = Date.now();
+      db.prepare(
+        "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
+      ).run(finishTime, agent.id);
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'Agent awaiting user input (interactive prompt). Task remains in_progress.')"
+      ).run(task.id);
+      ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+      return;
+    }
 
     // Check for pending feedback — respawn with --continue instead of finalizing
     const feedback = pendingFeedback.get(task.id);

@@ -1,14 +1,14 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { TaskCard } from "./TaskCard.js";
 import { CreateTaskModal } from "./CreateTaskModal.js";
 import { TaskDetailModal } from "./TaskDetailModal.js";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
-import { createTask, runTask, stopTask, createAgent } from "../../api/endpoints.js";
+import { createTask, runTask, stopTask, updateTask, createAgent } from "../../api/endpoints.js";
 import { AgentForm, type AgentFormData } from "../agents/AgentForm.js";
 import { getRoleLabel } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
-import type { Task, Agent } from "../../types/index.js";
+import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { useWebSocket } from "../../hooks/useWebSocket.js";
 
 const COLUMNS = [
@@ -22,16 +22,27 @@ const COLUMNS = [
 interface TaskBoardProps {
   tasks: Task[];
   agents: Agent[];
+  interactivePrompts: Map<string, InteractivePrompt>;
   onReload: () => void;
 }
 
-export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
+export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskBoardProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [logTaskId, setLogTaskId] = useState<string | null>(null);
   const { on } = useWebSocket();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Auto-open task detail from URL query param (?task=<id>)
+  useEffect(() => {
+    const taskParam = searchParams.get("task");
+    if (taskParam && tasks.some((t) => t.id === taskParam)) {
+      setSelectedTaskId(taskParam);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, tasks, setSearchParams]);
 
   const handleCreate = async (data: Parameters<typeof createTask>[0]) => {
     await createTask(data);
@@ -46,6 +57,11 @@ export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
 
   const handleStop = async (taskId: string) => {
     await stopTask(taskId);
+    onReload();
+  };
+
+  const handleDone = async (taskId: string) => {
+    await updateTask(taskId, { status: "done" });
     onReload();
   };
 
@@ -120,8 +136,10 @@ export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
                     key={task.id}
                     task={task}
                     agents={agents}
+                    hasInteractivePrompt={interactivePrompts.has(task.id)}
                     onRun={handleRun}
                     onStop={handleStop}
+                    onDone={handleDone}
                     onSelect={setSelectedTaskId}
                     onShowLog={setLogTaskId}
                   />
@@ -139,6 +157,7 @@ export function TaskBoard({ tasks, agents, onReload }: TaskBoardProps) {
           <TaskDetailModal
             task={selectedTask}
             agents={agents}
+            interactivePrompt={interactivePrompts.get(selectedTask.id)}
             on={on}
             onClose={() => setSelectedTaskId(null)}
             onRun={handleRun}

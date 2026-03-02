@@ -3,7 +3,8 @@ import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
 import { sendTaskFeedback } from "../../api/endpoints.js";
-import type { Task, Agent, WSEventType } from "../../types/index.js";
+import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
+import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   inbox: { label: "Inbox", color: "bg-gray-600" },
@@ -33,13 +34,14 @@ function formatTimestamp(ts: number | null): string {
 interface TaskDetailModalProps {
   task: Task;
   agents: Agent[];
+  interactivePrompt?: InteractivePrompt;
   on: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
   onClose: () => void;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
 }
 
-export function TaskDetailModal({ task, agents, on, onClose, onRun, onStop }: TaskDetailModalProps) {
+export function TaskDetailModal({ task, agents, interactivePrompt, on, onClose, onRun, onStop }: TaskDetailModalProps) {
   const [showTerminal, setShowTerminal] = useState(task.status !== "inbox");
   const [feedbackText, setFeedbackText] = useState("");
   const [sendingFeedback, setSendingFeedback] = useState(false);
@@ -218,6 +220,13 @@ export function TaskDetailModal({ task, agents, on, onClose, onRun, onStop }: Ta
               </button>
             )}
           </div>
+
+          {/* Interactive Prompt */}
+          {interactivePrompt && (
+            <div className="mb-4">
+              <InteractivePromptPanel prompt={interactivePrompt} />
+            </div>
+          )}
 
           {/* CEO Feedback */}
           {task.status === "in_progress" && (

@@ -7,6 +7,82 @@
 
 export type EventKind = "thinking" | "assistant" | "tool_call" | "tool_result";
 
+// --------------- Interactive Prompt Detection ---------------
+
+export interface InteractivePromptData {
+  promptType: "exit_plan_mode" | "ask_user_question";
+  toolUseId: string;
+  questions?: Array<{
+    question: string;
+    header?: string;
+    options?: Array<{ label: string; description?: string; markdown?: string }>;
+    multiSelect?: boolean;
+  }>;
+  allowedPrompts?: Array<{ tool: string; prompt: string }>;
+}
+
+const INTERACTIVE_TOOLS: Record<string, InteractivePromptData["promptType"]> = {
+  ExitPlanMode: "exit_plan_mode",
+  AskUserQuestion: "ask_user_question",
+};
+
+/**
+ * Parse a JSON stream object to detect interactive prompt tool calls
+ * (ExitPlanMode / AskUserQuestion). Returns null if not an interactive prompt.
+ */
+export function parseInteractivePrompt(obj: Record<string, unknown>): InteractivePromptData | null {
+  // Top-level tool_use event
+  if (obj.type === "tool_use") {
+    return extractFromToolUse(obj);
+  }
+
+  // assistant message with content array containing tool_use blocks
+  if (obj.type === "assistant" && obj.message && typeof obj.message === "object") {
+    const msg = obj.message as Record<string, unknown>;
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        const b = block as Record<string, unknown>;
+        if (b.type === "tool_use") {
+          const result = extractFromToolUse(b);
+          if (result) return result;
+        }
+      }
+    }
+  }
+
+  // stream_event wrapper
+  if (obj.type === "stream_event") {
+    const ev = obj.event as Record<string, unknown> | undefined;
+    if (ev?.type === "content_block_start") {
+      const block = ev.content_block as Record<string, unknown> | undefined;
+      if (block?.type === "tool_use") {
+        return extractFromToolUse(block);
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractFromToolUse(block: Record<string, unknown>): InteractivePromptData | null {
+  const toolName = String(block.name ?? block.tool ?? "");
+  const promptType = INTERACTIVE_TOOLS[toolName];
+  if (!promptType) return null;
+
+  const toolUseId = String(block.id ?? "");
+  const input = (block.input ?? {}) as Record<string, unknown>;
+
+  if (promptType === "ask_user_question") {
+    const questions = input.questions as InteractivePromptData["questions"] | undefined;
+    return { promptType, toolUseId, questions: questions ?? [] };
+  }
+
+  // exit_plan_mode
+  const allowedPrompts = input.allowedPrompts as InteractivePromptData["allowedPrompts"] | undefined;
+  return { promptType, toolUseId, allowedPrompts };
+}
+
 export interface ClassifiedEvent {
   kind: EventKind;
   message: string;

@@ -4,7 +4,7 @@ import { readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
-import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId } from "../spawner/process-manager.js";
+import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 
@@ -270,6 +270,84 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus });
 
     res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
+  });
+
+  // Interactive prompt response (ExitPlanMode / AskUserQuestion)
+  const InteractiveResponseSchema = z.object({
+    promptType: z.enum(["exit_plan_mode", "ask_user_question"]),
+    approved: z.boolean().optional(),
+    selectedOptions: z.record(z.union([z.string(), z.array(z.string())])).optional(),
+    freeText: z.string().optional(),
+  });
+
+  router.post("/tasks/:id/interactive-response", (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+
+    const pending = getPendingInteractivePrompt(task.id);
+    if (!pending) return res.status(404).json({ error: "no_pending_prompt" });
+
+    const parsed = InteractiveResponseSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const { promptType, approved, selectedOptions, freeText } = parsed.data;
+
+    // Build natural language response for the agent
+    let continuePrompt: string;
+    if (promptType === "exit_plan_mode") {
+      if (approved) {
+        continuePrompt = "The user has approved your plan. Proceed with the implementation.";
+      } else {
+        continuePrompt = `The user has rejected your plan.${freeText ? ` Feedback: ${freeText}` : " Please revise your approach."}`;
+      }
+    } else {
+      // ask_user_question
+      const parts: string[] = [];
+      if (selectedOptions && Object.keys(selectedOptions).length > 0) {
+        for (const [question, answer] of Object.entries(selectedOptions)) {
+          const answerStr = Array.isArray(answer) ? answer.join(", ") : answer;
+          parts.push(`Q: ${question}\nA: ${answerStr}`);
+        }
+      }
+      if (freeText) {
+        parts.push(freeText);
+      }
+      continuePrompt = parts.length > 0
+        ? `The user has responded to your questions:\n\n${parts.join("\n\n")}`
+        : "The user acknowledged your question without a specific answer.";
+    }
+
+    // Clear the pending prompt
+    clearPendingInteractivePrompt(task.id);
+
+    const now = Date.now();
+
+    // Log the response
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    ).run(task.id, `Interactive response: ${promptType} ${promptType === "exit_plan_mode" ? (approved ? "approved" : "rejected") : "answered"}`);
+
+    // Broadcast resolved event
+    ws.broadcast("interactive_prompt_resolved", { task_id: task.id });
+    ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: `User responded to ${promptType}. Restarting agent...` }]);
+
+    // Find agent and respawn with --resume
+    const agentId = task.assigned_agent_id;
+    if (!agentId) return res.json({ sent: true, restarted: false });
+
+    const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
+    if (!agent || agent.status === "working") {
+      return res.json({ sent: true, restarted: false });
+    }
+
+    // Ensure task is in_progress
+    db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?").run(now, task.id);
+    ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+
+    const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress" });
+
+    res.json({ sent: true, restarted: true });
   });
 
   return router;

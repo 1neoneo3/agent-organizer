@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { fetchAgents, fetchTasks, fetchSettings, fetchCliStatus, fetchDirectives } from "../api/endpoints.js";
 import { useWebSocket } from "./useWebSocket.js";
-import type { Agent, Task, Directive, Settings, CliStatus } from "../types/index.js";
+import type { Agent, Task, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
 
 export function useAppData() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -9,6 +9,7 @@ export function useAppData() {
   const [directives, setDirectives] = useState<Directive[]>([]);
   const [settings, setSettings] = useState<Settings>({});
   const [cliStatus, setCliStatus] = useState<CliStatus>({});
+  const [interactivePrompts, setInteractivePrompts] = useState<Map<string, InteractivePrompt>>(new Map());
   const [loading, setLoading] = useState(true);
   const { connected, on } = useWebSocket();
 
@@ -74,9 +75,25 @@ export function useAppData() {
           return prev.map((d) => (d.id === update.id ? { ...d, ...update } : d));
         });
       }),
+      on("interactive_prompt", (payload) => {
+        const prompt = payload as InteractivePrompt;
+        setInteractivePrompts((prev) => {
+          const next = new Map(prev);
+          next.set(prompt.task_id, prompt);
+          return next;
+        });
+      }),
+      on("interactive_prompt_resolved", (payload) => {
+        const { task_id } = payload as { task_id: string };
+        setInteractivePrompts((prev) => {
+          const next = new Map(prev);
+          next.delete(task_id);
+          return next;
+        });
+      }),
     ];
     return () => unsubs.forEach((fn) => fn());
   }, [on, reload]);
 
-  return { agents, tasks, directives, settings, cliStatus, loading, connected, reload, on };
+  return { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on };
 }

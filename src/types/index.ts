@@ -65,6 +65,19 @@ export interface Directive {
   updated_at: number;
 }
 
+export interface InteractivePrompt {
+  task_id: string;
+  promptType: "exit_plan_mode" | "ask_user_question";
+  toolUseId: string;
+  questions?: Array<{
+    question: string;
+    header?: string;
+    options?: Array<{ label: string; description?: string; markdown?: string }>;
+    multiSelect?: boolean;
+  }>;
+  allowedPrompts?: Array<{ tool: string; prompt: string }>;
+}
+
 export type WSEventType =
   | "task_update"
   | "agent_status"
@@ -72,7 +85,9 @@ export type WSEventType =
   | "subtask_update"
   | "message_new"
   | "directive_update"
-  | "decompose_output";
+  | "decompose_output"
+  | "interactive_prompt"
+  | "interactive_prompt_resolved";
 
 export interface WSEvent {
   type: WSEventType;

@@ -1,15 +1,21 @@
-import { BrowserRouter, Routes, Route } from "react-router";
+import { BrowserRouter, Routes, Route, useNavigate } from "react-router";
 import { AppLayout } from "./components/layout/AppLayout.js";
 import { TaskBoard } from "./components/tasks/TaskBoard.js";
 import { AgentList } from "./components/agents/AgentList.js";
 import { DirectivesPage } from "./components/directives/DirectivesPage.js";
 import { SettingsPanel } from "./components/settings/SettingsPanel.js";
+import { InteractivePromptToast } from "./components/layout/InteractivePromptToast.js";
 import { useAppData } from "./hooks/useAppData.js";
 import { useTheme } from "./hooks/useTheme.js";
 
-export default function App() {
-  const { agents, tasks, directives, settings, cliStatus, loading, connected, reload, on } = useAppData();
+function AppRoutes() {
+  const { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on } = useAppData();
   const { theme, toggleTheme } = useTheme();
+  const navigate = useNavigate();
+
+  const handleNavigateToTask = (taskId: string) => {
+    void navigate(`/?task=${taskId}`);
+  };
 
   if (loading) {
     return (
@@ -20,12 +26,12 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
+    <>
       <Routes>
         <Route element={<AppLayout connected={connected} theme={theme} toggleTheme={toggleTheme} />}>
           <Route
             index
-            element={<TaskBoard tasks={tasks} agents={agents} onReload={reload} />}
+            element={<TaskBoard tasks={tasks} agents={agents} interactivePrompts={interactivePrompts} onReload={reload} />}
           />
           <Route
             path="directives"
@@ -41,6 +47,19 @@ export default function App() {
           />
         </Route>
       </Routes>
+      <InteractivePromptToast
+        interactivePrompts={interactivePrompts}
+        tasks={tasks}
+        onNavigateToTask={handleNavigateToTask}
+      />
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
     </BrowserRouter>
   );
 }
