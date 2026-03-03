@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { fetchAgents, fetchTasks, fetchSettings, fetchCliStatus, fetchDirectives } from "../api/endpoints.js";
+import { fetchAgents, fetchTasks, fetchSettings, fetchCliStatus, fetchDirectives, fetchInteractivePrompts } from "../api/endpoints.js";
 import { useWebSocket } from "./useWebSocket.js";
 import type { Agent, Task, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
 
@@ -15,18 +15,25 @@ export function useAppData() {
 
   const reload = useCallback(async () => {
     try {
-      const [a, t, d, s, c] = await Promise.all([
+      const [a, t, d, s, c, ip] = await Promise.all([
         fetchAgents(),
         fetchTasks(),
         fetchDirectives(),
         fetchSettings(),
         fetchCliStatus(),
+        fetchInteractivePrompts(),
       ]);
       setAgents(a);
       setTasks(t);
       setDirectives(d);
       setSettings(s);
       setCliStatus(c);
+      // Hydrate interactive prompts from server on load/reload
+      const promptMap = new Map<string, InteractivePrompt>();
+      for (const p of ip) {
+        promptMap.set(p.task_id, p);
+      }
+      setInteractivePrompts(promptMap);
     } catch (err) {
       console.error("Failed to load data:", err);
     } finally {

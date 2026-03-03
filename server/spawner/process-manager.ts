@@ -26,6 +26,10 @@ export function getPendingInteractivePrompt(taskId: string): { data: Interactive
   return pendingInteractivePrompts.get(taskId);
 }
 
+export function getAllPendingInteractivePrompts(): Map<string, { data: InteractivePromptData; createdAt: number }> {
+  return pendingInteractivePrompts;
+}
+
 export function clearPendingInteractivePrompt(taskId: string): boolean {
   return pendingInteractivePrompts.delete(taskId);
 }
