@@ -343,7 +343,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     }
 
     // Clear the pending prompt
-    clearPendingInteractivePrompt(task.id);
+    clearPendingInteractivePrompt(task.id, db);
 
     const now = Date.now();
 

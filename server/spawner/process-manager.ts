@@ -22,6 +22,26 @@ const pendingFeedback = new Map<string, { message: string; previousStatus: strin
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 
+/** Restore pending interactive prompts from DB on server startup */
+export function restorePendingInteractivePrompts(db: DatabaseSync): void {
+  const rows = db.prepare(
+    "SELECT id, interactive_prompt_data FROM tasks WHERE interactive_prompt_data IS NOT NULL AND status = 'in_progress'"
+  ).all() as Array<{ id: string; interactive_prompt_data: string }>;
+  for (const row of rows) {
+    try {
+      const parsed = JSON.parse(row.interactive_prompt_data) as { data: InteractivePromptData; createdAt: number };
+      pendingInteractivePrompts.set(row.id, parsed);
+    } catch { /* ignore corrupted data */ }
+  }
+}
+
+function persistPromptToDb(db: DatabaseSync, taskId: string, entry: { data: InteractivePromptData; createdAt: number } | null): void {
+  try {
+    db.prepare("UPDATE tasks SET interactive_prompt_data = ? WHERE id = ?")
+      .run(entry ? JSON.stringify(entry) : null, taskId);
+  } catch { /* best-effort persist */ }
+}
+
 export function getPendingInteractivePrompt(taskId: string): { data: InteractivePromptData; createdAt: number } | undefined {
   return pendingInteractivePrompts.get(taskId);
 }
@@ -30,8 +50,12 @@ export function getAllPendingInteractivePrompts(): Map<string, { data: Interacti
   return pendingInteractivePrompts;
 }
 
-export function clearPendingInteractivePrompt(taskId: string): boolean {
-  return pendingInteractivePrompts.delete(taskId);
+export function clearPendingInteractivePrompt(taskId: string, db?: DatabaseSync): boolean {
+  const deleted = pendingInteractivePrompts.delete(taskId);
+  if (deleted && db) {
+    persistPromptToDb(db, taskId, null);
+  }
+  return deleted;
 }
 
 export function getActiveProcesses(): Map<string, ChildProcess> {
@@ -211,7 +235,9 @@ export function spawnAgent(
         // The user will respond via the UI, then the agent is respawned with --resume.
         const interactivePrompt = parseInteractivePrompt(obj);
         if (interactivePrompt && !pendingInteractivePrompts.has(task.id)) {
-          pendingInteractivePrompts.set(task.id, { data: interactivePrompt, createdAt: Date.now() });
+          const entry = { data: interactivePrompt, createdAt: Date.now() };
+          pendingInteractivePrompts.set(task.id, entry);
+          persistPromptToDb(db, task.id, entry);
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
           insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`);
 
