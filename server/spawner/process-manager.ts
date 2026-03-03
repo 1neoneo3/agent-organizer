@@ -137,8 +137,8 @@ export function spawnAgent(
   // Dedup: track recent assistant messages to skip duplicates from multiple event formats
   const recentAssistantMessages = new Set<string>();
 
-  // Track whether agent continued working after an interactive prompt was detected
-  let outputAfterInteractivePrompt = false;
+  // Flag to stop processing stdout after an interactive prompt is detected and process killed
+  let interactivePromptKilled = false;
 
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
@@ -162,6 +162,9 @@ export function spawnAgent(
 
   // stdout handler
   child.stdout?.on("data", (data: Buffer) => {
+    // Skip processing if we already killed the process for an interactive prompt
+    if (interactivePromptKilled) return;
+
     clearTimeout(idleTimer);
     idleTimer = resetIdleTimer();
 
@@ -200,25 +203,18 @@ export function spawnAgent(
         }
 
         // Detect interactive prompts (ExitPlanMode / AskUserQuestion)
+        // Kill the process immediately to prevent CLI from auto-resolving the prompt.
+        // The user will respond via the UI, then the agent is respawned with --resume.
         const interactivePrompt = parseInteractivePrompt(obj);
         if (interactivePrompt && !pendingInteractivePrompts.has(task.id)) {
           pendingInteractivePrompts.set(task.id, { data: interactivePrompt, createdAt: Date.now() });
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
-          insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId})`);
-        }
+          insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`);
 
-        // Detect auto-resolution of interactive prompts (CLI sent tool_result for the pending prompt)
-        if (pendingInteractivePrompts.has(task.id)) {
-          const pending = pendingInteractivePrompts.get(task.id)!;
-          if (isToolResultForPrompt(obj, pending.data.toolUseId)) {
-            pendingInteractivePrompts.delete(task.id);
-            outputAfterInteractivePrompt = false;
-            insertLogStmt.run(task.id, "system", `Interactive prompt auto-resolved by CLI (tool_use_id: ${pending.data.toolUseId})`);
-            ws.broadcast("interactive_prompt_resolved", { task_id: task.id });
-          } else if (!interactivePrompt) {
-            // Agent produced output after the interactive prompt (likely auto-resolved)
-            outputAfterInteractivePrompt = true;
-          }
+          // Kill the process so it can't auto-resolve the prompt
+          interactivePromptKilled = true;
+          try { child.kill("SIGTERM"); } catch { /* already dead */ }
+          break; // Stop processing remaining lines in this chunk
         }
 
         // Subtask parsing (reuse pre-parsed object)
@@ -275,26 +271,17 @@ export function spawnAgent(
     activeProcesses.delete(task.id);
     logStream.end();
 
-    // Check for pending interactive prompt — keep task in_progress, don't finalize
-    // BUT: if the agent continued producing output after the prompt, it was likely
-    // auto-resolved by the CLI and we missed the resolution. Proceed normally.
+    // Check for pending interactive prompt — keep task in_progress, don't finalize.
+    // The process was killed when we detected the prompt, so the user can respond via UI.
     if (pendingInteractivePrompts.has(task.id) && !pendingFeedback.has(task.id)) {
-      if (outputAfterInteractivePrompt && code === 0) {
-        // Agent continued working after prompt — treat as auto-resolved
-        pendingInteractivePrompts.delete(task.id);
-        insertLogStmt.run(task.id, "system", "Interactive prompt auto-resolved (agent continued working after prompt)");
-        ws.broadcast("interactive_prompt_resolved", { task_id: task.id });
-        // Fall through to normal completion handling
-      } else {
-        const finishTime = Date.now();
-        db.prepare(
-          "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
-        ).run(finishTime, agent.id);
-        insertLogStmt.run(task.id, "system", "Agent awaiting user input (interactive prompt). Task remains in_progress.");
-        invalidateCaches(cache);
-        ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
-        return;
-      }
+      const finishTime = Date.now();
+      db.prepare(
+        "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
+      ).run(finishTime, agent.id);
+      insertLogStmt.run(task.id, "system", "Agent awaiting user input (interactive prompt). Task remains in_progress.");
+      invalidateCaches(cache);
+      ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+      return;
     }
 
     // Check for pending feedback — respawn with --continue instead of finalizing
