@@ -2,7 +2,6 @@ import { WebSocket } from "ws";
 import { WS_BATCH_INTERVALS, WS_MAX_BATCH_QUEUE } from "../config/runtime.js";
 
 const PING_INTERVAL_MS = 30_000;
-const PONG_TIMEOUT_MS = 10_000;
 
 export interface WsHub {
   readonly clients: Set<WebSocket>;
@@ -84,17 +83,12 @@ export function createWsHub(): WsHub {
     }
   }
 
-  // Expose registerClient via the clients Set add
-  const clientsProxy = new Set<WebSocket>();
-  const originalAdd = clientsProxy.add.bind(clientsProxy);
-  const originalDelete = clientsProxy.delete.bind(clientsProxy);
-  clientsProxy.add = (ws: WebSocket) => {
+  // Intercept add to also register heartbeat for new clients
+  const originalAdd = clients.add.bind(clients);
+  clients.add = (ws: WebSocket) => {
     registerClient(ws);
     return originalAdd(ws);
   };
-  clientsProxy.delete = (ws: WebSocket) => {
-    return originalDelete(ws);
-  };
 
-  return { clients: clientsProxy, broadcast, dispose };
+  return { clients, broadcast, dispose };
 }
