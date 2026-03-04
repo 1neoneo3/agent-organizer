@@ -370,7 +370,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache });
+    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true });
 
     res.json({ sent: true, restarted: true });
   });

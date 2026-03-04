@@ -93,10 +93,11 @@ export function spawnAgent(
   ws: WsHub,
   agent: Agent,
   task: Task,
-  options?: { continuePrompt?: string; previousStatus?: string; cache?: CacheService }
+  options?: { continuePrompt?: string; previousStatus?: string; cache?: CacheService; finalizeOnComplete?: boolean }
 ): { pid: number } {
   const cache = options?.cache;
   const isContinue = !!options?.continuePrompt;
+  const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
@@ -338,7 +339,8 @@ export function spawnAgent(
     const finishTime = Date.now();
 
     // Feedback respawn completed: restore previous status instead of finalizing as done
-    if (isContinue) {
+    // (unless finalizeOnComplete is set, e.g. after interactive prompt response)
+    if (isContinue && !finalizeOnComplete) {
       const restoreStatus = options?.previousStatus ?? "in_progress";
 
       db.prepare(

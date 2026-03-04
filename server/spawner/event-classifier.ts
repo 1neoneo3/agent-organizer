@@ -37,6 +37,9 @@ export function parseInteractivePrompt(obj: Record<string, unknown>): Interactiv
   }
 
   // assistant message with content array containing tool_use blocks
+  // This is the preferred detection source — it contains complete input data
+  // (questions, options, allowedPrompts) unlike stream_event content_block_start
+  // which only has the tool name and id.
   if (obj.type === "assistant" && obj.message && typeof obj.message === "object") {
     const msg = obj.message as Record<string, unknown>;
     const content = msg.content;
@@ -51,16 +54,11 @@ export function parseInteractivePrompt(obj: Record<string, unknown>): Interactiv
     }
   }
 
-  // stream_event wrapper
-  if (obj.type === "stream_event") {
-    const ev = obj.event as Record<string, unknown> | undefined;
-    if (ev?.type === "content_block_start") {
-      const block = ev.content_block as Record<string, unknown> | undefined;
-      if (block?.type === "tool_use") {
-        return extractFromToolUse(block);
-      }
-    }
-  }
+  // NOTE: We intentionally do NOT detect from stream_event content_block_start.
+  // That event only has tool name + id but not the full input (questions, options).
+  // Detecting from it would store incomplete data (e.g., empty questions for AskUserQuestion).
+  // The assistant message (above) contains the complete data and arrives in the same
+  // or next stdout chunk, before the CLI can auto-resolve the prompt.
 
   return null;
 }

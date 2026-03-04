@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchAgents, fetchTasks, fetchSettings, fetchCliStatus, fetchDirectives, fetchInteractivePrompts } from "../api/endpoints.js";
 import { useWebSocket } from "./useWebSocket.js";
 import type { Agent, Task, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
@@ -12,6 +12,7 @@ export function useAppData() {
   const [interactivePrompts, setInteractivePrompts] = useState<Map<string, InteractivePrompt>>(new Map());
   const [loading, setLoading] = useState(true);
   const { connected, on } = useWebSocket();
+  const hasInitialized = useRef(false);
 
   const reload = useCallback(async () => {
     try {
@@ -44,6 +45,16 @@ export function useAppData() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Re-fetch all data when WebSocket reconnects (recovers missed events including interactive prompts)
+  useEffect(() => {
+    if (connected && hasInitialized.current) {
+      void reload();
+    }
+    if (connected) {
+      hasInitialized.current = true;
+    }
+  }, [connected, reload]);
 
   // WebSocket updates
   useEffect(() => {
