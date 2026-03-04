@@ -17,7 +17,10 @@ export function withCliPathFallback(currentPath: string): string {
   for (const extra of extras) {
     if (!parts.includes(extra)) parts.push(extra);
   }
-  return parts.join(":");
+  // Ensure ~/bin is first so cgroup wrapper scripts take priority
+  const homeBin = join(home, "bin");
+  const filtered = parts.filter((p) => p !== homeBin);
+  return [homeBin, ...filtered].join(":");
 }
 
 export function buildAgentArgs(

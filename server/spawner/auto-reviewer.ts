@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
+import type { CacheService } from "../cache/cache-service.js";
 
 /**
  * Trigger automatic code review when a task transitions to "pr_review".
@@ -14,6 +15,7 @@ export async function triggerAutoReview(
   db: DatabaseSync,
   ws: WsHub,
   task: Task,
+  cache?: CacheService,
 ): Promise<void> {
   // Check auto_review setting
   const autoReview = getSetting(db, "auto_review") ?? "true";
@@ -47,7 +49,7 @@ export async function triggerAutoReview(
 
   // Lazy import to break circular dependency (auto-reviewer <-> process-manager)
   const { spawnAgent } = await import("./process-manager.js");
-  spawnAgent(db, ws, reviewer, freshTask);
+  spawnAgent(db, ws, reviewer, freshTask, { cache });
 }
 
 /**

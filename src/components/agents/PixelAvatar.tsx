@@ -26,9 +26,10 @@ const DP = "#1e3a5f"; // dark pants
 
 // Lead Engineer: Ness-style cap boy (blue cap, striped shirt, red shoes)
 const LEAD_ENGINEER: Pixel[] = [
-  // cap
-  [6,0,B],[7,0,B],[8,0,B],[9,0,B],
-  [5,1,B],[6,1,"#3b82f6"],[7,1,"#3b82f6"],[8,1,"#3b82f6"],[9,1,"#3b82f6"],[10,1,B],
+  // cap button
+  [7,0,B],[8,0,B],
+  // cap dome (highlight at 7,1)
+  [5,1,B],[6,1,"#3b82f6"],[7,1,"#60a5fa"],[8,1,"#3b82f6"],[9,1,"#3b82f6"],[10,1,B],
   [4,2,B],[5,2,"#3b82f6"],[6,2,"#3b82f6"],[7,2,"#3b82f6"],[8,2,"#3b82f6"],[9,2,"#3b82f6"],[10,2,"#3b82f6"],[11,2,B],
   // cap brim
   [3,3,B],[4,3,B],[5,3,B],[6,3,B],[7,3,B],[8,3,B],[9,3,B],[10,3,B],[11,3,B],[12,3,B],

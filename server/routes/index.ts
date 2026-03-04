@@ -14,7 +14,11 @@ export function mountRoutes(ctx: RuntimeContext): Router {
 
   // Health check
   router.get("/health", (_req, res) => {
-    res.json({ status: "ok", uptime: process.uptime() });
+    res.json({
+      status: "ok",
+      uptime: process.uptime(),
+      cache: ctx.cache.isConnected ? "connected" : "disconnected",
+    });
   });
 
   // CLI status detection

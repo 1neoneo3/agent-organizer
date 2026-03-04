@@ -6,9 +6,9 @@ const UpdateSettingsSchema = z.record(z.string(), z.string());
 
 export function createSettingsRouter(ctx: RuntimeContext): Router {
   const router = Router();
-  const { db } = ctx;
+  const { db, cache } = ctx;
 
-  router.get("/settings", (_req, res) => {
+  function readAllSettings(): Record<string, string> {
     const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{
       key: string;
       value: string;
@@ -17,10 +17,19 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
     for (const row of rows) {
       settings[row.key] = row.value;
     }
+    return settings;
+  }
+
+  router.get("/settings", async (_req, res) => {
+    const cached = await cache.get<Record<string, string>>("settings:all");
+    if (cached) return res.json(cached);
+
+    const settings = readAllSettings();
+    await cache.set("settings:all", settings, 300);
     res.json(settings);
   });
 
-  router.put("/settings", (req, res) => {
+  router.put("/settings", async (req, res) => {
     const parsed = UpdateSettingsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -32,15 +41,8 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
       upsert.run(key, value, now);
     }
 
-    // Return all settings
-    const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{
-      key: string;
-      value: string;
-    }>;
-    const settings: Record<string, string> = {};
-    for (const row of rows) {
-      settings[row.key] = row.value;
-    }
+    const settings = readAllSettings();
+    await cache.del("settings:all");
     res.json(settings);
   });
 

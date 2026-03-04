@@ -21,10 +21,14 @@ const UpdateAgentSchema = CreateAgentSchema.partial();
 
 export function createAgentsRouter(ctx: RuntimeContext): Router {
   const router = Router();
-  const { db, ws } = ctx;
+  const { db, ws, cache } = ctx;
 
-  router.get("/agents", (_req, res) => {
+  router.get("/agents", async (_req, res) => {
+    const cached = await cache.get("agents:all");
+    if (cached) return res.json(cached);
+
     const agents = db.prepare("SELECT * FROM agents ORDER BY created_at DESC").all();
+    await cache.set("agents:all", agents, 60);
     res.json(agents);
   });
 
@@ -34,7 +38,7 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
     res.json(agent);
   });
 
-  router.post("/agents", (req, res) => {
+  router.post("/agents", async (req, res) => {
     const parsed = CreateAgentSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -49,11 +53,12 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
     ).run(id, name, cli_provider, resolvedModel, cli_reasoning_level ?? null, avatar_emoji, role ?? null, agent_type, personality ?? null, now, now);
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(id);
+    await cache.del("agents:all");
     ws.broadcast("agent_status", agent);
     res.status(201).json(agent);
   });
 
-  router.put("/agents/:id", (req, res) => {
+  router.put("/agents/:id", async (req, res) => {
     const existing = db.prepare("SELECT * FROM agents WHERE id = ?").get(req.params.id);
     if (!existing) return res.status(404).json({ error: "not_found" });
 
@@ -77,16 +82,18 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
 
     db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(req.params.id);
+    await cache.del("agents:all");
     ws.broadcast("agent_status", agent);
     res.json(agent);
   });
 
-  router.delete("/agents/:id", (req, res) => {
+  router.delete("/agents/:id", async (req, res) => {
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(req.params.id) as Agent | undefined;
     if (!agent) return res.status(404).json({ error: "not_found" });
     if (agent.status === "working") return res.status(409).json({ error: "agent_busy" });
 
     db.prepare("DELETE FROM agents WHERE id = ?").run(req.params.id);
+    await cache.del("agents:all");
     res.json({ deleted: true });
   });
 
