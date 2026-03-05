@@ -22,6 +22,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddAgentType(db);
   migrateAddDirectiveId(db);
   migrateAddTaskNumbering(db);
+  migrateAddInteractivePrompt(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -56,6 +57,13 @@ function migrateAddTaskNumbering(db: DatabaseSync): void {
   }
   if (!cols.some((c) => c.name === "depends_on")) {
     db.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT");
+  }
+}
+
+function migrateAddInteractivePrompt(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "interactive_prompt_data")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN interactive_prompt_data TEXT");
   }
 }
 

@@ -68,6 +68,11 @@ export interface DecomposeLogEntry {
 export const fetchDecomposeLogs = (id: string) =>
   api.get<DecomposeLogEntry[]>(`/directives/${id}/decompose-logs`);
 
+// Interactive Prompts (pending)
+import type { InteractivePrompt } from "../types/index.js";
+export const fetchInteractivePrompts = () =>
+  api.get<InteractivePrompt[]>("/tasks/interactive-prompts");
+
 // Interactive Prompt Response
 export const sendInteractiveResponse = (
   taskId: string,

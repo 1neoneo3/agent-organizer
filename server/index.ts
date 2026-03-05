@@ -6,9 +6,11 @@ import cors from "cors";
 import { WebSocketServer, type WebSocket } from "ws";
 import { initializeDb } from "./db/runtime.js";
 import { createWsHub } from "./ws/hub.js";
+import { createRedisClient, createCacheService } from "./cache/index.js";
 import { mountRoutes } from "./routes/index.js";
 import { authMiddleware } from "./security/auth.js";
 import { startOrphanRecovery } from "./lifecycle/jobs.js";
+import { restorePendingInteractivePrompts } from "./spawner/process-manager.js";
 import { PORT, IS_DEV, SESSION_AUTH_TOKEN } from "./config/runtime.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,7 +18,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Bootstrap
 const db = initializeDb();
 const wsHub = createWsHub();
-const ctx = { db, ws: wsHub };
+const redis = createRedisClient();
+const cache = createCacheService(redis);
+const ctx = { db, ws: wsHub, cache };
 
 const app = express();
 
@@ -51,8 +55,9 @@ wss.on("connection", (ws: WebSocket) => {
   ws.on("error", () => wsHub.clients.delete(ws));
 });
 
-// Lifecycle jobs
-startOrphanRecovery(db, wsHub);
+// Restore interactive prompts from DB and start lifecycle jobs
+restorePendingInteractivePrompts(db);
+startOrphanRecovery(db, wsHub, cache);
 
 // Start
 server.listen(PORT, () => {

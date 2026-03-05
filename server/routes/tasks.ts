@@ -4,7 +4,7 @@ import { readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
-import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
+import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 
@@ -37,16 +37,36 @@ function nextTaskNumber(db: RuntimeContext["db"]): string {
 
 export function createTasksRouter(ctx: RuntimeContext): Router {
   const router = Router();
-  const { db, ws } = ctx;
+  const { db, ws, cache } = ctx;
 
-  router.get("/tasks", (req, res) => {
+  async function invalidateTaskCaches(): Promise<void> {
+    await cache.invalidatePattern("tasks:*");
+  }
+
+  router.get("/tasks", async (req, res) => {
     const status = req.query.status as string | undefined;
-    if (status) {
-      const tasks = db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC").all(status);
-      return res.json(tasks);
-    }
-    const tasks = db.prepare("SELECT * FROM tasks ORDER BY priority DESC, created_at DESC").all();
+    const cacheKey = status ? `tasks:status:${status}` : "tasks:all";
+
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const tasks = status
+      ? db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC").all(status)
+      : db.prepare("SELECT * FROM tasks ORDER BY priority DESC, created_at DESC").all();
+
+    await cache.set(cacheKey, tasks, 10);
     res.json(tasks);
+  });
+
+  // GET /tasks/interactive-prompts — return all pending interactive prompts
+  // Must be before /tasks/:id to avoid being caught by the param route
+  router.get("/tasks/interactive-prompts", (_req, res) => {
+    const all = getAllPendingInteractivePrompts();
+    const result: Array<{ task_id: string } & Record<string, unknown>> = [];
+    for (const [taskId, entry] of all) {
+      result.push({ task_id: taskId, ...entry.data });
+    }
+    res.json(result);
   });
 
   router.get("/tasks/:id", (req, res) => {
@@ -55,7 +75,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     res.json(task);
   });
 
-  router.post("/tasks", (req, res) => {
+  router.post("/tasks", async (req, res) => {
     const parsed = CreateTaskSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -70,11 +90,12 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, now, now);
 
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
+    await invalidateTaskCaches();
     ws.broadcast("task_update", task);
     res.status(201).json(task);
   });
 
-  router.put("/tasks/:id", (req, res) => {
+  router.put("/tasks/:id", async (req, res) => {
     const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
     if (!existing) return res.status(404).json({ error: "not_found" });
 
@@ -104,23 +125,25 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
+    await invalidateTaskCaches();
     ws.broadcast("task_update", task);
 
     // Trigger auto-review on manual status change to pr_review
     if (updates.status === "pr_review") {
-      setTimeout(() => triggerAutoReview(db, ws, task), 500);
+      setTimeout(() => triggerAutoReview(db, ws, task, cache), 500);
     }
 
     res.json(task);
   });
 
-  router.delete("/tasks/:id", (req, res) => {
+  router.delete("/tasks/:id", async (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") {
       killAgent(task.id);
     }
     db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
+    await invalidateTaskCaches();
     res.json({ deleted: true });
   });
 
@@ -142,12 +165,12 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET assigned_agent_id = ? WHERE id = ?").run(agentId, task.id);
     }
 
-    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId });
+    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId }, { cache });
     res.json({ started: true, pid: result.pid });
   });
 
   // Stop a running task
-  router.post("/tasks/:id/stop", (req, res) => {
+  router.post("/tasks/:id/stop", async (req, res) => {
     const killed = killAgent(req.params.id, "user_stop");
     if (!killed) return res.status(404).json({ error: "not_running" });
 
@@ -160,6 +183,8 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
+    await invalidateTaskCaches();
+    await cache.del("agents:all");
     ws.broadcast("task_update", { id: req.params.id, status: "cancelled" });
     res.json({ stopped: true });
   });
@@ -267,7 +292,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus });
+    spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache });
 
     res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
   });
@@ -318,7 +343,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     }
 
     // Clear the pending prompt
-    clearPendingInteractivePrompt(task.id);
+    clearPendingInteractivePrompt(task.id, db);
 
     const now = Date.now();
 
@@ -345,7 +370,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress" });
+    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true });
 
     res.json({ sent: true, restarted: true });
   });

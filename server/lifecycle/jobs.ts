@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import type { WsHub } from "../ws/hub.js";
+import type { CacheService } from "../cache/cache-service.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 
@@ -9,7 +10,7 @@ const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
  * Runs periodically to handle crashes or unclean shutdowns.
  * Skips tasks with a pending interactive prompt (unless timed out).
  */
-export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, intervalMs = 60_000): ReturnType<typeof setInterval> {
+export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, cache?: CacheService, intervalMs = 60_000): ReturnType<typeof setInterval> {
   return setInterval(() => {
     const active = getActiveProcesses();
     const inProgress = db.prepare(
@@ -26,7 +27,7 @@ export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, intervalMs = 60
             continue; // Still waiting for user response
           }
           // Timed out — clear and cancel
-          clearPendingInteractivePrompt(task.id);
+          clearPendingInteractivePrompt(task.id, db);
           db.prepare(
             "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'Interactive prompt timed out after 2 hours')"
           ).run(task.id);
@@ -48,6 +49,10 @@ export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, intervalMs = 60
           ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
         }
 
+        if (cache) {
+          cache.invalidatePattern("tasks:*");
+          cache.del("agents:all");
+        }
         ws.broadcast("task_update", { id: task.id, status: "cancelled" });
       }
     }

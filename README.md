@@ -39,6 +39,17 @@ pnpm build
 pnpm start
 ```
 
+## Testing
+
+```bash
+pnpm test:e2e       # Run Playwright E2E tests
+pnpm test:e2e:ui    # Run with Playwright UI
+```
+
+E2E tests are located in `e2e/` and cover agent CRUD, task CRUD, and task flow scenarios.
+
+Requires the server to be running (Playwright auto-starts it via config).
+
 ## Project Structure
 
 ```

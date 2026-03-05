@@ -1,28 +1,30 @@
 import { useState, useRef, useEffect } from "react";
 import { getRoleLabel, getRoleColorClass } from "../../components/agents/roles.js";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
-import { sendTaskFeedback } from "../../api/endpoints.js";
-import type { Task, Agent } from "../../types/index.js";
+import { sendTaskFeedback, sendInteractiveResponse } from "../../api/endpoints.js";
+import { useSfx } from "../../hooks/useSfx.js";
+import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 
-const STATUS_COLORS: Record<string, string> = {
-  inbox: "bg-gray-600",
-  in_progress: "bg-blue-600",
-  self_review: "bg-yellow-600",
-  pr_review: "bg-purple-600",
-  done: "bg-green-600",
-  cancelled: "bg-red-600",
+const SIZE_TO_LV: Record<string, string> = {
+  small: "LV.1",
+  medium: "LV.2",
+  large: "LV.3",
 };
 
-const SIZE_BADGES: Record<string, string> = {
-  small: "text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300",
-  medium: "text-xs bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300",
-  large: "text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+const STATUS_DISPLAY: Record<string, string> = {
+  inbox: "WAITING",
+  in_progress: "BATTLE",
+  self_review: "CHECK",
+  pr_review: "REVIEW",
+  done: "CLEAR",
+  cancelled: "FLED",
 };
 
 interface TaskCardProps {
   task: Task;
   agents: Agent[];
   hasInteractivePrompt?: boolean;
+  interactivePrompt?: InteractivePrompt;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
   onDone?: (taskId: string) => void;
@@ -31,13 +33,48 @@ interface TaskCardProps {
   onDelete?: (taskId: string) => void;
 }
 
-export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
+export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
   const agent = agents.find((a) => a.id === task.assigned_agent_id);
   const idleAgents = agents.filter((a) => a.status === "idle");
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
   const [showMessageForm, setShowMessageForm] = useState(false);
+  const [sendingPromptResponse, setSendingPromptResponse] = useState(false);
+  const { play } = useSfx();
 
-  // Sync selectedAgentId when idle agents change (e.g. after another task is run)
+  const handleApprove = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!interactivePrompt || sendingPromptResponse) return;
+    setSendingPromptResponse(true);
+    try {
+      play("confirm");
+      await sendInteractiveResponse(interactivePrompt.task_id, {
+        promptType: interactivePrompt.promptType,
+        approved: true,
+      });
+    } catch {
+      // silently fail
+    } finally {
+      setSendingPromptResponse(false);
+    }
+  };
+
+  const handleReject = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!interactivePrompt || sendingPromptResponse) return;
+    setSendingPromptResponse(true);
+    try {
+      play("cancel");
+      await sendInteractiveResponse(interactivePrompt.task_id, {
+        promptType: interactivePrompt.promptType,
+        approved: false,
+      });
+    } catch {
+      // silently fail
+    } finally {
+      setSendingPromptResponse(false);
+    }
+  };
+
   useEffect(() => {
     setSelectedAgentId((prev) => {
       const idleIds = agents.filter((a) => a.status === "idle").map((a) => a.id);
@@ -60,9 +97,10 @@ export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, on
       await sendTaskFeedback(task.id, messageText.trim());
       setMessageText("");
       setSent(true);
+      play("confirm");
       setTimeout(() => setSent(false), 1500);
     } catch {
-      // silently fail — user can retry
+      // silently fail
     } finally {
       setSending(false);
     }
@@ -70,207 +108,286 @@ export function TaskCard({ task, agents, hasInteractivePrompt, onRun, onStop, on
 
   return (
     <div
-      className="bg-white dark:bg-gray-800 rounded-lg p-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border border-gray-200 dark:border-gray-700"
-      onClick={() => onSelect?.(task.id)}
+      className="eb-window"
+      style={{ cursor: "pointer", transition: "transform 0.1s" }}
+      onClick={() => { play("select"); onSelect?.(task.id); }}
+      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-1px)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 line-clamp-2">
-          {task.task_number && (
-            <span className="text-blue-500 font-mono mr-1">{task.task_number}</span>
-          )}
-          {task.title}
-        </h3>
-        <div className="flex items-center gap-1 shrink-0">
+      {/* Card header: title + status */}
+      <div style={{ padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "6px" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--eb-text)", fontFamily: "system-ui, -apple-system, sans-serif" }}>
+            {task.task_number && (
+              <span className="eb-heading" style={{ color: "var(--eb-highlight)", marginRight: "4px", fontSize: "9px" }}>{task.task_number}</span>
+            )}
+            <span style={{ wordBreak: "break-word" }}>{task.title}</span>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500 text-white animate-pulse">
-              Needs Input
+            <span className="eb-label" style={{
+              padding: "2px 4px",
+              background: "#c08800",
+              color: "#fff",
+              borderRadius: "2px",
+              fontSize: "7px",
+              animation: "eb-blink 0.8s steps(1) infinite",
+            }}>
+              INPUT
             </span>
           )}
-          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase text-white ${STATUS_COLORS[task.status] ?? "bg-gray-600"}`}>
-            {task.status.replace("_", " ")}
+          <span className="eb-label" style={{
+            padding: "2px 4px",
+            background: "var(--eb-border-out)",
+            color: "var(--eb-bg)",
+            borderRadius: "2px",
+            fontSize: "7px",
+          }}>
+            {STATUS_DISPLAY[task.status] ?? task.status}
           </span>
         </div>
       </div>
 
-      <div className="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-        <span className={`px-1.5 py-0.5 rounded ${SIZE_BADGES[task.task_size]}`}>
-          {task.task_size}
-        </span>
-        {task.directive_id && (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300">
-            Directive
-          </span>
-        )}
-        {task.depends_on && (() => { try { const deps = JSON.parse(task.depends_on); return deps.length > 0 ? (
-          <span className="text-[10px] text-gray-400 dark:text-gray-500">
-            &larr; {deps.join(", ")}
-          </span>
-        ) : null; } catch { return null; } })()}
-        {agent && (
-          <span className="flex items-center gap-1">
-            <PixelAvatar role={agent.role} size={18} /> {agent.name}
-            {getRoleLabel(agent.role) && (
-              <span className={`px-1 py-0.5 rounded text-[10px] font-medium ${getRoleColorClass(agent.role)}`}>
-                {getRoleLabel(agent.role)}
-              </span>
-            )}
-          </span>
-        )}
-      </div>
-      {agent?.cli_model && (
-        <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500 truncate" title={agent.cli_model}>
-          {agent.cli_model}
-        </div>
-      )}
-
-      {task.status === "inbox" && idleAgents.length === 0 && (
-        <div className="mt-2 flex gap-1">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete?.(task.id);
-            }}
-            title="Delete task"
-            className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 inline-block">
-              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clipRule="evenodd" />
-            </svg>
-          </button>
-        </div>
-      )}
-
-      {task.status === "inbox" && idleAgents.length > 0 && (
-        <div className="mt-2 flex flex-col gap-1.5">
-          <select
-            value={selectedAgentId}
-            onChange={(e) => {
-              e.stopPropagation();
-              setSelectedAgentId(e.target.value);
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200"
-          >
-            {idleAgents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.avatar_emoji} {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
-              </option>
-            ))}
-          </select>
-          <div className="flex gap-1">
+      {/* Plan Approval — show directly on card */}
+      {interactivePrompt?.promptType === "exit_plan_mode" && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            padding: "8px 10px",
+            background: "var(--eb-shadow)",
+            borderTop: "2px solid var(--eb-highlight)",
+            borderBottom: "2px solid var(--eb-highlight)",
+          }}
+        >
+          <div className="eb-label" style={{ fontSize: "8px", color: "var(--eb-highlight)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ animation: "eb-blink 0.6s steps(1) infinite" }}>!</span>
+            PLAN APPROVAL
+          </div>
+          <div style={{ display: "flex", gap: "6px" }}>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (selectedAgentId) onRun?.(task.id, selectedAgentId);
-              }}
-              disabled={!selectedAgentId}
-              className="flex-1 px-2 py-1 text-xs bg-blue-700 hover:bg-blue-600 text-white rounded transition-colors disabled:opacity-50"
+              onClick={handleApprove}
+              disabled={sendingPromptResponse}
+              className="eb-btn eb-btn--primary"
+              style={{ flex: 1, fontSize: "8px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
             >
-              ▶ Run
+              {sendingPromptResponse ? "..." : "APPROVE"}
             </button>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete?.(task.id);
-              }}
-              title="Delete task"
-              className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
+              onClick={handleReject}
+              disabled={sendingPromptResponse}
+              className="eb-btn eb-btn--danger"
+              style={{ flex: 1, fontSize: "8px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clipRule="evenodd" />
-              </svg>
+              {sendingPromptResponse ? "..." : "REJECT"}
             </button>
           </div>
         </div>
       )}
 
-      {task.status !== "inbox" && (
-        <div className="mt-2 flex gap-1">
-          {task.status === "in_progress" && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onStop?.(task.id);
-              }}
-              className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
-            >
-              Stop
-            </button>
-          )}
-          {task.status === "pr_review" && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDone?.(task.id);
-              }}
-              className="px-2 py-1 text-xs bg-green-700 hover:bg-green-600 text-white rounded transition-colors"
-            >
-              Done
-            </button>
-          )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onShowLog?.(task.id);
-            }}
-            className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded transition-colors"
-          >
-            Log
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowMessageForm((v) => !v);
-            }}
-            title="Send message"
-            className={`px-2 py-1 text-xs rounded transition-colors ${showMessageForm ? "bg-indigo-600 text-white" : "bg-gray-600 hover:bg-gray-500 text-white"}`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 inline-block">
-              <path fillRule="evenodd" d="M3.43 2.524A41.29 41.29 0 0 1 10 2c2.236 0 4.43.18 6.57.524 1.437.231 2.43 1.49 2.43 2.902v5.148c0 1.413-.993 2.67-2.43 2.902a41.1 41.1 0 0 1-3.55.414.783.783 0 0 0-.64.413l-1.713 3.293a.75.75 0 0 1-1.334 0l-1.713-3.293a.783.783 0 0 0-.64-.413 41.1 41.1 0 0 1-3.55-.414C1.993 13.245 1 11.986 1 10.574V5.426c0-1.413.993-2.67 2.43-2.902ZM7 8.5a1 1 0 1 1 2 0 1 1 0 0 1-2 0Zm5 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z" clipRule="evenodd" />
-            </svg>
-          </button>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete?.(task.id);
-            }}
-            title="Delete task"
-            className="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 text-white rounded transition-colors"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 inline-block">
-              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clipRule="evenodd" />
-            </svg>
-          </button>
+      {/* Agent Question — prompt to open modal */}
+      {interactivePrompt?.promptType === "ask_user_question" && (
+        <div
+          style={{
+            padding: "6px 10px",
+            background: "var(--eb-shadow)",
+            borderTop: "2px solid var(--eb-highlight)",
+            borderBottom: "2px solid var(--eb-highlight)",
+            textAlign: "center",
+          }}
+        >
+          <div className="eb-label" style={{ fontSize: "8px", color: "var(--eb-highlight)", display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+            <span style={{ animation: "eb-blink 0.6s steps(1) infinite" }}>?</span>
+            CLICK TO ANSWER
+          </div>
         </div>
       )}
 
-      {showMessageForm && (
-        <div
-          className="mt-2 flex gap-1"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <input
-            ref={inputRef}
-            type="text"
-            value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing) handleSendMessage();
-              if (e.key === "Escape") setShowMessageForm(false);
-            }}
-            placeholder={task.status === "in_progress" ? "Send feedback..." : "Send message..."}
-            disabled={sending}
-            className="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={!messageText.trim() || sending}
-            className="px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors disabled:opacity-50 whitespace-nowrap"
-          >
-            {sending ? "..." : sent ? "Sent!" : "Send"}
-          </button>
+      {/* Card body */}
+      <div className="eb-window-body" style={{ padding: "6px 10px" }}>
+        {/* RPG stats row */}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+          <span className="eb-label" style={{
+            padding: "1px 4px",
+            background: "var(--eb-shadow)",
+            color: "var(--eb-highlight)",
+            borderRadius: "2px",
+            fontSize: "7px",
+          }}>
+            {SIZE_TO_LV[task.task_size] ?? "LV.?"}
+          </span>
+          {task.directive_id && (
+            <span className="eb-label" style={{
+              padding: "1px 4px",
+              background: "var(--eb-border-in)",
+              color: "var(--eb-bg)",
+              borderRadius: "2px",
+              fontSize: "7px",
+            }}>
+              DIRECTIVE
+            </span>
+          )}
+          {task.depends_on && (() => { try { const deps = JSON.parse(task.depends_on); return deps.length > 0 ? (
+            <span className="eb-label" style={{ fontSize: "7px" }}>
+              &larr; {deps.join(", ")}
+            </span>
+          ) : null; } catch { return null; } })()}
         </div>
-      )}
+
+        {/* Assigned agent */}
+        {agent && (
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", marginTop: "4px" }}>
+            <span className={agent.status === "working" ? "eb-sprite-working" : "eb-sprite-idle"}>
+              <PixelAvatar role={agent.role} size={18} />
+            </span>
+            <span className="eb-label" style={{ fontSize: "8px", color: "var(--eb-text)" }}>{agent.name}</span>
+            {getRoleLabel(agent.role) && (
+              <span className="eb-label" style={{
+                padding: "1px 3px",
+                background: "var(--eb-border-in)",
+                color: "var(--eb-bg)",
+                borderRadius: "2px",
+                fontSize: "6px",
+              }}>
+                {getRoleLabel(agent.role)}
+              </span>
+            )}
+          </div>
+        )}
+        {agent?.cli_model && (
+          <div className="eb-label" style={{ fontSize: "7px", marginTop: "2px", color: "var(--eb-text-sub)" }}>
+            {agent.cli_model}
+          </div>
+        )}
+
+        {/* Inbox actions */}
+        {task.status === "inbox" && idleAgents.length === 0 && (
+          <div style={{ marginTop: "6px", display: "flex", gap: "4px" }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); play("cancel"); onDelete?.(task.id); }}
+              title="Delete task"
+              className="eb-btn eb-btn--danger"
+              style={{ fontSize: "7px", padding: "3px 6px" }}
+            >
+              DEL
+            </button>
+          </div>
+        )}
+
+        {task.status === "inbox" && idleAgents.length > 0 && (
+          <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px" }}>
+            <select
+              value={selectedAgentId}
+              onChange={(e) => { e.stopPropagation(); setSelectedAgentId(e.target.value); }}
+              onClick={(e) => e.stopPropagation()}
+              className="eb-select"
+              style={{ width: "100%", fontSize: "10px" }}
+            >
+              {idleAgents.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
+                </option>
+              ))}
+            </select>
+            <div style={{ display: "flex", gap: "4px" }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); play("confirm"); if (selectedAgentId) onRun?.(task.id, selectedAgentId); }}
+                disabled={!selectedAgentId}
+                className="eb-btn eb-btn--primary"
+                style={{ flex: 1, fontSize: "7px", padding: "4px 6px", opacity: selectedAgentId ? 1 : 0.5 }}
+              >
+                RUN
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); play("cancel"); onDelete?.(task.id); }}
+                title="Delete"
+                className="eb-btn eb-btn--danger"
+                style={{ fontSize: "7px", padding: "4px 6px" }}
+              >
+                DEL
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Non-inbox actions */}
+        {task.status !== "inbox" && (
+          <div style={{ marginTop: "6px", display: "flex", gap: "4px" }}>
+            {task.status === "in_progress" && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onStop?.(task.id); }}
+                className="eb-btn eb-btn--danger"
+                style={{ fontSize: "7px", padding: "3px 6px" }}
+              >
+                STOP
+              </button>
+            )}
+            {task.status === "pr_review" && (
+              <button
+                onClick={(e) => { e.stopPropagation(); play("confirm"); onDone?.(task.id); }}
+                className="eb-btn eb-btn--primary"
+                style={{ fontSize: "7px", padding: "3px 6px" }}
+              >
+                DONE
+              </button>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); play("select"); onShowLog?.(task.id); }}
+              className="eb-btn"
+              style={{ fontSize: "7px", padding: "3px 6px" }}
+            >
+              LOG
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); play("select"); setShowMessageForm((v) => !v); }}
+              title="Send message"
+              className="eb-btn"
+              style={{ fontSize: "7px", padding: "3px 6px", background: showMessageForm ? "var(--eb-highlight)" : undefined, color: showMessageForm ? "var(--eb-shadow)" : undefined }}
+            >
+              MSG
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); play("cancel"); onDelete?.(task.id); }}
+              title="Delete"
+              className="eb-btn eb-btn--danger"
+              style={{ fontSize: "7px", padding: "3px 6px" }}
+            >
+              DEL
+            </button>
+          </div>
+        )}
+
+        {/* Message form */}
+        {showMessageForm && (
+          <div
+            style={{ marginTop: "6px", display: "flex", gap: "4px" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <input
+              ref={inputRef}
+              type="text"
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) handleSendMessage();
+                if (e.key === "Escape") setShowMessageForm(false);
+              }}
+              placeholder={task.status === "in_progress" ? "Feedback..." : "Message..."}
+              disabled={sending}
+              className="eb-input"
+              style={{ flex: 1, minWidth: 0, fontSize: "10px" }}
+            />
+            <button
+              onClick={handleSendMessage}
+              disabled={!messageText.trim() || sending}
+              className="eb-btn eb-btn--primary"
+              style={{ fontSize: "7px", padding: "3px 6px", opacity: (!messageText.trim() || sending) ? 0.5 : 1 }}
+            >
+              {sending ? "..." : sent ? "OK!" : "SEND"}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

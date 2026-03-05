@@ -1,17 +1,32 @@
 import { Outlet } from "react-router";
 import { Sidebar } from "./Sidebar.js";
+import type { Flavor, TimeOfDay } from "../../hooks/useTheme.js";
 
 interface AppLayoutProps {
   connected: boolean;
   theme: "dark" | "light";
   toggleTheme: () => void;
+  flavor: Flavor;
+  setFlavor: (f: Flavor) => void;
+  timeOfDay: TimeOfDay;
+  toggleTimeOfDay: () => void;
+  flavors: readonly Flavor[];
 }
 
-export function AppLayout({ connected, theme, toggleTheme }: AppLayoutProps) {
+export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, timeOfDay, toggleTimeOfDay, flavors }: AppLayoutProps) {
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
-      <Sidebar connected={connected} theme={theme} toggleTheme={toggleTheme} />
-      <main className="flex-1 min-h-0 overflow-y-auto p-6">
+    <div className="flex h-screen eb-overworld-bg" style={{ color: "var(--eb-text)" }}>
+      <Sidebar
+        connected={connected}
+        theme={theme}
+        toggleTheme={toggleTheme}
+        flavor={flavor}
+        setFlavor={setFlavor}
+        timeOfDay={timeOfDay}
+        toggleTimeOfDay={toggleTimeOfDay}
+        flavors={flavors}
+      />
+      <main className="flex-1 min-h-0 overflow-y-auto p-4">
         <Outlet />
       </main>
     </div>

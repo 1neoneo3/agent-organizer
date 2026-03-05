@@ -15,18 +15,47 @@ import {
 } from "../config/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
+import type { CacheService } from "../cache/cache-service.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 
+/** Restore pending interactive prompts from DB on server startup */
+export function restorePendingInteractivePrompts(db: DatabaseSync): void {
+  const rows = db.prepare(
+    "SELECT id, interactive_prompt_data FROM tasks WHERE interactive_prompt_data IS NOT NULL AND status = 'in_progress'"
+  ).all() as Array<{ id: string; interactive_prompt_data: string }>;
+  for (const row of rows) {
+    try {
+      const parsed = JSON.parse(row.interactive_prompt_data) as { data: InteractivePromptData; createdAt: number };
+      pendingInteractivePrompts.set(row.id, parsed);
+    } catch { /* ignore corrupted data */ }
+  }
+}
+
+function persistPromptToDb(db: DatabaseSync, taskId: string, entry: { data: InteractivePromptData; createdAt: number } | null): void {
+  try {
+    db.prepare("UPDATE tasks SET interactive_prompt_data = ? WHERE id = ?")
+      .run(entry ? JSON.stringify(entry) : null, taskId);
+  } catch { /* best-effort persist */ }
+}
+
 export function getPendingInteractivePrompt(taskId: string): { data: InteractivePromptData; createdAt: number } | undefined {
   return pendingInteractivePrompts.get(taskId);
 }
 
-export function clearPendingInteractivePrompt(taskId: string): boolean {
-  return pendingInteractivePrompts.delete(taskId);
+export function getAllPendingInteractivePrompts(): Map<string, { data: InteractivePromptData; createdAt: number }> {
+  return pendingInteractivePrompts;
+}
+
+export function clearPendingInteractivePrompt(taskId: string, db?: DatabaseSync): boolean {
+  const deleted = pendingInteractivePrompts.delete(taskId);
+  if (deleted && db) {
+    persistPromptToDb(db, taskId, null);
+  }
+  return deleted;
 }
 
 export function getActiveProcesses(): Map<string, ChildProcess> {
@@ -53,14 +82,22 @@ export function queueFeedbackAndRestart(taskId: string, message: string, previou
   return true;
 }
 
+function invalidateCaches(cache?: CacheService): void {
+  if (!cache) return;
+  cache.invalidatePattern("tasks:*");
+  cache.del("agents:all");
+}
+
 export function spawnAgent(
   db: DatabaseSync,
   ws: WsHub,
   agent: Agent,
   task: Task,
-  options?: { continuePrompt?: string; previousStatus?: string }
+  options?: { continuePrompt?: string; previousStatus?: string; cache?: CacheService; finalizeOnComplete?: boolean }
 ): { pid: number } {
+  const cache = options?.cache;
   const isContinue = !!options?.continuePrompt;
+  const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
@@ -115,7 +152,9 @@ export function spawnAgent(
     db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?").run(now, now, task.id);
     db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
 
-    ws.broadcast("task_update", { id: task.id, status: "in_progress", started_at: now });
+    invalidateCaches(cache);
+    const startedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+    ws.broadcast("task_update", startedTask ?? { id: task.id, status: "in_progress", started_at: now });
     ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
   }
 
@@ -127,6 +166,9 @@ export function spawnAgent(
 
   // Dedup: track recent assistant messages to skip duplicates from multiple event formats
   const recentAssistantMessages = new Set<string>();
+
+  // Flag to stop processing stdout after an interactive prompt is detected and process killed
+  let interactivePromptKilled = false;
 
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
@@ -150,6 +192,9 @@ export function spawnAgent(
 
   // stdout handler
   child.stdout?.on("data", (data: Buffer) => {
+    // Skip processing if we already killed the process for an interactive prompt
+    if (interactivePromptKilled) return;
+
     clearTimeout(idleTimer);
     idleTimer = resetIdleTimer();
 
@@ -188,11 +233,20 @@ export function spawnAgent(
         }
 
         // Detect interactive prompts (ExitPlanMode / AskUserQuestion)
+        // Kill the process immediately to prevent CLI from auto-resolving the prompt.
+        // The user will respond via the UI, then the agent is respawned with --resume.
         const interactivePrompt = parseInteractivePrompt(obj);
         if (interactivePrompt && !pendingInteractivePrompts.has(task.id)) {
-          pendingInteractivePrompts.set(task.id, { data: interactivePrompt, createdAt: Date.now() });
+          const entry = { data: interactivePrompt, createdAt: Date.now() };
+          pendingInteractivePrompts.set(task.id, entry);
+          persistPromptToDb(db, task.id, entry);
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
-          insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId})`);
+          insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`);
+
+          // Kill the process so it can't auto-resolve the prompt
+          interactivePromptKilled = true;
+          try { child.kill("SIGTERM"); } catch { /* already dead */ }
+          break; // Stop processing remaining lines in this chunk
         }
 
         // Subtask parsing (reuse pre-parsed object)
@@ -249,15 +303,15 @@ export function spawnAgent(
     activeProcesses.delete(task.id);
     logStream.end();
 
-    // Check for pending interactive prompt — keep task in_progress, don't finalize
+    // Check for pending interactive prompt — keep task in_progress, don't finalize.
+    // The process was killed when we detected the prompt, so the user can respond via UI.
     if (pendingInteractivePrompts.has(task.id) && !pendingFeedback.has(task.id)) {
       const finishTime = Date.now();
       db.prepare(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
       ).run(finishTime, agent.id);
-      db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'Agent awaiting user input (interactive prompt). Task remains in_progress.')"
-      ).run(task.id);
+      insertLogStmt.run(task.id, "system", "Agent awaiting user input (interactive prompt). Task remains in_progress.");
+      invalidateCaches(cache);
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -277,6 +331,7 @@ export function spawnAgent(
         spawnAgent(db, ws, freshAgent, freshTask, {
           continuePrompt: feedback.message,
           previousStatus: feedback.previousStatus,
+          cache,
         });
       }
       return;
@@ -285,7 +340,8 @@ export function spawnAgent(
     const finishTime = Date.now();
 
     // Feedback respawn completed: restore previous status instead of finalizing as done
-    if (isContinue) {
+    // (unless finalizeOnComplete is set, e.g. after interactive prompt response)
+    if (isContinue && !finalizeOnComplete) {
       const restoreStatus = options?.previousStatus ?? "in_progress";
 
       db.prepare(
@@ -300,7 +356,9 @@ export function spawnAgent(
         "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
       ).run(task.id, `Feedback response complete. Restored status: ${restoreStatus}`);
 
-      ws.broadcast("task_update", { id: task.id, status: restoreStatus });
+      invalidateCaches(cache);
+      const restoredTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+      ws.broadcast("task_update", restoredTask ?? { id: task.id, status: restoreStatus });
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -319,13 +377,15 @@ export function spawnAgent(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
 
-    ws.broadcast("task_update", { id: task.id, status: finalStatus, completed_at: finishTime });
+    invalidateCaches(cache);
+    const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+    ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
     // Trigger auto-review if task landed in pr_review
     if (finalStatus === "pr_review") {
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-      setTimeout(() => triggerAutoReview(db, ws, freshTask), 500);
+      setTimeout(() => triggerAutoReview(db, ws, freshTask, cache), 500);
     }
   });
 
@@ -402,6 +462,32 @@ function handleSubtaskEvent(
       ws.broadcast("subtask_update", { id: subtaskId, task_id: taskId, status: "done" });
     }
   }
+}
+
+/**
+ * Check if a JSON stream object contains a tool_result for the given toolUseId.
+ * This detects when the CLI internally resolved an interactive prompt
+ * (e.g., ExitPlanMode auto-approved in non-interactive mode).
+ */
+function isToolResultForPrompt(obj: Record<string, unknown>, toolUseId: string): boolean {
+  // Direct tool_result event
+  if (obj.type === "tool_result") {
+    return String(obj.tool_use_id ?? obj.id ?? "") === toolUseId;
+  }
+
+  // User message with tool_result content blocks
+  if (obj.type === "user" && obj.message && typeof obj.message === "object") {
+    const msg = obj.message as Record<string, unknown>;
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      return content.some((block) => {
+        const b = block as Record<string, unknown>;
+        return b.type === "tool_result" && String(b.tool_use_id ?? "") === toolUseId;
+      });
+    }
+  }
+
+  return false;
 }
 
 function getSetting(db: DatabaseSync, key: string): string | undefined {
