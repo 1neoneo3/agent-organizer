@@ -153,7 +153,8 @@ export function spawnAgent(
     db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
 
     invalidateCaches(cache);
-    ws.broadcast("task_update", { id: task.id, status: "in_progress", started_at: now });
+    const startedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+    ws.broadcast("task_update", startedTask ?? { id: task.id, status: "in_progress", started_at: now });
     ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
   }
 
@@ -356,7 +357,8 @@ export function spawnAgent(
       ).run(task.id, `Feedback response complete. Restored status: ${restoreStatus}`);
 
       invalidateCaches(cache);
-      ws.broadcast("task_update", { id: task.id, status: restoreStatus });
+      const restoredTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+      ws.broadcast("task_update", restoredTask ?? { id: task.id, status: restoreStatus });
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -376,7 +378,8 @@ export function spawnAgent(
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
 
     invalidateCaches(cache);
-    ws.broadcast("task_update", { id: task.id, status: finalStatus, completed_at: finishTime });
+    const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+    ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
     // Trigger auto-review if task landed in pr_review
