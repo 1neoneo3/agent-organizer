@@ -3,17 +3,26 @@ import { WS_BATCH_INTERVALS, WS_MAX_BATCH_QUEUE } from "../config/runtime.js";
 
 const PING_INTERVAL_MS = 30_000;
 
+interface BroadcastOptions {
+  taskId?: string;
+}
+
 export interface WsHub {
   readonly clients: Set<WebSocket>;
-  broadcast(type: string, payload: unknown): void;
+  addClient(ws: WebSocket): void;
+  removeClient(ws: WebSocket): void;
+  subscribeClientToTask(ws: WebSocket, taskId: string): void;
+  unsubscribeClientFromTask(ws: WebSocket, taskId: string): void;
+  broadcast(type: string, payload: unknown, options?: BroadcastOptions): void;
   dispose(): void;
 }
 
 export function createWsHub(): WsHub {
   const clients = new Set<WebSocket>();
+  const taskSubscriptions = new WeakMap<WebSocket, Set<string>>();
   const batches = new Map<
     string,
-    { queue: unknown[]; timer: ReturnType<typeof setTimeout> }
+    { queue: Array<{ payload: unknown; taskId?: string }>; timer: ReturnType<typeof setTimeout> }
   >();
 
   // --- ping/pong heartbeat ---
@@ -34,7 +43,18 @@ export function createWsHub(): WsHub {
 
   function registerClient(ws: WebSocket): void {
     aliveMap.set(ws, true);
+    taskSubscriptions.set(ws, new Set());
     ws.on("pong", () => aliveMap.set(ws, true));
+  }
+
+  function addClient(ws: WebSocket): void {
+    registerClient(ws);
+    clients.add(ws);
+  }
+
+  function removeClient(ws: WebSocket): void {
+    clients.delete(ws);
+    taskSubscriptions.delete(ws);
   }
 
   function dispose(): void {
@@ -42,10 +62,18 @@ export function createWsHub(): WsHub {
   }
   // --- end heartbeat ---
 
-  function sendRaw(type: string, payload: unknown): void {
+  function shouldReceive(ws: WebSocket, taskId?: string): boolean {
+    if (!taskId) {
+      return true;
+    }
+
+    return taskSubscriptions.get(ws)?.has(taskId) ?? false;
+  }
+
+  function sendRaw(type: string, payload: unknown, taskId?: string): void {
     const message = JSON.stringify({ type, payload, ts: Date.now() });
     for (const ws of clients) {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WebSocket.OPEN && shouldReceive(ws, taskId)) {
         ws.send(message);
       }
     }
@@ -55,40 +83,42 @@ export function createWsHub(): WsHub {
     const batch = batches.get(type);
     if (!batch || batch.queue.length === 0) return;
     const items = batch.queue.splice(0);
-    sendRaw(type, items);
+    sendRaw(type, items.map((item) => item.payload), items[0]?.taskId);
     batches.delete(type);
   }
 
-  function broadcast(type: string, payload: unknown): void {
+  function broadcast(type: string, payload: unknown, options?: BroadcastOptions): void {
     const interval = WS_BATCH_INTERVALS[type];
     if (interval == null) {
-      sendRaw(type, payload);
+      sendRaw(type, payload, options?.taskId);
       return;
     }
 
-    const existing = batches.get(type);
+    const batchKey = options?.taskId ? `${type}:${options.taskId}` : type;
+    const existing = batches.get(batchKey);
     if (!existing) {
       // First event: send immediately, open batch window
-      sendRaw(type, payload);
-      batches.set(type, {
+      sendRaw(type, payload, options?.taskId);
+      batches.set(batchKey, {
         queue: [],
-        timer: setTimeout(() => flushBatch(type), interval),
+        timer: setTimeout(() => flushBatch(batchKey), interval),
       });
       return;
     }
 
-    existing.queue.push(payload);
+    existing.queue.push({ payload, taskId: options?.taskId });
     if (existing.queue.length > WS_MAX_BATCH_QUEUE) {
       existing.queue.shift(); // shed oldest
     }
   }
 
-  // Intercept add to also register heartbeat for new clients
-  const originalAdd = clients.add.bind(clients);
-  clients.add = (ws: WebSocket) => {
-    registerClient(ws);
-    return originalAdd(ws);
-  };
+  function subscribeClientToTask(ws: WebSocket, taskId: string): void {
+    taskSubscriptions.get(ws)?.add(taskId);
+  }
 
-  return { clients, broadcast, dispose };
+  function unsubscribeClientFromTask(ws: WebSocket, taskId: string): void {
+    taskSubscriptions.get(ws)?.delete(taskId);
+  }
+
+  return { clients, addClient, removeClient, subscribeClientToTask, unsubscribeClientFromTask, broadcast, dispose };
 }

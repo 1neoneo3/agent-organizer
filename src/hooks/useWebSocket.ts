@@ -11,6 +11,7 @@ const DISCONNECT_GRACE_MS = 3000;
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);
   const listenersRef = useRef<Map<WSEventType, Set<Listener>>>(new Map());
+  const taskSubscriptionsRef = useRef<Map<string, number>>(new Map());
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
@@ -43,6 +44,9 @@ export function useWebSocket() {
         attempt = 0;
         clearTimeout(graceTimer);
         setConnected(true);
+        for (const taskId of taskSubscriptionsRef.current.keys()) {
+          ws.send(JSON.stringify({ type: "subscribe_task", taskId }));
+        }
       };
 
       ws.onclose = () => {
@@ -97,5 +101,27 @@ export function useWebSocket() {
     };
   }, []);
 
-  return { connected, on };
+  const subscribeTask = useCallback((taskId: string) => {
+    const count = taskSubscriptionsRef.current.get(taskId) ?? 0;
+    taskSubscriptionsRef.current.set(taskId, count + 1);
+
+    if (count === 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "subscribe_task", taskId }));
+    }
+
+    return () => {
+      const current = taskSubscriptionsRef.current.get(taskId) ?? 0;
+      if (current <= 1) {
+        taskSubscriptionsRef.current.delete(taskId);
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "unsubscribe_task", taskId }));
+        }
+        return;
+      }
+
+      taskSubscriptionsRef.current.set(taskId, current - 1);
+    };
+  }, []);
+
+  return { connected, on, subscribeTask };
 }

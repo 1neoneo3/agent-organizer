@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchAgents, fetchTasks, fetchSettings, fetchCliStatus, fetchDirectives, fetchInteractivePrompts } from "../api/endpoints.js";
+import { fetchAgent, fetchAgents, fetchTask, fetchTasks, fetchSettings, fetchCliStatus, fetchDirective, fetchDirectives, fetchInteractivePrompts } from "../api/endpoints.js";
 import { useWebSocket } from "./useWebSocket.js";
 import type { Agent, Task, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
+import { mergeAgentUpdate, mergeDirectiveUpdate, mergeTaskUpdate } from "./state-updates.js";
 
 export function useAppData() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -11,7 +12,7 @@ export function useAppData() {
   const [cliStatus, setCliStatus] = useState<CliStatus>({});
   const [interactivePrompts, setInteractivePrompts] = useState<Map<string, InteractivePrompt>>(new Map());
   const [loading, setLoading] = useState(true);
-  const { connected, on } = useWebSocket();
+  const { connected, on, subscribeTask } = useWebSocket();
   const hasInitialized = useRef(false);
 
   const reload = useCallback(async () => {
@@ -62,35 +63,43 @@ export function useAppData() {
       on("task_update", (payload) => {
         const update = payload as Partial<Task> & { id: string };
         setTasks((prev) => {
-          const idx = prev.findIndex((t) => t.id === update.id);
-          if (idx === -1) {
-            // New task or full reload needed
-            void reload();
-            return prev;
+          const result = mergeTaskUpdate(prev, update);
+          if (!result.found) {
+            void fetchTask(update.id)
+              .then((task) => {
+                setTasks((current) => current.some((entry) => entry.id === task.id) ? current : [task, ...current]);
+              })
+              .catch(() => void reload());
           }
-          return prev.map((t) => (t.id === update.id ? { ...t, ...update } : t));
+          return result.next;
         });
       }),
       on("agent_status", (payload) => {
         const update = payload as Partial<Agent> & { id: string };
         setAgents((prev) => {
-          const idx = prev.findIndex((a) => a.id === update.id);
-          if (idx === -1) {
-            void reload();
-            return prev;
+          const result = mergeAgentUpdate(prev, update);
+          if (!result.found) {
+            void fetchAgent(update.id)
+              .then((agent) => {
+                setAgents((current) => current.some((entry) => entry.id === agent.id) ? current : [agent, ...current]);
+              })
+              .catch(() => void reload());
           }
-          return prev.map((a) => (a.id === update.id ? { ...a, ...update } : a));
+          return result.next;
         });
       }),
       on("directive_update", (payload) => {
         const update = payload as Partial<Directive> & { id: string };
         setDirectives((prev) => {
-          const idx = prev.findIndex((d) => d.id === update.id);
-          if (idx === -1) {
-            void reload();
-            return prev;
+          const result = mergeDirectiveUpdate(prev, update);
+          if (!result.found) {
+            void fetchDirective(update.id)
+              .then((directive) => {
+                setDirectives((current) => current.some((entry) => entry.id === directive.id) ? current : [directive, ...current]);
+              })
+              .catch(() => void reload());
           }
-          return prev.map((d) => (d.id === update.id ? { ...d, ...update } : d));
+          return result.next;
         });
       }),
       on("interactive_prompt", (payload) => {
@@ -113,5 +122,5 @@ export function useAppData() {
     return () => unsubs.forEach((fn) => fn());
   }, [on, reload]);
 
-  return { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on };
+  return { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on, subscribeTask };
 }

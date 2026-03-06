@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
+import { readLastLines } from "../utils/read-last-lines.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -206,24 +207,13 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const pretty = req.query.pretty === "1";
 
     const logPath = join("data", "logs", `${req.params.id}.log`);
-    let rawText = "";
     let fileExists = false;
 
     if (existsSync(logPath)) {
       fileExists = true;
-      try {
-        rawText = readFileSync(logPath, "utf-8");
-      } catch {
-        rawText = "";
-      }
     }
 
-    // Tail to maxLines
-    const allLines = rawText.split("\n");
-    if (allLines.length > maxLines) {
-      rawText = allLines.slice(-maxLines).join("\n");
-    }
-
+    const rawText = fileExists ? readLastLines(logPath, maxLines) : "";
     const text = pretty ? prettyStreamJson(rawText) : rawText;
 
     // Also fetch recent task_logs from DB for system/stderr entries
@@ -268,7 +258,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     // 4. Broadcast
     const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(msgId);
     ws.broadcast("message_new", message);
-    ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: `[CEO Feedback] ${content}` });
+    ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: `[CEO Feedback] ${content}` }, { taskId: task.id });
 
     // 5. Deliver feedback to agent
     const previousStatus = task.status;
@@ -355,7 +345,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Broadcast resolved event
     ws.broadcast("interactive_prompt_resolved", { task_id: task.id });
-    ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: `User responded to ${promptType}. Restarting agent...` }]);
+    ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: `User responded to ${promptType}. Restarting agent...` }], { taskId: task.id });
 
     // Find agent and respawn with --resume
     const agentId = task.assigned_agent_id;

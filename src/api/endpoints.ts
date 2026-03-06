@@ -10,6 +10,7 @@ export const deleteAgent = (id: string) => api.delete<{ deleted: boolean }>(`/ag
 // Tasks
 export const fetchTasks = (status?: string) =>
   api.get<Task[]>(status ? `/tasks?status=${status}` : "/tasks");
+export const fetchTask = (id: string) => api.get<Task>(`/tasks/${id}`);
 export const createTask = (data: Partial<Task>) => api.post<Task>("/tasks", data);
 export const updateTask = (id: string, data: Partial<Task>) => api.put<Task>(`/tasks/${id}`, data);
 export const deleteTask = (id: string) => api.delete<{ deleted: boolean }>(`/tasks/${id}`);
@@ -45,6 +46,7 @@ export const sendTaskFeedback = (taskId: string, content: string) =>
 // Directives
 export const fetchDirectives = (status?: string) =>
   api.get<Directive[]>(status ? `/directives?status=${status}` : "/directives");
+export const fetchDirective = (id: string) => api.get<Directive>(`/directives/${id}`);
 export const createDirective = (data: { title: string; content: string; project_path?: string; auto_decompose?: boolean }) =>
   api.post<Directive>("/directives", data);
 export const updateDirective = (id: string, data: Partial<Directive>) =>
@@ -86,3 +88,4 @@ export const sendInteractiveResponse = (
 
 // CLI Status
 export const fetchCliStatus = () => api.get<CliStatus>("/cli-status");
+export const fetchAgent = (id: string) => api.get<Agent>(`/agents/${id}`);

@@ -178,6 +178,26 @@ export function spawnAgent(
   const insertLogStmt = db.prepare(
     "INSERT INTO task_logs (task_id, kind, message) VALUES (?, ?, ?)"
   );
+  const insertStderrStmt = db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'stderr', ?)"
+  );
+
+  function insertLogBatch(entries: Array<{ kind: TaskLogKind; message: string }>): void {
+    if (entries.length === 0) {
+      return;
+    }
+
+    db.exec("BEGIN");
+    try {
+      for (const entry of entries) {
+        insertLogStmt.run(task.id, entry.kind, entry.message);
+      }
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
 
   // Timeout management
   let idleTimer = resetIdleTimer();
@@ -273,13 +293,13 @@ export function spawnAgent(
     });
 
     // Persist all entries
-    for (const entry of deduped) {
-      insertLogStmt.run(task.id, entry.kind, entry.message);
+    if (deduped.length > 0) {
+      insertLogBatch(deduped);
     }
 
     // Broadcast as array (consistent shape for clients)
     if (deduped.length > 0) {
-      ws.broadcast("cli_output", deduped.map((e) => ({ task_id: task.id, ...e })));
+      ws.broadcast("cli_output", deduped.map((e) => ({ task_id: task.id, ...e })), { taskId: task.id });
     }
 
     // Auto-detect PR URL from agent output
@@ -299,8 +319,8 @@ export function spawnAgent(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
     logStream.write(`[stderr] ${text}`);
-    db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'stderr', ?)").run(task.id, text);
-    ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text });
+    insertStderrStmt.run(task.id, text);
+    ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
   });
 
   // Process exit
@@ -329,7 +349,7 @@ export function spawnAgent(
       pendingFeedback.delete(task.id);
 
       insertLogStmt.run(task.id, "system", "Restarting with user feedback (--resume)");
-      ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: "Restarting with user feedback..." }]);
+      ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: "Restarting with user feedback..." }], { taskId: task.id });
 
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
       const freshAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agent.id) as unknown as Agent | undefined;

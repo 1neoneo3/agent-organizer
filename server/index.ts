@@ -50,9 +50,23 @@ const server = createServer(app);
 // WebSocket
 const wss = new WebSocketServer({ server, path: "/ws" });
 wss.on("connection", (ws: WebSocket) => {
-  wsHub.clients.add(ws);
-  ws.on("close", () => wsHub.clients.delete(ws));
-  ws.on("error", () => wsHub.clients.delete(ws));
+  wsHub.addClient(ws);
+  ws.on("message", (message) => {
+    try {
+      const parsed = JSON.parse(message.toString()) as { type?: string; taskId?: string };
+      if (!parsed.taskId) return;
+
+      if (parsed.type === "subscribe_task") {
+        wsHub.subscribeClientToTask(ws, parsed.taskId);
+      } else if (parsed.type === "unsubscribe_task") {
+        wsHub.unsubscribeClientFromTask(ws, parsed.taskId);
+      }
+    } catch {
+      // ignore malformed client messages
+    }
+  });
+  ws.on("close", () => wsHub.removeClient(ws));
+  ws.on("error", () => wsHub.removeClient(ws));
 });
 
 // Restore interactive prompts from DB and start lifecycle jobs

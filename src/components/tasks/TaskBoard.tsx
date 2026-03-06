@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { memo, Profiler, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { TaskCard } from "./TaskCard.js";
 import { CreateTaskModal } from "./CreateTaskModal.js";
@@ -11,6 +11,8 @@ import { PixelAvatar } from "../agents/PixelAvatar.js";
 import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { useWebSocket } from "../../hooks/useWebSocket.js";
+import { buildAgentViewState } from "./agent-view.js";
+import { createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
 
 const COLUMNS = [
   { key: "inbox", label: "INBOX", town: "Onett" },
@@ -25,9 +27,72 @@ interface TaskBoardProps {
   agents: Agent[];
   interactivePrompts: Map<string, InteractivePrompt>;
   onReload: () => void;
+  onSubscribeTask?: (taskId: string) => () => void;
 }
 
-export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskBoardProps) {
+interface TaskColumnProps {
+  label: string;
+  town: string;
+  tasks: Task[];
+  assignedAgentById: Map<string, Agent>;
+  idleAgents: Agent[];
+  roleLabelByAgentId: Map<string, string>;
+  interactivePrompts: Map<string, InteractivePrompt>;
+  onRun: (taskId: string, agentId: string) => Promise<void>;
+  onStop: (taskId: string) => Promise<void>;
+  onDone: (taskId: string) => Promise<void>;
+  onSelect: (taskId: string) => void;
+  onShowLog: (taskId: string) => void;
+  onDelete: (taskId: string) => Promise<void>;
+}
+
+const TaskColumn = memo(function TaskColumn({
+  label,
+  town,
+  tasks,
+  assignedAgentById,
+  idleAgents,
+  roleLabelByAgentId,
+  interactivePrompts,
+  onRun,
+  onStop,
+  onDone,
+  onSelect,
+  onShowLog,
+  onDelete,
+}: TaskColumnProps) {
+  return (
+    <div style={{ flex: 1, minWidth: "220px", maxWidth: "320px" }}>
+      <div className="eb-window" style={{ marginBottom: "8px" }}>
+        <div style={{ padding: "6px 10px", textAlign: "center" }}>
+          <div className="eb-heading" style={{ fontSize: "10px", color: "var(--eb-highlight)" }}>{town}</div>
+          <div className="eb-label" style={{ fontSize: "7px", marginTop: "2px" }}>{label} ({tasks.length})</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {tasks.map((task) => (
+          <TaskCard
+            key={task.id}
+            task={task}
+            assignedAgent={task.assigned_agent_id ? assignedAgentById.get(task.assigned_agent_id) : undefined}
+            idleAgents={idleAgents}
+            roleLabelByAgentId={roleLabelByAgentId}
+            hasInteractivePrompt={interactivePrompts.has(task.id)}
+            interactivePrompt={interactivePrompts.get(task.id)}
+            onRun={onRun}
+            onStop={onStop}
+            onDone={onDone}
+            onSelect={onSelect}
+            onShowLog={onShowLog}
+            onDelete={onDelete}
+          />
+        ))}
+      </div>
+    </div>
+  );
+});
+
+export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubscribeTask }: TaskBoardProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -45,44 +110,62 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
     }
   }, [searchParams, tasks, setSearchParams]);
 
-  const handleCreate = async (data: Parameters<typeof createTask>[0]) => {
+  const handleCreate = useCallback(async (data: Parameters<typeof createTask>[0]) => {
     await createTask(data);
     setShowCreate(false);
     play("confirm");
     onReload();
-  };
+  }, [onReload, play]);
 
-  const handleRun = async (taskId: string, agentId: string) => {
+  const handleRun = useCallback(async (taskId: string, agentId: string) => {
     play("confirm");
     await runTask(taskId, agentId);
     onReload();
-  };
+  }, [onReload, play]);
 
-  const handleStop = async (taskId: string) => {
+  const handleStop = useCallback(async (taskId: string) => {
     play("cancel");
     await stopTask(taskId);
     onReload();
-  };
+  }, [onReload, play]);
 
-  const handleDone = async (taskId: string) => {
+  const handleDone = useCallback(async (taskId: string) => {
     play("confirm");
     await updateTask(taskId, { status: "done" });
     onReload();
-  };
+  }, [onReload, play]);
 
-  const handleDelete = async (taskId: string) => {
+  const handleDelete = useCallback(async (taskId: string) => {
     if (!window.confirm("このタスクを削除しますか？")) return;
     play("cancel");
     await deleteTask(taskId);
     onReload();
-  };
+  }, [onReload, play]);
 
-  const handleAddAgent = async (data: AgentFormData) => {
+  const handleAddAgent = useCallback(async (data: AgentFormData) => {
     await createAgent(data as unknown as Partial<Agent>);
     setShowAddAgent(false);
     play("confirm");
     onReload();
-  };
+  }, [onReload, play]);
+
+  const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
+  const columnsRef = useRef<TaskColumns>(createEmptyTaskColumns());
+  const tasksByStatus = useMemo(() => {
+    const grouped = groupTasksByStatusStable(tasks, columnsRef.current);
+    columnsRef.current = grouped;
+    return grouped;
+  }, [tasks]);
+
+  const handleBoardRender = useCallback((id: string, phase: "mount" | "update" | "nested-update", actualDuration: number) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (actualDuration < 8) {
+      return;
+    }
+    console.debug("[perf]", id, phase, `${actualDuration.toFixed(1)}ms`);
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -113,8 +196,8 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
                       <PixelAvatar role={a.role} size={16} className="inline-block align-middle" />
                     </span>
                     <span>{a.name}</span>
-                    {getRoleLabel(a.role) && (
-                      <span className="eb-label" style={{ fontSize: "7px" }}>[{getRoleLabel(a.role)}]</span>
+                    {agentView.roleLabelById.get(a.id) && (
+                      <span className="eb-label" style={{ fontSize: "7px" }}>[{agentView.roleLabelById.get(a.id)}]</span>
                     )}
                     {/* Mini HP bar */}
                     <div className="eb-hp-bar" style={{ width: "24px", height: "4px" }}>
@@ -162,40 +245,31 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
       )}
 
       {/* Kanban columns */}
+      <Profiler id="TaskBoardColumns" onRender={handleBoardRender}>
       <div style={{ display: "flex", gap: "10px", overflowX: "auto" }}>
         {COLUMNS.map((col) => {
-          const colTasks = tasks.filter((t) => t.status === col.key);
+          const colTasks = tasksByStatus[col.key];
           return (
-            <div key={col.key} style={{ flex: 1, minWidth: "220px", maxWidth: "320px" }}>
-              {/* Column header */}
-              <div className="eb-window" style={{ marginBottom: "8px" }}>
-                <div style={{ padding: "6px 10px", textAlign: "center" }}>
-                  <div className="eb-heading" style={{ fontSize: "10px", color: "var(--eb-highlight)" }}>{col.town}</div>
-                  <div className="eb-label" style={{ fontSize: "7px", marginTop: "2px" }}>{col.label} ({colTasks.length})</div>
-                </div>
-              </div>
-              {/* Cards */}
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {colTasks.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    agents={agents}
-                    hasInteractivePrompt={interactivePrompts.has(task.id)}
-                    interactivePrompt={interactivePrompts.get(task.id)}
-                    onRun={handleRun}
-                    onStop={handleStop}
-                    onDone={handleDone}
-                    onSelect={setSelectedTaskId}
-                    onShowLog={setLogTaskId}
-                    onDelete={handleDelete}
-                  />
-                ))}
-              </div>
-            </div>
+            <TaskColumn
+              key={col.key}
+              label={col.label}
+              town={col.town}
+              tasks={colTasks}
+              assignedAgentById={agentView.agentById}
+              idleAgents={agentView.idleAgents}
+              roleLabelByAgentId={agentView.roleLabelById}
+              interactivePrompts={interactivePrompts}
+              onRun={handleRun}
+              onStop={handleStop}
+              onDone={handleDone}
+              onSelect={setSelectedTaskId}
+              onShowLog={setLogTaskId}
+              onDelete={handleDelete}
+            />
           );
         })}
       </div>
+      </Profiler>
 
       {/* Modals */}
       {selectedTaskId && (() => {
@@ -207,6 +281,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
             agents={agents}
             interactivePrompt={interactivePrompts.get(selectedTask.id)}
             on={on}
+            subscribeTask={onSubscribeTask}
             onClose={() => setSelectedTaskId(null)}
             onRun={handleRun}
             onStop={handleStop}
@@ -243,6 +318,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload }: TaskB
             <TerminalPanel
               taskId={logTaskId}
               on={on}
+              subscribeTask={onSubscribeTask}
               onClose={() => setLogTaskId(null)}
             />
           </div>

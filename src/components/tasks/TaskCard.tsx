@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { getRoleLabel, getRoleColorClass } from "../../components/agents/roles.js";
+import { memo, useState, useRef, useEffect } from "react";
+import { getRoleColorClass } from "../../components/agents/roles.js";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
 import { sendTaskFeedback, sendInteractiveResponse } from "../../api/endpoints.js";
 import { useSfx } from "../../hooks/useSfx.js";
@@ -22,7 +22,9 @@ const STATUS_DISPLAY: Record<string, string> = {
 
 interface TaskCardProps {
   task: Task;
-  agents: Agent[];
+  assignedAgent?: Agent;
+  idleAgents: Agent[];
+  roleLabelByAgentId: Map<string, string>;
   hasInteractivePrompt?: boolean;
   interactivePrompt?: InteractivePrompt;
   onRun?: (taskId: string, agentId: string) => void;
@@ -33,9 +35,9 @@ interface TaskCardProps {
   onDelete?: (taskId: string) => void;
 }
 
-export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
-  const agent = agents.find((a) => a.id === task.assigned_agent_id);
-  const idleAgents = agents.filter((a) => a.status === "idle");
+function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, hasInteractivePrompt, interactivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
+  const agent = assignedAgent;
+  const roleLabel = agent ? roleLabelByAgentId.get(agent.id) ?? null : null;
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
   const [showMessageForm, setShowMessageForm] = useState(false);
   const [sendingPromptResponse, setSendingPromptResponse] = useState(false);
@@ -77,10 +79,10 @@ export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt
 
   useEffect(() => {
     setSelectedAgentId((prev) => {
-      const idleIds = agents.filter((a) => a.status === "idle").map((a) => a.id);
+      const idleIds = idleAgents.map((a) => a.id);
       return idleIds.includes(prev) ? prev : (idleIds[0] ?? "");
     });
-  }, [agents]);
+  }, [idleAgents]);
   const [messageText, setMessageText] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -241,7 +243,7 @@ export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt
               <PixelAvatar role={agent.role} size={18} />
             </span>
             <span className="eb-label" style={{ fontSize: "8px", color: "var(--eb-text)" }}>{agent.name}</span>
-            {getRoleLabel(agent.role) && (
+            {roleLabel && (
               <span className="eb-label" style={{
                 padding: "1px 3px",
                 background: "var(--eb-border-in)",
@@ -249,7 +251,7 @@ export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt
                 borderRadius: "2px",
                 fontSize: "6px",
               }}>
-                {getRoleLabel(agent.role)}
+                {roleLabel}
               </span>
             )}
           </div>
@@ -285,7 +287,7 @@ export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt
             >
               {idleAgents.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
+                  {a.name}{roleLabelByAgentId.get(a.id) ? ` [${roleLabelByAgentId.get(a.id)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
                 </option>
               ))}
             </select>
@@ -391,3 +393,20 @@ export function TaskCard({ task, agents, hasInteractivePrompt, interactivePrompt
     </div>
   );
 }
+
+function areTaskCardPropsEqual(prev: TaskCardProps, next: TaskCardProps): boolean {
+  return prev.task === next.task
+    && prev.assignedAgent === next.assignedAgent
+    && prev.idleAgents === next.idleAgents
+    && prev.hasInteractivePrompt === next.hasInteractivePrompt
+    && prev.interactivePrompt === next.interactivePrompt
+    && prev.onRun === next.onRun
+    && prev.onStop === next.onStop
+    && prev.onDone === next.onDone
+    && prev.onSelect === next.onSelect
+    && prev.onShowLog === next.onShowLog
+    && prev.onDelete === next.onDelete
+    && prev.roleLabelByAgentId === next.roleLabelByAgentId;
+}
+
+export const TaskCard = memo(TaskCardInner, areTaskCardPropsEqual);

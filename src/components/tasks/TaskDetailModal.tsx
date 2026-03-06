@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
 import { sendTaskFeedback } from "../../api/endpoints.js";
 import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
+import { buildAgentViewState } from "./agent-view.js";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   inbox: { label: "Inbox", color: "bg-gray-600" },
@@ -36,18 +37,21 @@ interface TaskDetailModalProps {
   agents: Agent[];
   interactivePrompt?: InteractivePrompt;
   on: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
+  subscribeTask?: (taskId: string) => () => void;
   onClose: () => void;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
 }
 
-export function TaskDetailModal({ task, agents, interactivePrompt, on, onClose, onRun, onStop }: TaskDetailModalProps) {
+export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribeTask, onClose, onRun, onStop }: TaskDetailModalProps) {
   const [showTerminal, setShowTerminal] = useState(task.status !== "inbox");
   const [feedbackText, setFeedbackText] = useState("");
   const [sendingFeedback, setSendingFeedback] = useState(false);
-  const agent = agents.find((a) => a.id === task.assigned_agent_id);
-  const idleAgents = agents.filter((a) => a.status === "idle");
+  const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
+  const agent = task.assigned_agent_id ? agentView.agentById.get(task.assigned_agent_id) : undefined;
+  const idleAgents = agentView.idleAgents;
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
+  const roleLabel = agent ? agentView.roleLabelById.get(agent.id) ?? null : null;
 
   const handleSendFeedback = async () => {
     if (!feedbackText.trim()) return;
@@ -93,9 +97,9 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, onClose, 
                       </span>
                     )}
                   </span>
-                  {getRoleLabel(agent.role) && (
+                  {roleLabel && (
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${getRoleColorClass(agent.role)}`}>
-                      {getRoleLabel(agent.role)}
+                      {roleLabel}
                     </span>
                   )}
                 </>
@@ -208,7 +212,7 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, onClose, 
                 >
                   {idleAgents.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.avatar_emoji} {a.name}{getRoleLabel(a.role) ? ` [${getRoleLabel(a.role)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
+                      {a.avatar_emoji} {a.name}{agentView.roleLabelById.get(a.id) ? ` [${agentView.roleLabelById.get(a.id)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
                     </option>
                   ))}
                 </select>
@@ -275,6 +279,7 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, onClose, 
             <TerminalPanel
               taskId={task.id}
               on={on}
+              subscribeTask={subscribeTask}
               onClose={() => setShowTerminal(false)}
             />
           )}
