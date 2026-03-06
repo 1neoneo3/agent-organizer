@@ -67,7 +67,7 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, onClose, 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col border border-gray-200 dark:border-gray-700 shadow-xl"
+        className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col border border-gray-200 dark:border-gray-700 shadow-xl font-mono"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
