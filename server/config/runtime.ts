@@ -4,6 +4,24 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_ENV_PATH = resolve(__dirname, "..", "..", ".env");
+
+export function loadProjectEnv(envPath = DEFAULT_ENV_PATH): void {
+  if (typeof process.loadEnvFile !== "function") {
+    return;
+  }
+
+  try {
+    process.loadEnvFile(envPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+loadProjectEnv();
 
 export const PORT = Number(process.env.PORT ?? 8791);
 export const NODE_ENV = process.env.NODE_ENV ?? "development";
@@ -41,14 +59,13 @@ export const TASK_RUN_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
 export const TASK_RUN_HARD_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 
 export const WS_BATCH_INTERVALS: Record<string, number> = {
-  cli_output: 250,
   subtask_update: 150,
 };
 export const WS_MAX_BATCH_QUEUE = 60;
 
 export const DEFAULT_CLI_MODELS: Record<string, string> = {
   claude: "claude-opus-4-6",
-  codex: "gpt-5.3-codex",
+  codex: "gpt-5.4",
   gemini: "gemini-2.5-pro",
 };
 

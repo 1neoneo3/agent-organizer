@@ -26,13 +26,13 @@ test.describe("Task Flow (Agent + Task integration)", () => {
 
     // 2. Navigate to board
     await page.goto("/");
-    await page.waitForSelector("text=Task Board");
+    await page.waitForSelector("text=TOWN MAP");
 
     // 3. Verify agent shows in header
     await expect(page.locator("text=flow-agent")).toBeVisible();
 
     // 4. Create task via UI with agent assigned
-    await page.click("button:has-text('+ New Task')");
+    await page.click("button:has-text('+ NEW QUEST')");
     await page.waitForSelector('input[placeholder="What needs to be done?"]');
     await page.fill('input[placeholder="What needs to be done?"]', "Implement auth feature");
     await page.fill('textarea[placeholder="Detailed instructions..."]', "Add JWT authentication to API");
@@ -110,7 +110,7 @@ test.describe("Task Flow (Agent + Task integration)", () => {
 
     // Load the board
     await page.goto("/");
-    await page.waitForSelector("text=Task Board");
+    await page.waitForSelector("text=TOWN MAP");
 
     // Verify tasks appear
     await expect(page.locator("text=Inbox Task 1")).toBeVisible();
@@ -127,7 +127,7 @@ test.describe("Task Flow (Agent + Task integration)", () => {
     });
 
     await page.goto("/");
-    await page.waitForSelector("text=Task Board");
+    await page.waitForSelector("text=TOWN MAP");
 
     // Click on the task card
     await page.click("text=Clickable Task");

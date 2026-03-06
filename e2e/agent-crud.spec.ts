@@ -13,10 +13,10 @@ test.describe("Agent CRUD", () => {
 
   test("create an agent via UI and verify it appears", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("text=Task Board");
+    await page.waitForSelector("text=TOWN MAP");
 
-    // Click "+ Agent" button
-    await page.click("button:has-text('+ Agent')");
+    // Click "+ AGENT" button
+    await page.click("button:has-text('+ AGENT')");
 
     // Fill in the agent form
     await page.fill('input[placeholder="e.g. coder-01"]', "e2e-test-agent");
