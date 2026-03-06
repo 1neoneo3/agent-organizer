@@ -8,6 +8,7 @@ import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, parseInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
+import { notifyTaskStatus } from "../notify/telegram.js";
 import type { TaskLogKind } from "../types/runtime.js";
 import {
   TASK_RUN_IDLE_TIMEOUT_MS,
@@ -387,6 +388,15 @@ export function spawnAgent(
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
     ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+
+    // Telegram notification for review/done/cancelled
+    if (finalStatus === "pr_review" || finalStatus === "done" || finalStatus === "cancelled") {
+      notifyTaskStatus(task.title, finalStatus, {
+        taskNumber: task.task_number ?? undefined,
+        prUrl: (finishedTask as Task | undefined)?.pr_url ?? undefined,
+        agentName: agent.name,
+      });
+    }
 
     // Trigger auto-review if task landed in pr_review
     if (finalStatus === "pr_review") {
