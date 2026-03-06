@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { startTransition, useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { fetchTaskLogs, fetchTerminal } from "../../api/endpoints.js";
 import type { TaskLog, WSEventType } from "../../types/index.js";
+import { appendLiveLogs, appendTerminalText, countLogsByTab } from "./log-state.js";
 
 type TabKey = "terminal" | "all" | "output";
 
@@ -21,6 +22,7 @@ type TimelineEntry = { type: "log"; data: TaskLog };
 interface TerminalPanelProps {
   taskId: string;
   on: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
+  subscribeTask?: (taskId: string) => () => void;
   onClose: () => void;
 }
 
@@ -132,15 +134,19 @@ function LogEntry({ log }: { log: TaskLog }) {
   );
 }
 
-const POLL_INTERVAL = 1500;
 const PAUSE_SCROLL_THRESHOLD = 50;
 
-function TerminalView({ taskId }: { taskId: string }) {
+function TerminalView({
+  taskId,
+  on,
+}: {
+  taskId: string;
+  on: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
+}) {
   const [text, setText] = useState("");
   const [follow, setFollow] = useState(true);
   const preRef = useRef<HTMLPreElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const doFetch = useCallback(async () => {
     try {
@@ -151,40 +157,31 @@ function TerminalView({ taskId }: { taskId: string }) {
     }
   }, [taskId]);
 
-  // Start/stop polling based on visibility
   useEffect(() => {
     doFetch();
-
-    const startPolling = () => {
-      if (pollRef.current) return;
-      pollRef.current = setInterval(doFetch, POLL_INTERVAL);
-    };
-
-    const stopPolling = () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-
-    startPolling();
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        stopPolling();
-      } else {
-        doFetch();
-        startPolling();
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibility);
-
-    return () => {
-      stopPolling();
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
   }, [doFetch]);
+
+  useEffect(() => {
+    return on("cli_output", (payload) => {
+      const data = payload as
+        | { task_id: string; kind: string; message: string }
+        | Array<{ task_id: string; kind: string; message: string }>;
+      const items = Array.isArray(data) ? data : [data];
+      const relevant = items.filter((entry) => entry.task_id === taskId) as Array<{
+        task_id: string;
+        kind: TaskLog["kind"];
+        message: string;
+      }>;
+
+      if (relevant.length === 0) {
+        return;
+      }
+
+      startTransition(() => {
+        setText((current) => appendTerminalText(current, relevant));
+      });
+    });
+  }, [taskId, on]);
 
   // Auto-scroll when follow is on and text changes
   useEffect(() => {
@@ -233,7 +230,7 @@ function TerminalView({ taskId }: { taskId: string }) {
   );
 }
 
-export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
+export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPanelProps) {
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("terminal");
   const [autoScroll, setAutoScroll] = useState(true);
@@ -242,29 +239,32 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
   // Load initial logs (for non-terminal tabs)
   useEffect(() => {
     fetchTaskLogs(taskId).then((data) => {
-      setLogs(data.reverse());
+      startTransition(() => {
+        setLogs(data.reverse());
+      });
     });
   }, [taskId]);
 
   // WebSocket: CLI output streaming
+  useEffect(() => {
+    if (!subscribeTask) {
+      return;
+    }
+
+    return subscribeTask(taskId);
+  }, [subscribeTask, taskId]);
+
   useEffect(() => {
     return on("cli_output", (payload) => {
       const data = payload as
         | { task_id: string; kind: string; message: string }
         | Array<{ task_id: string; kind: string; message: string }>;
       const items = Array.isArray(data) ? data : [data];
-      const relevant = items.filter((d) => d.task_id === taskId);
+      const relevant = items.filter((d) => d.task_id === taskId) as Array<{ task_id: string; kind: TaskLog["kind"]; message: string }>;
       if (relevant.length > 0) {
-        setLogs((prev) => [
-          ...prev,
-          ...relevant.map((d, i) => ({
-            id: Date.now() + i,
-            task_id: d.task_id,
-            kind: d.kind as TaskLog["kind"],
-            message: d.message,
-            created_at: Date.now(),
-          })),
-        ]);
+        startTransition(() => {
+          setLogs((prev) => appendLiveLogs(prev, relevant));
+        });
       }
     });
   }, [taskId, on]);
@@ -281,8 +281,6 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
         entries.push({ type: "log", data: log });
       }
     }
-
-    entries.sort((a, b) => a.data.created_at - b.data.created_at);
 
     return entries;
   }, [logs, activeTab]);
@@ -304,13 +302,7 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
 
   // Tab counts
   const counts = useMemo(() => {
-    const c = { terminal: 0, all: 0, output: 0 };
-    for (const log of logs) {
-      const tab = classifyLog(log.kind);
-      c[tab]++;
-      c.all++;
-    }
-    return c;
+    return countLogsByTab(logs);
   }, [logs]);
 
   const isTerminalTab = activeTab === "terminal";
@@ -367,7 +359,7 @@ export function TerminalPanel({ taskId, on, onClose }: TerminalPanelProps) {
 
       {/* Content */}
       {isTerminalTab ? (
-        <TerminalView taskId={taskId} />
+        <TerminalView taskId={taskId} on={on} />
       ) : (
         <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-2 bg-sky-50/50 dark:bg-sky-50/50">
           {timeline.length === 0 && (

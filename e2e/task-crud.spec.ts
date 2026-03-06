@@ -13,10 +13,10 @@ test.describe("Task CRUD", () => {
 
   test("create a task via UI and verify it appears in Inbox", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("text=Task Board");
+    await page.waitForSelector("text=TOWN MAP");
 
-    // Click "+ New Task" button
-    await page.click("button:has-text('+ New Task')");
+    // Click "+ NEW QUEST" button
+    await page.click("button:has-text('+ NEW QUEST')");
 
     // Fill in the task form
     await page.fill('input[placeholder="What needs to be done?"]', "E2E Test Task");
@@ -29,7 +29,7 @@ test.describe("Task CRUD", () => {
     await expect(page.locator("text=E2E Test Task")).toBeVisible();
 
     // Verify it's in the Inbox column
-    const inboxColumn = page.locator("div").filter({ hasText: /^Inbox/ }).first();
+    const inboxColumn = page.locator("div").filter({ hasText: /INBOX \(1\)/ }).first();
     await expect(inboxColumn).toBeVisible();
   });
 
@@ -47,7 +47,7 @@ test.describe("Task CRUD", () => {
 
     // Load the page and verify it shows up
     await page.goto("/");
-    await page.waitForSelector("text=Task Board");
+    await page.waitForSelector("text=TOWN MAP");
     await expect(page.locator("text=API Created Task")).toBeVisible();
   });
 
@@ -66,7 +66,7 @@ test.describe("Task CRUD", () => {
 
     // Load page and verify the task does NOT appear
     await page.goto("/");
-    await page.waitForSelector("text=Task Board");
+    await page.waitForSelector("text=TOWN MAP");
     await expect(page.locator("text=Task To Delete")).not.toBeVisible();
   });
 

@@ -17,35 +17,45 @@ export async function triggerAutoReview(
   task: Task,
   cache?: CacheService,
 ): Promise<void> {
+  const existingTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+  if (!existingTask) {
+    return;
+  }
+
+  const currentTask = existingTask;
+
   // Check auto_review setting
   const autoReview = getSetting(db, "auto_review") ?? "true";
   if (autoReview !== "true") {
-    logSystem(db, task.id, "Auto review skipped: disabled in settings");
+    logSystem(db, currentTask.id, "Auto review skipped: disabled in settings");
     return;
   }
 
   // Loop prevention: skip if already reviewed
-  if (task.review_count > 0) {
-    logSystem(db, task.id, "Auto review skipped: already reviewed (review_count > 0)");
+  if (currentTask.review_count > 0) {
+    logSystem(db, currentTask.id, "Auto review skipped: already reviewed (review_count > 0)");
     return;
   }
 
   // Find a suitable review agent
-  const reviewer = findReviewAgent(db, task.assigned_agent_id);
+  const reviewer = findReviewAgent(db, currentTask.assigned_agent_id);
   if (!reviewer) {
-    logSystem(db, task.id, "Auto review skipped: no idle review agent available");
+    logSystem(db, currentTask.id, "Auto review skipped: no idle review agent available");
     return;
   }
 
   // Increment review_count before spawning to mark as "review in progress"
   const now = Date.now();
-  db.prepare("UPDATE tasks SET review_count = review_count + 1, updated_at = ? WHERE id = ?").run(now, task.id);
+  db.prepare("UPDATE tasks SET review_count = review_count + 1, updated_at = ? WHERE id = ?").run(now, currentTask.id);
 
   // Refresh task with updated review_count
-  const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+  const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(currentTask.id) as Task | undefined;
+  if (!freshTask) {
+    return;
+  }
 
-  logSystem(db, task.id, `Auto review started: agent="${reviewer.name}" (${reviewer.id})`);
-  ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: `[Auto Review] Starting review with agent: ${reviewer.name}` }]);
+  logSystem(db, currentTask.id, `Auto review started: agent="${reviewer.name}" (${reviewer.id})`);
+  ws.broadcast("cli_output", [{ task_id: currentTask.id, kind: "system", message: `[Auto Review] Starting review with agent: ${reviewer.name}` }], { taskId: currentTask.id });
 
   // Lazy import to break circular dependency (auto-reviewer <-> process-manager)
   const { spawnAgent } = await import("./process-manager.js");
