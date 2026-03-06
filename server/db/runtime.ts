@@ -23,6 +23,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddDirectiveId(db);
   migrateAddTaskNumbering(db);
   migrateAddInteractivePrompt(db);
+  migrateAddPrUrl(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -64,6 +65,13 @@ function migrateAddInteractivePrompt(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "interactive_prompt_data")) {
     db.exec("ALTER TABLE tasks ADD COLUMN interactive_prompt_data TEXT");
+  }
+}
+
+function migrateAddPrUrl(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "pr_url")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT");
   }
 }
 

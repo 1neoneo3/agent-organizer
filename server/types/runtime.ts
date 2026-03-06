@@ -37,6 +37,7 @@ export interface Task {
   task_number: string | null;
   depends_on: string | null;
   result: string | null;
+  pr_url: string | null;
   review_count: number;
   directive_id: string | null;
   started_at: number | null;

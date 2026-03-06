@@ -26,6 +26,7 @@ const UpdateTaskSchema = z.object({
   priority: z.number().int().min(0).max(10).optional(),
   task_size: z.enum(["small", "medium", "large"]).optional(),
   result: z.string().nullish(),
+  pr_url: z.string().url().nullish(),
 });
 
 function nextTaskNumber(db: RuntimeContext["db"]): string {

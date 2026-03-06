@@ -281,6 +281,12 @@ export function spawnAgent(
       ws.broadcast("cli_output", deduped.map((e) => ({ task_id: task.id, ...e })));
     }
 
+    // Auto-detect PR URL from agent output
+    const prUrlMatch = text.match(/https:\/\/github\.com\/[^\s"'<>)]+\/pull\/\d+/);
+    if (prUrlMatch) {
+      db.prepare("UPDATE tasks SET pr_url = ?, updated_at = ? WHERE id = ? AND pr_url IS NULL").run(prUrlMatch[0], Date.now(), task.id);
+    }
+
     // Check for self-review result
     if (selfReview && text.includes("[SELF_REVIEW:PASS]")) {
       db.prepare("UPDATE tasks SET review_count = review_count + 1, updated_at = ? WHERE id = ?").run(Date.now(), task.id);
