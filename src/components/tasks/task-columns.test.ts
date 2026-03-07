@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { Task } from "../../types/index.js";
 import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable } from "./task-columns.js";
 
-function createTask(id: string, status: Task["status"]): Task {
+function createTask(id: string, status: Task["status"], createdAt = 1): Task {
   return {
     id,
     title: id,
@@ -23,7 +23,7 @@ function createTask(id: string, status: Task["status"]): Task {
     external_id: null,
     started_at: null,
     completed_at: null,
-    created_at: 1,
+    created_at: createdAt,
     updated_at: 1,
   };
 }
@@ -69,5 +69,23 @@ describe("groupTasksByStatusStable", () => {
     assert.equal(grouped.inbox, previous.inbox);
     assert.notEqual(grouped.done, previous.done);
     assert.equal(groupedByKey.cancelled, previousByKey.cancelled);
+  });
+
+  it("sorts tasks inside each column by created_at descending", () => {
+    const olderInboxTask = createTask("older", "inbox", 100);
+    const newestInboxTask = createTask("newest", "inbox", 300);
+    const middleInboxTask = createTask("middle", "inbox", 200);
+
+    const grouped = groupTasksByStatusStable([
+      olderInboxTask,
+      newestInboxTask,
+      middleInboxTask,
+    ]);
+
+    assert.deepEqual(grouped.inbox, [
+      newestInboxTask,
+      middleInboxTask,
+      olderInboxTask,
+    ]);
   });
 });
