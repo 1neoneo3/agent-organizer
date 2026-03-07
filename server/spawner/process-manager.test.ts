@@ -9,8 +9,6 @@ function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA_SQL);
-  db.exec("ALTER TABLE tasks ADD COLUMN directive_id TEXT");
-  db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT");
   db.exec("ALTER TABLE tasks ADD COLUMN interactive_prompt_data TEXT");
   return db;
 }
@@ -36,6 +34,8 @@ function insertTask(db: DatabaseSync, overrides: Partial<Task> = {}): Task {
     created_at: 1_000,
     updated_at: 2_000,
     ...overrides,
+    external_source: overrides.external_source ?? null,
+    external_id: overrides.external_id ?? null,
   };
 
   db.prepare(
