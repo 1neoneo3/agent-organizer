@@ -8,6 +8,7 @@ import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, g
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
+import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/runtime.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -35,6 +36,15 @@ function nextTaskNumber(db: RuntimeContext["db"]): string {
     "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
   ).get() as { max_num: number | null } | undefined;
   return `#${(row?.max_num ?? 0) + 1}`;
+}
+
+function pickIdleAgent(db: RuntimeContext["db"]): Agent | undefined {
+  return db.prepare(
+    `SELECT * FROM agents
+     WHERE status = 'idle' AND current_task_id IS NULL
+     ORDER BY stats_tasks_done ASC, updated_at ASC
+     LIMIT 1`
+  ).get() as Agent | undefined;
 }
 
 export function createTasksRouter(ctx: RuntimeContext): Router {
@@ -91,9 +101,29 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, now, now);
 
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-    await invalidateTaskCaches();
+    let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
     ws.broadcast("task_update", task);
+
+    if (!task.assigned_agent_id && AUTO_ASSIGN_TASK_ON_CREATE) {
+      const idleAgent = pickIdleAgent(db);
+      if (idleAgent) {
+        const assignTs = Date.now();
+        db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(idleAgent.id, assignTs, task.id);
+        task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+        ws.broadcast("task_update", task);
+      }
+    }
+
+    if (AUTO_RUN_TASK_ON_CREATE && task.assigned_agent_id) {
+      const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
+      if (agent && agent.status === "idle") {
+        spawnAgent(db, ws, agent, task, { cache });
+      }
+    }
+
+    task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
+    await invalidateTaskCaches();
+    await cache.del("agents:all");
     res.status(201).json(task);
   });
 

@@ -84,3 +84,7 @@ export const REVIEW_SETTINGS_DEFAULTS = {
   self_review_threshold: "small" as const, // task size for auto self-review: "small" | "medium" | "all" | "none"
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
 };
+
+
+export const AUTO_ASSIGN_TASK_ON_CREATE = process.env.AUTO_ASSIGN_TASK_ON_CREATE !== "false";
+export const AUTO_RUN_TASK_ON_CREATE = process.env.AUTO_RUN_TASK_ON_CREATE !== "false";

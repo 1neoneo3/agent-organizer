@@ -1,7 +1,7 @@
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID ?? "";
 
-async function sendTelegramMessage(text: string): Promise<void> {
+export async function sendTelegramMessage(text: string): Promise<void> {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
 
   try {
@@ -25,9 +25,9 @@ async function sendTelegramMessage(text: string): Promise<void> {
 }
 
 const STATUS_EMOJI: Record<string, string> = {
-  pr_review: "\u{1F50D}",  // magnifying glass
-  done: "\u2705",           // check mark
-  cancelled: "\u274C",      // cross mark
+  pr_review: "\u{1F50D}",
+  done: "\u2705",
+  cancelled: "\u274C",
 };
 
 const STATUS_LABEL: Record<string, string> = {
