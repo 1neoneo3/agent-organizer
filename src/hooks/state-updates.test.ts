@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Agent, Directive, Task } from "../types/index.js";
-import { mergeAgentUpdate, mergeDirectiveUpdate, mergeTaskUpdate } from "./state-updates.js";
+import { collectReviewTransitions, mergeAgentUpdate, mergeDirectiveUpdate, mergeTaskUpdate } from "./state-updates.js";
 
 function createTask(): Task {
   return {
@@ -90,5 +90,50 @@ describe("mergeDirectiveUpdate", () => {
 
     assert.equal(result.found, true);
     assert.equal(result.next[0]?.status, "active");
+  });
+});
+
+describe("collectReviewTransitions", () => {
+  it("detects transition into self_review", () => {
+    const previous = createTask();
+    const next = { ...previous, status: "self_review" as const };
+
+    const transitions = collectReviewTransitions([previous], [next]);
+
+    assert.deepEqual(transitions, [{
+      taskId: "task-1",
+      title: "Task 1",
+      from: "inbox",
+      to: "self_review",
+    }]);
+  });
+
+  it("detects transition from self_review to pr_review", () => {
+    const previous = { ...createTask(), status: "self_review" as const };
+    const next = { ...previous, status: "pr_review" as const };
+
+    const transitions = collectReviewTransitions([previous], [next]);
+
+    assert.equal(transitions.length, 1);
+    assert.equal(transitions[0]?.from, "self_review");
+    assert.equal(transitions[0]?.to, "pr_review");
+  });
+
+  it("ignores unchanged review status", () => {
+    const previous = { ...createTask(), status: "pr_review" as const };
+    const next = { ...previous };
+
+    const transitions = collectReviewTransitions([previous], [next]);
+
+    assert.deepEqual(transitions, []);
+  });
+
+  it("ignores transitions leaving review", () => {
+    const previous = { ...createTask(), status: "pr_review" as const };
+    const next = { ...previous, status: "done" as const };
+
+    const transitions = collectReviewTransitions([previous], [next]);
+
+    assert.deepEqual(transitions, []);
   });
 });
