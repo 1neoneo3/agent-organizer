@@ -1,0 +1,230 @@
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { describe, it } from "node:test";
+import { SCHEMA_SQL } from "../db/schema.js";
+import type { Agent, Task } from "../types/runtime.js";
+import { dispatchAutoStartableTasks } from "./auto-dispatcher.js";
+
+function createDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(SCHEMA_SQL);
+  db.exec("ALTER TABLE tasks ADD COLUMN interactive_prompt_data TEXT");
+  return db;
+}
+
+function createWs() {
+  const sent: Array<{ type: string; payload: unknown }> = [];
+  return {
+    sent,
+    broadcast(type: string, payload: unknown) {
+      sent.push({ type, payload });
+    },
+  };
+}
+
+function insertSetting(db: DatabaseSync, key: string, value: string): void {
+  db.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+    .run(key, value, Date.now());
+}
+
+function insertAgent(db: DatabaseSync, overrides: Partial<Agent> = {}): Agent {
+  const now = Date.now();
+  const agent: Agent = {
+    id: overrides.id ?? `agent-${Math.random().toString(36).slice(2)}`,
+    name: overrides.name ?? "Implementer",
+    cli_provider: overrides.cli_provider ?? "claude",
+    cli_model: overrides.cli_model ?? "claude-opus-4-6",
+    cli_reasoning_level: overrides.cli_reasoning_level ?? null,
+    avatar_emoji: overrides.avatar_emoji ?? "🤖",
+    role: overrides.role ?? "lead_engineer",
+    agent_type: overrides.agent_type ?? "worker",
+    personality: overrides.personality ?? null,
+    status: overrides.status ?? "idle",
+    current_task_id: overrides.current_task_id ?? null,
+    stats_tasks_done: overrides.stats_tasks_done ?? 0,
+    created_at: overrides.created_at ?? now,
+    updated_at: overrides.updated_at ?? now,
+  };
+
+  db.prepare(`
+    INSERT INTO agents (
+      id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role,
+      agent_type, personality, status, current_task_id, stats_tasks_done, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    agent.id,
+    agent.name,
+    agent.cli_provider,
+    agent.cli_model,
+    agent.cli_reasoning_level,
+    agent.avatar_emoji,
+    agent.role,
+    agent.agent_type,
+    agent.personality,
+    agent.status,
+    agent.current_task_id,
+    agent.stats_tasks_done,
+    agent.created_at,
+    agent.updated_at,
+  );
+
+  return agent;
+}
+
+function insertTask(
+  db: DatabaseSync,
+  overrides: Partial<Task> & { external_source?: string | null; external_id?: string | null } = {},
+): Task & { external_source: string | null; external_id: string | null } {
+  const now = Date.now();
+  const task: Task & { external_source: string | null; external_id: string | null } = {
+    id: overrides.id ?? `task-${Math.random().toString(36).slice(2)}`,
+    title: overrides.title ?? "Implement feature",
+    description: overrides.description ?? null,
+    assigned_agent_id: overrides.assigned_agent_id ?? null,
+    project_path: overrides.project_path ?? "/tmp/agent-organizer",
+    status: overrides.status ?? "inbox",
+    priority: overrides.priority ?? 5,
+    task_size: overrides.task_size ?? "medium",
+    task_number: overrides.task_number ?? "#1",
+    depends_on: overrides.depends_on ?? null,
+    result: overrides.result ?? null,
+    pr_url: overrides.pr_url ?? null,
+    review_count: overrides.review_count ?? 0,
+    directive_id: overrides.directive_id ?? null,
+    external_source: overrides.external_source === undefined ? "github" : overrides.external_source,
+    external_id: overrides.external_id === undefined ? "24" : overrides.external_id,
+    started_at: overrides.started_at ?? null,
+    completed_at: overrides.completed_at ?? null,
+    created_at: overrides.created_at ?? now,
+    updated_at: overrides.updated_at ?? now,
+  };
+
+  db.prepare(`
+    INSERT INTO tasks (
+      id, title, description, assigned_agent_id, project_path, status, priority, task_size,
+      task_number, depends_on, result, review_count, directive_id, pr_url, external_source,
+      external_id, started_at, completed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    task.id,
+    task.title,
+    task.description,
+    task.assigned_agent_id,
+    task.project_path,
+    task.status,
+    task.priority,
+    task.task_size,
+    task.task_number,
+    task.depends_on,
+    task.result,
+    task.review_count,
+    task.directive_id,
+    task.pr_url,
+    task.external_source,
+    task.external_id,
+    task.started_at,
+    task.completed_at,
+    task.created_at,
+    task.updated_at,
+  );
+
+  return task;
+}
+
+describe("dispatchAutoStartableTasks", () => {
+  it("assigns and starts eligible GitHub tasks when an idle agent is available", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "github_only");
+    const agent = insertAgent(db, { name: "Code Runner", cli_provider: "codex", role: "lead_engineer" });
+    const task = insertTask(db, {
+      title: "Fix API regression",
+      description: "GitHub Issue: https://example.test/issues/24\nLabels: bug, backend",
+      task_size: "small",
+      priority: 8,
+    });
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, assignedAgent) {
+        const now = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?")
+          .run(now, now, taskToStart.id);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+          .run(taskToStart.id, now, assignedAgent.id);
+      },
+    });
+
+    const startedTask = db.prepare("SELECT assigned_agent_id, status FROM tasks WHERE id = ?").get(task.id) as {
+      assigned_agent_id: string | null;
+      status: string;
+    };
+    const startedAgent = db.prepare("SELECT status, current_task_id FROM agents WHERE id = ?").get(agent.id) as {
+      status: string;
+      current_task_id: string | null;
+    };
+
+    assert.equal(result.started, 1);
+    assert.equal(startedTask.assigned_agent_id, agent.id);
+    assert.equal(startedTask.status, "in_progress");
+    assert.equal(startedAgent.status, "working");
+    assert.equal(startedAgent.current_task_id, task.id);
+  });
+
+  it("writes a skip reason when no idle worker is available", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "github_only");
+    insertAgent(db, {
+      name: "Busy Engineer",
+      role: "lead_engineer",
+      status: "working",
+      current_task_id: "another-task",
+    });
+    const task = insertTask(db, {
+      title: "Implement dispatcher",
+    });
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask() {
+        throw new Error("should not start");
+      },
+    });
+
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC"
+    ).all(task.id) as Array<{ message: string }>;
+
+    assert.equal(result.started, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0].message, /no idle worker agent is available/i);
+  });
+
+  it("writes a skip reason when github_only mode excludes a non-GitHub task", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "github_only");
+    insertAgent(db, { name: "Available Engineer", role: "lead_engineer" });
+    const task = insertTask(db, {
+      title: "Manual inbox task",
+      external_source: null,
+      external_id: null,
+    });
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask() {
+        throw new Error("should not start");
+      },
+    });
+
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC"
+    ).all(task.id) as Array<{ message: string }>;
+
+    assert.equal(result.started, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0].message, /github-synced tasks only/i);
+  });
+});
