@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
-import { classifyEvent, parseInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
+import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { notifyTaskStatus } from "../notify/telegram.js";
@@ -270,6 +270,23 @@ export function spawnAgent(
           break; // Stop processing remaining lines in this chunk
         }
 
+        // Text-based interactive prompt detection (for Codex/Gemini/any provider)
+        // Only check "assistant" kind events — agent's direct text output
+        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
+          const textPrompt = detectTextInteractivePrompt(event.message);
+          if (textPrompt) {
+            const entry = { data: textPrompt, createdAt: Date.now() };
+            pendingInteractivePrompts.set(task.id, entry);
+            persistPromptToDb(db, task.id, entry);
+            ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
+            insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`);
+
+            interactivePromptKilled = true;
+            try { child.kill("SIGTERM"); } catch { /* already dead */ }
+            break;
+          }
+        }
+
         // Subtask parsing (reuse pre-parsed object)
         const subtaskEvent = parseStreamLineFromObj(agent.cli_provider, obj);
         if (subtaskEvent) handleSubtaskEvent(db, ws, task.id, subtaskEvent, subtaskMap);
@@ -390,7 +407,9 @@ export function spawnAgent(
       return;
     }
 
-    const finalStatus = code === 0 ? determineCompletionStatus(db, task, selfReview) : "cancelled";
+    const completionTask =
+      (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
+    const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview) : "cancelled";
 
     db.prepare(
       "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?"
@@ -428,16 +447,18 @@ export function spawnAgent(
   return { pid: child.pid ?? 0 };
 }
 
-function determineCompletionStatus(
+export function determineCompletionStatus(
   db: DatabaseSync,
   task: Task,
   selfReview: boolean
 ): string {
+  const runStartedAt = task.started_at ?? 0;
+
   // Auto-review completion: review_count > 0 means this was a review run
   if (task.review_count > 0) {
     const logs = db.prepare(
-      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'stdout' ORDER BY id DESC LIMIT 50"
-    ).all(task.id) as Array<{ message: string }>;
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
+    ).all(task.id, runStartedAt) as Array<{ message: string }>;
 
     const needsChanges = logs.some((l) => l.message.includes("[REVIEW:NEEDS_CHANGES]"));
     if (needsChanges) return "inbox"; // Send back for rework
@@ -453,8 +474,8 @@ function determineCompletionStatus(
   }
   // Self-review: check if review passed
   const logs = db.prepare(
-    "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'stdout' ORDER BY id DESC LIMIT 50"
-  ).all(task.id) as Array<{ message: string }>;
+    "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
+  ).all(task.id, runStartedAt) as Array<{ message: string }>;
 
   const passed = logs.some((l) => l.message.includes("[SELF_REVIEW:PASS]"));
   if (passed) return "done"; // Auto-approved via self-review
