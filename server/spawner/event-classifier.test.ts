@@ -95,6 +95,32 @@ describe("detectTextInteractivePrompt", () => {
     assert.strictEqual(result, null);
   });
 
+  it("does not detect review summaries that quote user-input examples", () => {
+    const result = detectTextInteractivePrompt(`## レビューサマリー
+
+### 変更概要
+GH #25 の実装として、agentがテキストベースで追加入力を求めた場合に検出し、UIで返答できる機能を追加。
+
+### 対象にしたいケース
+- 実行するコマンドをこのスレッドに貼ってほしい
+- 作業ディレクトリを指定してほしい
+- 対象ファイルや完了条件を再指定してほしい
+
+### 判定
+[REVIEW:PASS]`);
+    assert.strictEqual(result, null);
+  });
+
+  it("does not detect self-review summaries as input requests", () => {
+    const result = detectTextInteractivePrompt(`実装が完了しました。以下を確認しました。
+
+- 作業ディレクトリを指定してください、のような文言を検出対象に追加
+- テストを更新
+
+[SELF_REVIEW:PASS]`);
+    assert.strictEqual(result, null);
+  });
+
   // --- Boundary ---
 
   it("does not detect messages shorter than 10 chars", () => {

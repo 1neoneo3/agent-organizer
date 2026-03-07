@@ -103,6 +103,16 @@ const TEXT_PROMPT_PATTERNS_EN: RegExp[] = [
   /(?:please respond|please reply|please answer)/i,
 ];
 
+function looksLikeCompletionSummary(text: string): boolean {
+  return (
+    text.includes("[REVIEW:PASS]") ||
+    text.includes("[REVIEW:NEEDS_CHANGES]") ||
+    text.includes("[SELF_REVIEW:PASS]") ||
+    text.includes("[SELF_REVIEW:FAIL:") ||
+    (text.includes("レビューサマリー") && text.includes("### 判定"))
+  );
+}
+
 /**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
@@ -116,6 +126,7 @@ export function detectTextInteractivePrompt(
   // Skip very short messages — unlikely to be a genuine input request.
   // Threshold is low (10) because CJK languages pack more meaning per character.
   if (assistantText.length < 10) return null;
+  if (looksLikeCompletionSummary(assistantText)) return null;
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
     if (pattern.test(assistantText)) {
