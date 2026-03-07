@@ -72,6 +72,11 @@ export const DEFAULT_CLI_MODELS: Record<string, string> = {
 export const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 export const REDIS_ENABLED = process.env.REDIS_ENABLED !== "false";
 export const CACHE_KEY_PREFIX = "ao:";
+export const GITHUB_SYNC_ENABLED = process.env.GITHUB_SYNC_ENABLED === "true";
+export const GITHUB_SYNC_REPO = process.env.GITHUB_SYNC_REPO ?? "";
+export const GITHUB_SYNC_TOKEN = process.env.GITHUB_SYNC_TOKEN ?? "";
+export const GITHUB_SYNC_PROJECT_PATH = process.env.GITHUB_SYNC_PROJECT_PATH ?? "";
+export const GITHUB_SYNC_INTERVAL_MS = Number(process.env.GITHUB_SYNC_INTERVAL_MS ?? 60_000);
 
 export const REVIEW_SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"

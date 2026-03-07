@@ -24,6 +24,8 @@ export function initializeDb(): DatabaseSync {
   migrateAddTaskNumbering(db);
   migrateAddInteractivePrompt(db);
   migrateAddPrUrl(db);
+  migrateAddExternalTracking(db);
+  migrateAddReviewArtifactFields(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -72,6 +74,32 @@ function migrateAddPrUrl(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "pr_url")) {
     db.exec("ALTER TABLE tasks ADD COLUMN pr_url TEXT");
+  }
+}
+
+function migrateAddExternalTracking(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "external_source")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN external_source TEXT");
+  }
+  if (!cols.some((c) => c.name === "external_id")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN external_id TEXT");
+  }
+}
+
+function migrateAddReviewArtifactFields(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "review_branch")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_branch TEXT");
+  }
+  if (!cols.some((c) => c.name === "review_commit_sha")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_commit_sha TEXT");
+  }
+  if (!cols.some((c) => c.name === "review_sync_status")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_sync_status TEXT NOT NULL DEFAULT 'pending'");
+  }
+  if (!cols.some((c) => c.name === "review_sync_error")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_sync_error TEXT");
   }
 }
 
