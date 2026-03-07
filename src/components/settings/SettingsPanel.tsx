@@ -102,6 +102,27 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
           </div>
         </section>
 
+        <section>
+          <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-3 uppercase tracking-wide">Auto Dispatch</h3>
+          <div className="space-y-3">
+            <label className="block">
+              <span className="text-sm text-gray-500 dark:text-gray-400">Auto Dispatch Mode</span>
+              <select
+                className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={local.auto_dispatch_mode ?? "github_only"}
+                onChange={(e) => update("auto_dispatch_mode", e.target.value)}
+              >
+                <option value="disabled">Disabled</option>
+                <option value="github_only">GitHub-synced inbox tasks only</option>
+                <option value="all_inbox">All inbox tasks</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Automatically assigns an idle worker agent and starts matching inbox tasks in the background.
+              </p>
+            </label>
+          </div>
+        </section>
+
         <button
           onClick={handleSave}
           disabled={saving}

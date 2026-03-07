@@ -1,10 +1,12 @@
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_ENV_PATH = resolve(__dirname, "..", "..", ".env");
+const PROJECT_ROOT = resolve(__dirname, "..", "..");
+const DEFAULT_ENV_PATH = resolve(PROJECT_ROOT, ".env");
 
 export function loadProjectEnv(envPath = DEFAULT_ENV_PATH): void {
   if (typeof process.loadEnvFile !== "function") {
@@ -73,16 +75,53 @@ export const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 export const REDIS_ENABLED = process.env.REDIS_ENABLED !== "false";
 export const CACHE_KEY_PREFIX = "ao:";
 export const GITHUB_SYNC_ENABLED = process.env.GITHUB_SYNC_ENABLED === "true";
-export const GITHUB_SYNC_REPO = process.env.GITHUB_SYNC_REPO ?? "";
-export const GITHUB_SYNC_TOKEN = process.env.GITHUB_SYNC_TOKEN ?? "";
-export const GITHUB_SYNC_PROJECT_PATH = process.env.GITHUB_SYNC_PROJECT_PATH ?? "";
-export const GITHUB_SYNC_INTERVAL_MS = Number(process.env.GITHUB_SYNC_INTERVAL_MS ?? 60_000);
 
-export const REVIEW_SETTINGS_DEFAULTS = {
+function resolveGithubSyncRepo(): string {
+  if (process.env.GITHUB_SYNC_REPO?.trim()) {
+    return process.env.GITHUB_SYNC_REPO.trim();
+  }
+
+  try {
+    const remoteUrl = execFileSync("git", ["config", "--get", "remote.origin.url"], {
+      cwd: PROJECT_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+
+    const match = remoteUrl.match(/github\.com[:/](.+?)(?:\.git)?$/);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveGithubSyncToken(): string {
+  if (process.env.GITHUB_SYNC_TOKEN?.trim()) {
+    return process.env.GITHUB_SYNC_TOKEN.trim();
+  }
+
+  try {
+    return execFileSync("gh", ["auth", "token"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+export const GITHUB_SYNC_REPO = resolveGithubSyncRepo();
+export const GITHUB_SYNC_TOKEN = resolveGithubSyncToken();
+export const GITHUB_SYNC_INTERVAL_MS = Number(process.env.GITHUB_SYNC_INTERVAL_MS ?? 300_000);
+export const GITHUB_SYNC_PROJECT_PATH = process.env.GITHUB_SYNC_PROJECT_PATH ?? PROJECT_ROOT;
+export const AUTO_DISPATCH_INTERVAL_MS = Number(process.env.AUTO_DISPATCH_INTERVAL_MS ?? 60_000);
+
+export const SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"
   review_count: 1,
   self_review_threshold: "small" as const, // task size for auto self-review: "small" | "medium" | "all" | "none"
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
+  auto_dispatch_mode: "github_only" as const, // "disabled" | "github_only" | "all_inbox"
 };
 
 

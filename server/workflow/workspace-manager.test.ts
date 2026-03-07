@@ -33,6 +33,10 @@ describe("prepareTaskWorkspace", () => {
       } as never,
       {
         body: "",
+        codexSandboxMode: "workspace-write",
+        codexApprovalPolicy: "on-request",
+        e2eExecution: "host",
+        e2eCommand: null,
         gitWorkflow: "default",
         workspaceMode: "shared",
         branchPrefix: "ao",
@@ -52,6 +56,10 @@ describe("prepareTaskWorkspace", () => {
     const repo = initRepo();
     const workflow = {
       body: "",
+      codexSandboxMode: "workspace-write" as const,
+      codexApprovalPolicy: "on-request" as const,
+      e2eExecution: "host" as const,
+      e2eCommand: null,
       gitWorkflow: "default" as const,
       workspaceMode: "git-worktree" as const,
       branchPrefix: "issue",

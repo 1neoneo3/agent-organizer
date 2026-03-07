@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS agents (
   cli_reasoning_level TEXT,
   avatar_emoji TEXT DEFAULT '🤖',
   role TEXT,
+  agent_type TEXT NOT NULL DEFAULT 'worker' CHECK(agent_type IN ('worker','ceo')),
   personality TEXT,
   status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle','working','offline')),
   current_task_id TEXT,
@@ -116,6 +117,7 @@ CREATE TABLE IF NOT EXISTS api_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(assigned_agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id);
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, created_at);

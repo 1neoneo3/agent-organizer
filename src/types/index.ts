@@ -30,6 +30,8 @@ export interface Task {
   pr_url: string | null;
   review_count: number;
   directive_id: string | null;
+  external_source: string | null;
+  external_id: string | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;

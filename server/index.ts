@@ -12,6 +12,7 @@ import { authMiddleware } from "./security/auth.js";
 import { startOrphanRecovery } from "./lifecycle/jobs.js";
 import { restorePendingInteractivePrompts } from "./spawner/process-manager.js";
 import { startTelegramControlPoller } from "./notify/telegram-control.js";
+import { startAutoDispatchScheduler } from "./dispatch/auto-dispatcher.js";
 import { startGithubIssueSync } from "./integrations/github-sync.js";
 import { PORT, IS_DEV, SESSION_AUTH_TOKEN } from "./config/runtime.js";
 
@@ -75,6 +76,7 @@ wss.on("connection", (ws: WebSocket) => {
 restorePendingInteractivePrompts(db);
 startOrphanRecovery(db, wsHub, cache);
 startGithubIssueSync(db, wsHub, cache);
+startAutoDispatchScheduler(db, wsHub, cache);
 
 // Start
 server.listen(PORT, () => {
