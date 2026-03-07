@@ -1,10 +1,20 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+export type CodexSandboxMode =
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
+export type CodexApprovalPolicy = "untrusted" | "on-request" | "never";
+export type E2EExecutionMode = "agent" | "host" | "ci";
 export type WorkflowPromptKind = "task" | "review" | "decompose";
 
 export interface ProjectWorkflow {
   body: string;
+  codexSandboxMode: CodexSandboxMode;
+  codexApprovalPolicy: CodexApprovalPolicy;
+  e2eExecution: E2EExecutionMode;
+  e2eCommand: string | null;
   gitWorkflow: "default" | "none";
   workspaceMode: "shared" | "git-worktree";
   branchPrefix: string;
@@ -17,6 +27,10 @@ export interface ProjectWorkflow {
 
 const DEFAULT_WORKFLOW: ProjectWorkflow = {
   body: "",
+  codexSandboxMode: "workspace-write",
+  codexApprovalPolicy: "on-request",
+  e2eExecution: "host",
+  e2eCommand: null,
   gitWorkflow: "default",
   workspaceMode: "shared",
   branchPrefix: "ao",
@@ -27,14 +41,23 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   includeDecompose: true,
 };
 
+function stripQuotes(value: string): string {
+  return value.replace(/^['"]|['"]$/g, "");
+}
+
 function parseCommandList(value: string): string[] {
-  if (!value) return [];
+  if (!value) {
+    return [];
+  }
 
   if (value.startsWith("[") && value.endsWith("]")) {
     try {
       const parsed = JSON.parse(value) as unknown;
       if (Array.isArray(parsed)) {
-        return parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+        return parsed.filter(
+          (entry): entry is string =>
+            typeof entry === "string" && entry.trim().length > 0,
+        );
       }
     } catch {
       return [];
@@ -61,9 +84,35 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
     if (separator <= 0) continue;
 
     const key = trimmed.slice(0, separator).trim();
-    const value = trimmed.slice(separator + 1).trim().replace(/^['"]|['"]$/g, "");
+    const value = stripQuotes(trimmed.slice(separator + 1).trim());
 
     switch (key) {
+      case "codex_sandbox_mode":
+        if (
+          value === "read-only" ||
+          value === "workspace-write" ||
+          value === "danger-full-access"
+        ) {
+          workflow.codexSandboxMode = value;
+        }
+        break;
+      case "codex_approval_policy":
+        if (
+          value === "untrusted" ||
+          value === "on-request" ||
+          value === "never"
+        ) {
+          workflow.codexApprovalPolicy = value;
+        }
+        break;
+      case "e2e_execution":
+        if (value === "agent" || value === "host" || value === "ci") {
+          workflow.e2eExecution = value;
+        }
+        break;
+      case "e2e_command":
+        workflow.e2eCommand = value || null;
+        break;
       case "git_workflow":
         if (value === "default" || value === "none") {
           workflow.gitWorkflow = value;
@@ -87,17 +136,23 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
         break;
       case "include_task": {
         const parsed = parseBoolean(value);
-        if (parsed !== null) workflow.includeTask = parsed;
+        if (parsed !== null) {
+          workflow.includeTask = parsed;
+        }
         break;
       }
       case "include_review": {
         const parsed = parseBoolean(value);
-        if (parsed !== null) workflow.includeReview = parsed;
+        if (parsed !== null) {
+          workflow.includeReview = parsed;
+        }
         break;
       }
       case "include_decompose": {
         const parsed = parseBoolean(value);
-        if (parsed !== null) workflow.includeDecompose = parsed;
+        if (parsed !== null) {
+          workflow.includeDecompose = parsed;
+        }
         break;
       }
       default:
@@ -108,7 +163,9 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
   return workflow;
 }
 
-export function loadProjectWorkflow(projectPath: string | null): ProjectWorkflow | null {
+export function loadProjectWorkflow(
+  projectPath: string | null,
+): ProjectWorkflow | null {
   if (!projectPath) return null;
 
   const workflowPath = join(projectPath, "WORKFLOW.md");
@@ -129,6 +186,7 @@ export function loadProjectWorkflow(projectPath: string | null): ProjectWorkflow
 
   const frontmatter = normalized.slice(4, endMarker).trim();
   const body = normalized.slice(endMarker + 4).trim();
+
   return {
     ...parseFrontmatter(frontmatter),
     body,

@@ -16,6 +16,10 @@ describe("promoteTaskReviewArtifact", () => {
       task,
       {
         body: "",
+        codexSandboxMode: "workspace-write",
+        codexApprovalPolicy: "on-request",
+        e2eExecution: "host",
+        e2eCommand: null,
         gitWorkflow: "default",
         workspaceMode: "shared",
         branchPrefix: "issue",
@@ -61,6 +65,10 @@ describe("promoteTaskReviewArtifact", () => {
       task,
       {
         body: "",
+        codexSandboxMode: "workspace-write",
+        codexApprovalPolicy: "on-request",
+        e2eExecution: "host",
+        e2eCommand: null,
         gitWorkflow: "default",
         workspaceMode: "git-worktree",
         branchPrefix: "issue",

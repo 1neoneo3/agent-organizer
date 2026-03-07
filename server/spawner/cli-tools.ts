@@ -1,5 +1,9 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
+import type {
+  CodexApprovalPolicy,
+  CodexSandboxMode,
+} from "../workflow/loader.js";
 
 const ANSI_ESCAPE_REGEX =
   /\u001b(?:\[[0-?]*[ -/]*[@-~]|][^\u0007]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g;
@@ -25,9 +29,23 @@ export function withCliPathFallback(currentPath: string): string {
 
 export function buildAgentArgs(
   provider: string,
-  opts?: { model?: string; reasoningLevel?: string; noTools?: boolean; resumeSessionId?: string }
+  opts?: {
+    model?: string;
+    reasoningLevel?: string;
+    noTools?: boolean;
+    resumeSessionId?: string;
+    codexSandboxMode?: CodexSandboxMode;
+    codexApprovalPolicy?: CodexApprovalPolicy;
+  }
 ): string[] {
-  const { model, reasoningLevel, noTools, resumeSessionId } = opts ?? {};
+  const {
+    model,
+    reasoningLevel,
+    noTools,
+    resumeSessionId,
+    codexSandboxMode = "workspace-write",
+    codexApprovalPolicy = "on-request",
+  } = opts ?? {};
 
   switch (provider) {
     case "claude": {
@@ -47,7 +65,20 @@ export function buildAgentArgs(
     case "codex": {
       const args = ["codex"];
       if (model) args.push("-m", model);
-      args.push("exec", "--json", "--full-auto");
+      args.push("exec", "--json");
+      if (
+        codexSandboxMode === "workspace-write" &&
+        codexApprovalPolicy === "on-request"
+      ) {
+        args.push("--full-auto");
+      } else {
+        args.push(
+          "--sandbox",
+          codexSandboxMode,
+          "--ask-for-approval",
+          codexApprovalPolicy,
+        );
+      }
       return args;
     }
     case "gemini": {
