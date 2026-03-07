@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SCHEMA_SQL } from "./schema.js";
-import { DB_PATH, REVIEW_SETTINGS_DEFAULTS, DEFAULT_CLI_MODELS } from "../config/runtime.js";
+import { DB_PATH, SETTINGS_DEFAULTS, DEFAULT_CLI_MODELS } from "../config/runtime.js";
 
 let db: DatabaseSync | null = null;
 
@@ -24,7 +24,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddTaskNumbering(db);
   migrateAddInteractivePrompt(db);
   migrateAddPrUrl(db);
-  migrateAddExternalTracking(db);
+  migrateAddExternalTaskRef(db);
   migrateAddReviewArtifactFields(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
@@ -77,7 +77,7 @@ function migrateAddPrUrl(db: DatabaseSync): void {
   }
 }
 
-function migrateAddExternalTracking(db: DatabaseSync): void {
+function migrateAddExternalTaskRef(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "external_source")) {
     db.exec("ALTER TABLE tasks ADD COLUMN external_source TEXT");
@@ -85,6 +85,7 @@ function migrateAddExternalTracking(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === "external_id")) {
     db.exec("ALTER TABLE tasks ADD COLUMN external_id TEXT");
   }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id)");
 }
 
 function migrateAddReviewArtifactFields(db: DatabaseSync): void {
@@ -134,7 +135,7 @@ function seedDefaults(db: DatabaseSync): void {
   const insert = db.prepare(
     "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
   );
-  for (const [key, value] of Object.entries(REVIEW_SETTINGS_DEFAULTS)) {
+  for (const [key, value] of Object.entries(SETTINGS_DEFAULTS)) {
     insert.run(key, String(value));
   }
 }
