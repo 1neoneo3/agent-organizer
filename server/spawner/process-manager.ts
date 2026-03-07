@@ -8,6 +8,8 @@ import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, parseInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
+import { loadProjectWorkflow } from "../workflow/loader.js";
+import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
 import { notifyTaskStatus } from "../notify/telegram.js";
 import type { TaskLogKind } from "../types/runtime.js";
 import {
@@ -100,10 +102,14 @@ export function spawnAgent(
   const isContinue = !!options?.continuePrompt;
   const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
+  const workflow = loadProjectWorkflow(task.project_path);
+  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
     reasoningLevel: agent.cli_reasoning_level ?? undefined,
     resumeSessionId,
+    codexSandboxMode: runtimePolicy.codexSandboxMode ?? undefined,
+    codexApprovalPolicy: runtimePolicy.codexApprovalPolicy ?? undefined,
   });
 
   // Determine if self-review applies (skip for continue mode)
@@ -117,7 +123,9 @@ export function spawnAgent(
   const isReviewRun = task.review_count > 0;
   const prompt = isContinue
     ? options!.continuePrompt!
-    : (isReviewRun ? buildReviewPrompt(task) : buildTaskPrompt(task, { selfReview }));
+    : (isReviewRun
+      ? buildReviewPrompt(task)
+      : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy }));
 
   // Log directory
   const logDir = join("data", "logs");
@@ -181,6 +189,16 @@ export function spawnAgent(
   const insertStderrStmt = db.prepare(
     "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'stderr', ?)"
   );
+
+  if (!isContinue) {
+    const runtimeMessage = `[Runtime] ${runtimePolicy.summary}`;
+    insertLogStmt.run(task.id, "system", runtimeMessage);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: task.id, kind: "system", message: runtimeMessage }],
+      { taskId: task.id },
+    );
+  }
 
   function insertLogBatch(entries: Array<{ kind: TaskLogKind; message: string }>): void {
     if (entries.length === 0) {
