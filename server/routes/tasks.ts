@@ -8,6 +8,8 @@ import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, g
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
+import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/runtime.js";
+import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -29,6 +31,56 @@ const UpdateTaskSchema = z.object({
   result: z.string().nullish(),
   pr_url: z.string().url().nullish(),
 });
+
+type InteractivePromptType = "exit_plan_mode" | "ask_user_question" | "text_input_request";
+
+interface InteractiveResponseInput {
+  promptType: InteractivePromptType;
+  approved?: boolean;
+  selectedOptions?: Record<string, string | string[]>;
+  freeText?: string;
+}
+
+export function getInteractivePromptTypeMismatch(
+  requestedPromptType: InteractivePromptType,
+  pendingPromptType: InteractivePromptType,
+): InteractivePromptType | null {
+  return requestedPromptType === pendingPromptType ? null : pendingPromptType;
+}
+
+export function buildContinuePromptFromInteractiveResponse({
+  promptType,
+  approved,
+  selectedOptions,
+  freeText,
+}: InteractiveResponseInput): string {
+  if (promptType === "exit_plan_mode") {
+    if (approved) {
+      return "The user has approved your plan. Proceed with the implementation.";
+    }
+    return `The user has rejected your plan.${freeText ? ` Feedback: ${freeText}` : " Please revise your approach."}`;
+  }
+
+  if (promptType === "text_input_request") {
+    return freeText
+      ? `The user has responded to your request:\n\n${freeText}`
+      : "The user acknowledged your request without a specific answer. Please proceed with your best judgment.";
+  }
+
+  const parts: string[] = [];
+  if (selectedOptions && Object.keys(selectedOptions).length > 0) {
+    for (const [question, answer] of Object.entries(selectedOptions)) {
+      const answerStr = Array.isArray(answer) ? answer.join(", ") : answer;
+      parts.push(`Q: ${question}\nA: ${answerStr}`);
+    }
+  }
+  if (freeText) {
+    parts.push(freeText);
+  }
+  return parts.length > 0
+    ? `The user has responded to your questions:\n\n${parts.join("\n\n")}`
+    : "The user acknowledged your question without a specific answer.";
+}
 
 function nextTaskNumber(db: RuntimeContext["db"]): string {
   const row = db.prepare(
@@ -91,9 +143,17 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, now, now);
 
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-    await invalidateTaskCaches();
+    let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
     ws.broadcast("task_update", task);
+
+    task = autoDispatchTask(db, ws, id, {
+      autoAssign: AUTO_ASSIGN_TASK_ON_CREATE,
+      autoRun: AUTO_RUN_TASK_ON_CREATE,
+      cache,
+      spawnAgent,
+    }) as Task;
+    await invalidateTaskCaches();
+    await cache.del("agents:all");
     res.status(201).json(task);
   });
 
@@ -307,36 +367,21 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     const { promptType, approved, selectedOptions, freeText } = parsed.data;
+    const promptTypeMismatch = getInteractivePromptTypeMismatch(promptType, pending.data.promptType);
+    if (promptTypeMismatch) {
+      return res.status(409).json({
+        error: "prompt_type_mismatch",
+        expected_prompt_type: promptTypeMismatch,
+      });
+    }
 
     // Build natural language response for the agent
-    let continuePrompt: string;
-    if (promptType === "exit_plan_mode") {
-      if (approved) {
-        continuePrompt = "The user has approved your plan. Proceed with the implementation.";
-      } else {
-        continuePrompt = `The user has rejected your plan.${freeText ? ` Feedback: ${freeText}` : " Please revise your approach."}`;
-      }
-    } else if (promptType === "text_input_request") {
-      // Text-based input request — user's freeText is the direct response
-      continuePrompt = freeText
-        ? `The user has responded to your request:\n\n${freeText}`
-        : "The user acknowledged your request without a specific answer. Please proceed with your best judgment.";
-    } else {
-      // ask_user_question
-      const parts: string[] = [];
-      if (selectedOptions && Object.keys(selectedOptions).length > 0) {
-        for (const [question, answer] of Object.entries(selectedOptions)) {
-          const answerStr = Array.isArray(answer) ? answer.join(", ") : answer;
-          parts.push(`Q: ${question}\nA: ${answerStr}`);
-        }
-      }
-      if (freeText) {
-        parts.push(freeText);
-      }
-      continuePrompt = parts.length > 0
-        ? `The user has responded to your questions:\n\n${parts.join("\n\n")}`
-        : "The user acknowledged your question without a specific answer.";
-    }
+    const continuePrompt = buildContinuePromptFromInteractiveResponse({
+      promptType,
+      approved,
+      selectedOptions,
+      freeText,
+    });
 
     // Clear the pending prompt
     clearPendingInteractivePrompt(task.id, db);

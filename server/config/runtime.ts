@@ -123,3 +123,7 @@ export const SETTINGS_DEFAULTS = {
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
   auto_dispatch_mode: "github_only" as const, // "disabled" | "github_only" | "all_inbox"
 };
+
+
+export const AUTO_ASSIGN_TASK_ON_CREATE = process.env.AUTO_ASSIGN_TASK_ON_CREATE !== "false";
+export const AUTO_RUN_TASK_ON_CREATE = process.env.AUTO_RUN_TASK_ON_CREATE !== "false";
