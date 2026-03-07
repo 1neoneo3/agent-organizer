@@ -29,6 +29,10 @@ export function groupTasksByStatusStable(tasks: Task[], previous?: TaskColumns):
     }
   }
 
+  for (const key of COLUMN_KEYS) {
+    next[key] = sortTasksByCreatedAtDesc(next[key]);
+  }
+
   if (!previous) {
     return next;
   }
@@ -58,4 +62,18 @@ function sameTaskList(previous: Task[], next: Task[]): boolean {
   }
 
   return true;
+}
+
+function sortTasksByCreatedAtDesc(tasks: Task[]): Task[] {
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .sort((left, right) => {
+      const createdAtDiff = right.task.created_at - left.task.created_at;
+      if (createdAtDiff !== 0) {
+        return createdAtDiff;
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ task }) => task);
 }
