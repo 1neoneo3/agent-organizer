@@ -2,6 +2,8 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Task, Directive } from "../types/runtime.js";
+import type { ProjectWorkflow } from "../workflow/loader.js";
+import type { AgentRuntimePolicy } from "../workflow/runtime-policy.js";
 
 // ---------------------------------------------------------------------------
 // Shared context loaders
@@ -133,6 +135,50 @@ function appendSharedContext(
   }
 }
 
+function appendWorkflowContext(
+  parts: string[],
+  workflow?: ProjectWorkflow | null,
+  runtimePolicy?: AgentRuntimePolicy | null,
+): void {
+  if (!workflow && !runtimePolicy) {
+    return;
+  }
+
+  parts.push("## Runtime Constraints");
+  parts.push("");
+
+  if (runtimePolicy) {
+    parts.push(runtimePolicy.summary);
+    parts.push("");
+
+    if (!runtimePolicy.canAgentRunE2E) {
+      parts.push(
+        "Do not start a localhost-listening Playwright webServer inside the agent unless the runtime explicitly allows it.",
+      );
+      if (runtimePolicy.e2eExecution === "host") {
+        parts.push(
+          "Delegate E2E to the host environment and report the exact command to run.",
+        );
+      } else if (runtimePolicy.e2eExecution === "ci") {
+        parts.push(
+          "Delegate E2E to CI and report the exact workflow or command to run.",
+        );
+      }
+      if (runtimePolicy.e2eCommand) {
+        parts.push(`Preferred E2E command: \`${runtimePolicy.e2eCommand}\``);
+      }
+      parts.push("");
+    }
+  }
+
+  if (workflow?.body) {
+    parts.push("## Project Workflow (WORKFLOW.md)");
+    parts.push("");
+    parts.push(workflow.body);
+    parts.push("");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public prompt builders
 // ---------------------------------------------------------------------------
@@ -142,7 +188,11 @@ function appendSharedContext(
  */
 export function buildTaskPrompt(
   task: Task,
-  opts?: { selfReview?: boolean },
+  opts?: {
+    selfReview?: boolean;
+    workflow?: ProjectWorkflow | null;
+    runtimePolicy?: AgentRuntimePolicy | null;
+  },
 ): string {
   const parts: string[] = [];
 
@@ -165,6 +215,8 @@ export function buildTaskPrompt(
     parts.push(`Project path: ${task.project_path}`);
     parts.push("");
   }
+
+  appendWorkflowContext(parts, opts?.workflow, opts?.runtimePolicy);
 
   // Self-review instruction
   if (opts?.selfReview) {

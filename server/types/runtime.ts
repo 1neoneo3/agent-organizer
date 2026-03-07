@@ -38,8 +38,15 @@ export interface Task {
   depends_on: string | null;
   result: string | null;
   pr_url: string | null;
+  external_source: string | null;
+  external_id: string | null;
   review_count: number;
   directive_id: string | null;
+  interactive_prompt_data: string | null;
+  review_branch: string | null;
+  review_commit_sha: string | null;
+  review_sync_status: "pending" | "not_applicable" | "local_commit_ready" | "pushed" | "pr_open";
+  review_sync_error: string | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;
