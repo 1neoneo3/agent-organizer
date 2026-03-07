@@ -17,6 +17,9 @@ import {
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { loadProjectWorkflow } from "../workflow/loader.js";
+import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
+import { promoteTaskReviewArtifact } from "../workflow/review-artifact.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
@@ -136,9 +139,11 @@ export function spawnAgent(
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
   const projectPath = task.project_path ?? process.cwd();
+  const workflow = loadProjectWorkflow(projectPath);
+  const workspace = prepareTaskWorkspace(task, workflow);
 
   const child = spawn(args[0], args.slice(1), {
-    cwd: projectPath,
+    cwd: workspace.cwd,
     env: cleanEnv,
     shell: process.platform === "win32",
     stdio: ["pipe", "pipe", "pipe"],
@@ -422,6 +427,36 @@ export function spawnAgent(
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
+
+    if (code === 0 && (finalStatus === "pr_review" || finalStatus === "done")) {
+      const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace);
+      db.prepare(
+        `UPDATE tasks
+         SET pr_url = COALESCE(?, pr_url),
+             review_branch = ?,
+             review_commit_sha = ?,
+             review_sync_status = ?,
+             review_sync_error = ?,
+             updated_at = ?
+         WHERE id = ?`
+      ).run(
+        promotion.prUrl,
+        promotion.branchName,
+        promotion.commitSha,
+        promotion.syncStatus,
+        promotion.syncError,
+        finishTime,
+        task.id,
+      );
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+      ).run(
+        task.id,
+        promotion.syncError
+          ? `Review artifact sync: ${promotion.syncStatus} (${promotion.syncError})`
+          : `Review artifact sync: ${promotion.syncStatus}${promotion.prUrl ? ` (${promotion.prUrl})` : ""}`,
+      );
+    }
 
     invalidateCaches(cache);
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;

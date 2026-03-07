@@ -26,12 +26,20 @@ describe("initializeDb", () => {
     const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     const externalSource = columns.find((column) => column.name === "external_source");
     const externalId = columns.find((column) => column.name === "external_id");
+    const reviewBranch = columns.find((column) => column.name === "review_branch");
+    const reviewCommitSha = columns.find((column) => column.name === "review_commit_sha");
+    const reviewSyncStatus = columns.find((column) => column.name === "review_sync_status");
+    const reviewSyncError = columns.find((column) => column.name === "review_sync_error");
     const autoDispatch = db.prepare("SELECT value FROM settings WHERE key = 'auto_dispatch_mode'").get() as
       | { value: string }
       | undefined;
 
     assert.ok(externalSource);
     assert.ok(externalId);
+    assert.ok(reviewBranch);
+    assert.ok(reviewCommitSha);
+    assert.ok(reviewSyncStatus);
+    assert.ok(reviewSyncError);
     assert.equal(autoDispatch?.value, "github_only");
   });
 });

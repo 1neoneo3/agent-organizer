@@ -9,7 +9,6 @@ function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA_SQL);
-  db.exec("ALTER TABLE tasks ADD COLUMN interactive_prompt_data TEXT");
   return db;
 }
 
@@ -92,6 +91,11 @@ function insertTask(
     pr_url: overrides.pr_url ?? null,
     review_count: overrides.review_count ?? 0,
     directive_id: overrides.directive_id ?? null,
+    interactive_prompt_data: overrides.interactive_prompt_data ?? null,
+    review_branch: overrides.review_branch ?? null,
+    review_commit_sha: overrides.review_commit_sha ?? null,
+    review_sync_status: overrides.review_sync_status ?? "pending",
+    review_sync_error: overrides.review_sync_error ?? null,
     external_source: overrides.external_source === undefined ? "github" : overrides.external_source,
     external_id: overrides.external_id === undefined ? "24" : overrides.external_id,
     started_at: overrides.started_at ?? null,
@@ -104,8 +108,9 @@ function insertTask(
     INSERT INTO tasks (
       id, title, description, assigned_agent_id, project_path, status, priority, task_size,
       task_number, depends_on, result, review_count, directive_id, pr_url, external_source,
-      external_id, started_at, completed_at, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      external_id, interactive_prompt_data, review_branch, review_commit_sha, review_sync_status,
+      review_sync_error, started_at, completed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     task.id,
     task.title,
@@ -123,6 +128,11 @@ function insertTask(
     task.pr_url,
     task.external_source,
     task.external_id,
+    task.interactive_prompt_data,
+    task.review_branch,
+    task.review_commit_sha,
+    task.review_sync_status,
+    task.review_sync_error,
     task.started_at,
     task.completed_at,
     task.created_at,

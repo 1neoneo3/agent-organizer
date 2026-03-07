@@ -8,7 +8,6 @@ function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA_SQL);
-  db.exec("ALTER TABLE tasks ADD COLUMN interactive_prompt_data TEXT");
   return db;
 }
 

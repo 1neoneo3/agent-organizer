@@ -25,6 +25,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddInteractivePrompt(db);
   migrateAddPrUrl(db);
   migrateAddExternalTaskRef(db);
+  migrateAddReviewArtifactFields(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -85,6 +86,22 @@ function migrateAddExternalTaskRef(db: DatabaseSync): void {
     db.exec("ALTER TABLE tasks ADD COLUMN external_id TEXT");
   }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id)");
+}
+
+function migrateAddReviewArtifactFields(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "review_branch")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_branch TEXT");
+  }
+  if (!cols.some((c) => c.name === "review_commit_sha")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_commit_sha TEXT");
+  }
+  if (!cols.some((c) => c.name === "review_sync_status")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_sync_status TEXT NOT NULL DEFAULT 'pending'");
+  }
+  if (!cols.some((c) => c.name === "review_sync_error")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN review_sync_error TEXT");
+  }
 }
 
 function backfillTaskNumbers(db: DatabaseSync): void {
