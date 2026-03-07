@@ -288,9 +288,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
   });
 
-  // Interactive prompt response (ExitPlanMode / AskUserQuestion)
+  // Interactive prompt response (ExitPlanMode / AskUserQuestion / text_input_request)
   const InteractiveResponseSchema = z.object({
-    promptType: z.enum(["exit_plan_mode", "ask_user_question"]),
+    promptType: z.enum(["exit_plan_mode", "ask_user_question", "text_input_request"]),
     approved: z.boolean().optional(),
     selectedOptions: z.record(z.union([z.string(), z.array(z.string())])).optional(),
     freeText: z.string().optional(),
@@ -316,6 +316,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       } else {
         continuePrompt = `The user has rejected your plan.${freeText ? ` Feedback: ${freeText}` : " Please revise your approach."}`;
       }
+    } else if (promptType === "text_input_request") {
+      // Text-based input request — user's freeText is the direct response
+      continuePrompt = freeText
+        ? `The user has responded to your request:\n\n${freeText}`
+        : "The user acknowledged your request without a specific answer. Please proceed with your best judgment.";
     } else {
       // ask_user_question
       const parts: string[] = [];

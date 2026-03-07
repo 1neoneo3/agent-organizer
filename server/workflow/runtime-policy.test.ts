@@ -12,6 +12,14 @@ describe("resolveAgentRuntimePolicy", () => {
         codexApprovalPolicy: "on-request",
         e2eExecution: "host",
         e2eCommand: "pnpm test:e2e",
+        gitWorkflow: "default",
+        workspaceMode: "shared",
+        branchPrefix: "ao",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
       },
     );
 
@@ -30,6 +38,14 @@ describe("resolveAgentRuntimePolicy", () => {
         codexApprovalPolicy: "never",
         e2eExecution: "agent",
         e2eCommand: "pnpm test:e2e",
+        gitWorkflow: "default",
+        workspaceMode: "shared",
+        branchPrefix: "ao",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
       },
     );
 

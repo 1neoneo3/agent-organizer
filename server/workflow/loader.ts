@@ -7,6 +7,7 @@ export type CodexSandboxMode =
   | "danger-full-access";
 export type CodexApprovalPolicy = "untrusted" | "on-request" | "never";
 export type E2EExecutionMode = "agent" | "host" | "ci";
+export type WorkflowPromptKind = "task" | "review" | "decompose";
 
 export interface ProjectWorkflow {
   body: string;
@@ -14,6 +15,14 @@ export interface ProjectWorkflow {
   codexApprovalPolicy: CodexApprovalPolicy;
   e2eExecution: E2EExecutionMode;
   e2eCommand: string | null;
+  gitWorkflow: "default" | "none";
+  workspaceMode: "shared" | "git-worktree";
+  branchPrefix: string;
+  beforeRun: string[];
+  afterRun: string[];
+  includeTask: boolean;
+  includeReview: boolean;
+  includeDecompose: boolean;
 }
 
 const DEFAULT_WORKFLOW: ProjectWorkflow = {
@@ -22,10 +31,46 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   codexApprovalPolicy: "on-request",
   e2eExecution: "host",
   e2eCommand: null,
+  gitWorkflow: "default",
+  workspaceMode: "shared",
+  branchPrefix: "ao",
+  beforeRun: [],
+  afterRun: [],
+  includeTask: true,
+  includeReview: true,
+  includeDecompose: true,
 };
 
 function stripQuotes(value: string): string {
   return value.replace(/^['"]|['"]$/g, "");
+}
+
+function parseCommandList(value: string): string[] {
+  if (!value) {
+    return [];
+  }
+
+  if (value.startsWith("[") && value.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed.filter(
+          (entry): entry is string =>
+            typeof entry === "string" && entry.trim().length > 0,
+        );
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  return [value];
+}
+
+function parseBoolean(value: string): boolean | null {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
 }
 
 function parseFrontmatter(raw: string): ProjectWorkflow {
@@ -68,6 +113,48 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
       case "e2e_command":
         workflow.e2eCommand = value || null;
         break;
+      case "git_workflow":
+        if (value === "default" || value === "none") {
+          workflow.gitWorkflow = value;
+        }
+        break;
+      case "workspace_mode":
+        if (value === "shared" || value === "git-worktree") {
+          workflow.workspaceMode = value;
+        }
+        break;
+      case "branch_prefix":
+        if (value) {
+          workflow.branchPrefix = value;
+        }
+        break;
+      case "before_run":
+        workflow.beforeRun = parseCommandList(value);
+        break;
+      case "after_run":
+        workflow.afterRun = parseCommandList(value);
+        break;
+      case "include_task": {
+        const parsed = parseBoolean(value);
+        if (parsed !== null) {
+          workflow.includeTask = parsed;
+        }
+        break;
+      }
+      case "include_review": {
+        const parsed = parseBoolean(value);
+        if (parsed !== null) {
+          workflow.includeReview = parsed;
+        }
+        break;
+      }
+      case "include_decompose": {
+        const parsed = parseBoolean(value);
+        if (parsed !== null) {
+          workflow.includeDecompose = parsed;
+        }
+        break;
+      }
       default:
         break;
     }
@@ -84,23 +171,42 @@ export function loadProjectWorkflow(
   const workflowPath = join(projectPath, "WORKFLOW.md");
   if (!existsSync(workflowPath)) return null;
 
-  const raw = readFileSync(workflowPath, "utf-8").trim();
-  if (!raw) return null;
+  const raw = readFileSync(workflowPath, "utf-8");
+  const normalized = raw.trim();
+  if (!normalized) return null;
 
-  if (!raw.startsWith("---")) {
-    return { ...DEFAULT_WORKFLOW, body: raw };
+  if (!normalized.startsWith("---")) {
+    return { ...DEFAULT_WORKFLOW, body: normalized };
   }
 
-  const endMarker = raw.indexOf("\n---", 3);
+  const endMarker = normalized.indexOf("\n---", 3);
   if (endMarker === -1) {
-    return { ...DEFAULT_WORKFLOW, body: raw };
+    return { ...DEFAULT_WORKFLOW, body: normalized };
   }
 
-  const frontmatter = raw.slice(4, endMarker).trim();
-  const body = raw.slice(endMarker + 4).trim();
+  const frontmatter = normalized.slice(4, endMarker).trim();
+  const body = normalized.slice(endMarker + 4).trim();
 
   return {
     ...parseFrontmatter(frontmatter),
     body,
   };
+}
+
+export function shouldIncludeWorkflow(
+  workflow: ProjectWorkflow | null,
+  kind: WorkflowPromptKind,
+): boolean {
+  if (!workflow) return false;
+
+  switch (kind) {
+    case "task":
+      return workflow.includeTask;
+    case "review":
+      return workflow.includeReview;
+    case "decompose":
+      return workflow.includeDecompose;
+    default:
+      return false;
+  }
 }

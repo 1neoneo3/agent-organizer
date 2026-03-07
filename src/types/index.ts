@@ -30,6 +30,8 @@ export interface Task {
   pr_url: string | null;
   review_count: number;
   directive_id: string | null;
+  external_source: string | null;
+  external_id: string | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;
@@ -68,8 +70,10 @@ export interface Directive {
 
 export interface InteractivePrompt {
   task_id: string;
-  promptType: "exit_plan_mode" | "ask_user_question";
+  promptType: "exit_plan_mode" | "ask_user_question" | "text_input_request";
   toolUseId: string;
+  /** The raw assistant text that triggered text_input_request detection */
+  detectedText?: string;
   questions?: Array<{
     question: string;
     header?: string;

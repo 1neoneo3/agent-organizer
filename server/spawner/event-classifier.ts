@@ -10,8 +10,10 @@ export type EventKind = "thinking" | "assistant" | "tool_call" | "tool_result";
 // --------------- Interactive Prompt Detection ---------------
 
 export interface InteractivePromptData {
-  promptType: "exit_plan_mode" | "ask_user_question";
+  promptType: "exit_plan_mode" | "ask_user_question" | "text_input_request";
   toolUseId: string;
+  /** The raw assistant text that triggered text_input_request detection */
+  detectedText?: string;
   questions?: Array<{
     question: string;
     header?: string;
@@ -79,6 +81,76 @@ function extractFromToolUse(block: Record<string, unknown>): InteractivePromptDa
   // exit_plan_mode
   const allowedPrompts = input.allowedPrompts as InteractivePromptData["allowedPrompts"] | undefined;
   return { promptType, toolUseId, allowedPrompts };
+}
+
+// --------------- Text-based Interactive Prompt Detection ---------------
+
+// Patterns that strongly indicate the agent is requesting user input.
+// These are checked against classified "assistant" text output.
+const TEXT_PROMPT_PATTERNS_JA: RegExp[] = [
+  /(?:指定|入力|提供|教えて|貼って|選択して|返答して|回答して)(?:ください|して(?:ほしい|もらえ))/,
+  /(?:再指定|追加情報|追加入力|確認が必要)/,
+  /(?:どちらにしますか|どうしますか|どれを選びますか)/,
+  /(?:コマンドを|パスを|ファイルを|ディレクトリを)(?:教えて|指定して|入力して|貼って)/,
+  /(?:完了条件|対象|作業ディレクトリ)を.*(?:指定|教えて|入力)/,
+];
+
+const TEXT_PROMPT_PATTERNS_EN: RegExp[] = [
+  /(?:please|could you|can you|would you)\s+(?:provide|specify|enter|paste|confirm|select|choose|tell me|let me know)/i,
+  /(?:what|which|where|how)\s+(?:would you like|should I|do you want)/i,
+  /(?:waiting for|need(?:s)?|require[sd]?)\s+(?:your|user)\s+(?:input|response|answer|confirmation|feedback|decision)/i,
+  /(?:paste|type|enter)\s+(?:the|your|a)\s+(?:command|path|file|directory|value|answer)/i,
+  /(?:please respond|please reply|please answer)/i,
+];
+
+function looksLikeCompletionSummary(text: string): boolean {
+  return (
+    text.includes("[REVIEW:PASS]") ||
+    text.includes("[REVIEW:NEEDS_CHANGES]") ||
+    text.includes("[SELF_REVIEW:PASS]") ||
+    text.includes("[SELF_REVIEW:FAIL:") ||
+    (text.includes("レビューサマリー") && text.includes("### 判定"))
+  );
+}
+
+/**
+ * Check if a classified assistant message looks like the agent is requesting user input.
+ * Returns an InteractivePromptData if detected, null otherwise.
+ *
+ * This is a heuristic — it favors precision over recall to avoid false positives.
+ * Only multi-sentence assistant messages are checked (short fragments are skipped).
+ */
+export function detectTextInteractivePrompt(
+  assistantText: string
+): InteractivePromptData | null {
+  // Skip very short messages — unlikely to be a genuine input request.
+  // Threshold is low (10) because CJK languages pack more meaning per character.
+  if (assistantText.length < 10) return null;
+  if (looksLikeCompletionSummary(assistantText)) return null;
+
+  for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
+    if (pattern.test(assistantText)) {
+      return {
+        promptType: "text_input_request",
+        toolUseId: "",
+        detectedText: assistantText,
+        questions: [{ question: assistantText }],
+      };
+    }
+  }
+
+  for (const pattern of TEXT_PROMPT_PATTERNS_EN) {
+    if (pattern.test(assistantText)) {
+      return {
+        promptType: "text_input_request",
+        toolUseId: "",
+        detectedText: assistantText,
+        questions: [{ question: assistantText }],
+      };
+    }
+  }
+
+  return null;
 }
 
 export interface ClassifiedEvent {

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
-import { classifyEvent, parseInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
+import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
@@ -19,6 +19,8 @@ import {
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
+import { promoteTaskReviewArtifact } from "../workflow/review-artifact.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
@@ -102,7 +104,8 @@ export function spawnAgent(
   const isContinue = !!options?.continuePrompt;
   const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
-  const workflow = loadProjectWorkflow(task.project_path);
+  const projectPath = task.project_path ?? process.cwd();
+  const workflow = loadProjectWorkflow(projectPath);
   const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
@@ -143,10 +146,10 @@ export function spawnAgent(
   cleanEnv.CI = "1";
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
-  const projectPath = task.project_path ?? process.cwd();
+  const workspace = prepareTaskWorkspace(task, workflow);
 
   const child = spawn(args[0], args.slice(1), {
-    cwd: projectPath,
+    cwd: workspace.cwd,
     env: cleanEnv,
     shell: process.platform === "win32",
     stdio: ["pipe", "pipe", "pipe"],
@@ -288,6 +291,23 @@ export function spawnAgent(
           break; // Stop processing remaining lines in this chunk
         }
 
+        // Text-based interactive prompt detection (for Codex/Gemini/any provider)
+        // Only check "assistant" kind events — agent's direct text output
+        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
+          const textPrompt = detectTextInteractivePrompt(event.message);
+          if (textPrompt) {
+            const entry = { data: textPrompt, createdAt: Date.now() };
+            pendingInteractivePrompts.set(task.id, entry);
+            persistPromptToDb(db, task.id, entry);
+            ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
+            insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`);
+
+            interactivePromptKilled = true;
+            try { child.kill("SIGTERM"); } catch { /* already dead */ }
+            break;
+          }
+        }
+
         // Subtask parsing (reuse pre-parsed object)
         const subtaskEvent = parseStreamLineFromObj(agent.cli_provider, obj);
         if (subtaskEvent) handleSubtaskEvent(db, ws, task.id, subtaskEvent, subtaskMap);
@@ -408,7 +428,9 @@ export function spawnAgent(
       return;
     }
 
-    const finalStatus = code === 0 ? determineCompletionStatus(db, task, selfReview) : "cancelled";
+    const completionTask =
+      (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
+    const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview) : "cancelled";
 
     db.prepare(
       "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?"
@@ -421,6 +443,36 @@ export function spawnAgent(
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
+
+    if (code === 0 && (finalStatus === "pr_review" || finalStatus === "done")) {
+      const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace);
+      db.prepare(
+        `UPDATE tasks
+         SET pr_url = COALESCE(?, pr_url),
+             review_branch = ?,
+             review_commit_sha = ?,
+             review_sync_status = ?,
+             review_sync_error = ?,
+             updated_at = ?
+         WHERE id = ?`
+      ).run(
+        promotion.prUrl,
+        promotion.branchName,
+        promotion.commitSha,
+        promotion.syncStatus,
+        promotion.syncError,
+        finishTime,
+        task.id,
+      );
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+      ).run(
+        task.id,
+        promotion.syncError
+          ? `Review artifact sync: ${promotion.syncStatus} (${promotion.syncError})`
+          : `Review artifact sync: ${promotion.syncStatus}${promotion.prUrl ? ` (${promotion.prUrl})` : ""}`,
+      );
+    }
 
     invalidateCaches(cache);
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
@@ -446,16 +498,18 @@ export function spawnAgent(
   return { pid: child.pid ?? 0 };
 }
 
-function determineCompletionStatus(
+export function determineCompletionStatus(
   db: DatabaseSync,
   task: Task,
   selfReview: boolean
 ): string {
+  const runStartedAt = task.started_at ?? 0;
+
   // Auto-review completion: review_count > 0 means this was a review run
   if (task.review_count > 0) {
     const logs = db.prepare(
-      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'stdout' ORDER BY id DESC LIMIT 50"
-    ).all(task.id) as Array<{ message: string }>;
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
+    ).all(task.id, runStartedAt) as Array<{ message: string }>;
 
     const needsChanges = logs.some((l) => l.message.includes("[REVIEW:NEEDS_CHANGES]"));
     if (needsChanges) return "inbox"; // Send back for rework
@@ -471,8 +525,8 @@ function determineCompletionStatus(
   }
   // Self-review: check if review passed
   const logs = db.prepare(
-    "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'stdout' ORDER BY id DESC LIMIT 50"
-  ).all(task.id) as Array<{ message: string }>;
+    "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
+  ).all(task.id, runStartedAt) as Array<{ message: string }>;
 
   const passed = logs.some((l) => l.message.includes("[SELF_REVIEW:PASS]"));
   if (passed) return "done"; // Auto-approved via self-review
