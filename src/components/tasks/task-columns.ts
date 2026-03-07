@@ -1,12 +1,20 @@
 import type { Task } from "../../types/index.js";
 
-const COLUMN_KEYS = [
-  "inbox",
-  "in_progress",
-  "self_review",
-  "pr_review",
-  "done",
-] as const satisfies ReadonlyArray<Task["status"]>;
+export const TASK_BOARD_COLUMNS = [
+  { key: "inbox", label: "INBOX", town: "Onett", accentColor: "var(--eb-highlight)" },
+  { key: "in_progress", label: "IN PROGRESS", town: "Twoson", accentColor: "var(--eb-highlight)" },
+  { key: "self_review", label: "SELF REVIEW", town: "Threed", accentColor: "#d9a441" },
+  { key: "pr_review", label: "PR REVIEW", town: "Fourside", accentColor: "#7dcfff" },
+  { key: "done", label: "DONE", town: "Magicant", accentColor: "#69c16f" },
+  { key: "cancelled", label: "CANCELLED", town: "Lost Underworld", accentColor: "#d95c5c" },
+] as const satisfies ReadonlyArray<{
+  key: Task["status"];
+  label: string;
+  town: string;
+  accentColor: string;
+}>;
+
+const COLUMN_KEYS = TASK_BOARD_COLUMNS.map((column) => column.key) as ReadonlyArray<Task["status"]>;
 
 export type TaskColumns = Record<(typeof COLUMN_KEYS)[number], Task[]>;
 
@@ -17,6 +25,7 @@ export function createEmptyTaskColumns(): TaskColumns {
     self_review: [],
     pr_review: [],
     done: [],
+    cancelled: [],
   };
 }
 

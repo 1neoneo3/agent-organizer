@@ -12,15 +12,7 @@ import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { useWebSocket } from "../../hooks/useWebSocket.js";
 import { buildAgentViewState } from "./agent-view.js";
-import { createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
-
-const COLUMNS = [
-  { key: "inbox", label: "INBOX", town: "Onett" },
-  { key: "in_progress", label: "IN PROGRESS", town: "Twoson" },
-  { key: "self_review", label: "SELF REVIEW", town: "Threed" },
-  { key: "pr_review", label: "PR REVIEW", town: "Fourside" },
-  { key: "done", label: "DONE", town: "Magicant" },
-] as const;
+import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
 
 interface TaskBoardProps {
   tasks: Task[];
@@ -33,6 +25,7 @@ interface TaskBoardProps {
 interface TaskColumnProps {
   label: string;
   town: string;
+  accentColor: string;
   tasks: Task[];
   assignedAgentById: Map<string, Agent>;
   idleAgents: Agent[];
@@ -49,6 +42,7 @@ interface TaskColumnProps {
 const TaskColumn = memo(function TaskColumn({
   label,
   town,
+  accentColor,
   tasks,
   assignedAgentById,
   idleAgents,
@@ -63,9 +57,9 @@ const TaskColumn = memo(function TaskColumn({
 }: TaskColumnProps) {
   return (
     <div style={{ flex: 1, minWidth: "220px", maxWidth: "320px" }}>
-      <div className="eb-window" style={{ marginBottom: "8px" }}>
+      <div className="eb-window" style={{ marginBottom: "8px", borderColor: accentColor }}>
         <div style={{ padding: "6px 10px", textAlign: "center" }}>
-          <div className="eb-heading" style={{ fontSize: "10px", color: "var(--eb-highlight)" }}>{town}</div>
+          <div className="eb-heading" style={{ fontSize: "10px", color: accentColor }}>{town}</div>
           <div className="eb-label" style={{ fontSize: "7px", marginTop: "2px" }}>{label} ({tasks.length})</div>
         </div>
       </div>
@@ -247,13 +241,14 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
       {/* Kanban columns */}
       <Profiler id="TaskBoardColumns" onRender={handleBoardRender}>
       <div style={{ display: "flex", gap: "10px", overflowX: "auto" }}>
-        {COLUMNS.map((col) => {
+        {TASK_BOARD_COLUMNS.map((col) => {
           const colTasks = tasksByStatus[col.key];
           return (
             <TaskColumn
               key={col.key}
               label={col.label}
               town={col.town}
+              accentColor={col.accentColor}
               tasks={colTasks}
               assignedAgentById={agentView.agentById}
               idleAgents={agentView.idleAgents}
