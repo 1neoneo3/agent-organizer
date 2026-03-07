@@ -128,6 +128,41 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
     );
   }
 
+  // text_input_request — simple text response panel
+  if (prompt.promptType === "text_input_request") {
+    const detectedText = prompt.detectedText || prompt.questions?.[0]?.question || "";
+    return (
+      <div className="border-2 border-emerald-400 dark:border-emerald-500 rounded-lg p-4 bg-emerald-50 dark:bg-emerald-950/30">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <h3 className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
+            Input Required
+          </h3>
+        </div>
+        {detectedText && (
+          <p className="text-sm text-gray-700 dark:text-gray-300 mb-3 whitespace-pre-wrap">
+            {detectedText}
+          </p>
+        )}
+        <textarea
+          value={freeText}
+          onChange={(e) => setFreeText(e.target.value)}
+          placeholder="Type your response..."
+          className="w-full bg-white dark:bg-gray-800 rounded px-3 py-2 text-sm h-20 resize-none border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        />
+        <div className="mt-2">
+          <button
+            onClick={handleSubmitAnswer}
+            disabled={sending || !freeText.trim()}
+            className="px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-50"
+          >
+            {sending ? "..." : "Send Response"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ask_user_question
   const questions = prompt.questions ?? [];
   const hasOptions = questions.some((q) => q.options && q.options.length > 0);

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
-import { classifyEvent, parseInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
+import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { notifyTaskStatus } from "../notify/telegram.js";
@@ -268,6 +268,23 @@ export function spawnAgent(
           interactivePromptKilled = true;
           try { child.kill("SIGTERM"); } catch { /* already dead */ }
           break; // Stop processing remaining lines in this chunk
+        }
+
+        // Text-based interactive prompt detection (for Codex/Gemini/any provider)
+        // Only check "assistant" kind events — agent's direct text output
+        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
+          const textPrompt = detectTextInteractivePrompt(event.message);
+          if (textPrompt) {
+            const entry = { data: textPrompt, createdAt: Date.now() };
+            pendingInteractivePrompts.set(task.id, entry);
+            persistPromptToDb(db, task.id, entry);
+            ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
+            insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`);
+
+            interactivePromptKilled = true;
+            try { child.kill("SIGTERM"); } catch { /* already dead */ }
+            break;
+          }
         }
 
         // Subtask parsing (reuse pre-parsed object)

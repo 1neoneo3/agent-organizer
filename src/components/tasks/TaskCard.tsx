@@ -187,8 +187,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         </div>
       )}
 
-      {/* Agent Question — prompt to open modal */}
-      {interactivePrompt?.promptType === "ask_user_question" && (
+      {/* Agent Question / Text Input Request — prompt to open modal */}
+      {(interactivePrompt?.promptType === "ask_user_question" || interactivePrompt?.promptType === "text_input_request") && (
         <div
           style={{
             padding: "6px 10px",
@@ -200,7 +200,7 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         >
           <div className="eb-label" style={{ fontSize: "8px", color: "var(--eb-highlight)", display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
             <span style={{ animation: "eb-blink 0.6s steps(1) infinite" }}>?</span>
-            CLICK TO ANSWER
+            {interactivePrompt.promptType === "text_input_request" ? "INPUT REQUIRED" : "CLICK TO ANSWER"}
           </div>
         </div>
       )}

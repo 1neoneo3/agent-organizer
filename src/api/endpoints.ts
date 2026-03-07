@@ -79,7 +79,7 @@ export const fetchInteractivePrompts = () =>
 export const sendInteractiveResponse = (
   taskId: string,
   payload: {
-    promptType: "exit_plan_mode" | "ask_user_question";
+    promptType: "exit_plan_mode" | "ask_user_question" | "text_input_request";
     approved?: boolean;
     selectedOptions?: Record<string, string | string[]>;
     freeText?: string;
