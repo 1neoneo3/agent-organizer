@@ -12,6 +12,7 @@ import { authMiddleware } from "./security/auth.js";
 import { startOrphanRecovery } from "./lifecycle/jobs.js";
 import { restorePendingInteractivePrompts } from "./spawner/process-manager.js";
 import { startTelegramControlPoller } from "./notify/telegram-control.js";
+import { startGithubIssueSync } from "./integrations/github-sync.js";
 import { PORT, IS_DEV, SESSION_AUTH_TOKEN } from "./config/runtime.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -73,11 +74,12 @@ wss.on("connection", (ws: WebSocket) => {
 // Restore interactive prompts from DB and start lifecycle jobs
 restorePendingInteractivePrompts(db);
 startOrphanRecovery(db, wsHub, cache);
-startTelegramControlPoller();
+startGithubIssueSync(db, wsHub, cache);
 
 // Start
 server.listen(PORT, () => {
   console.log(`Agent Organizer running on http://localhost:${PORT}`);
+  startTelegramControlPoller();
   if (IS_DEV) {
     console.log(`Auth token: ${SESSION_AUTH_TOKEN}`);
   }
