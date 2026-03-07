@@ -11,13 +11,13 @@ test.describe("Task Flow (Agent + Task integration)", () => {
     await cleanupTestData(request);
   });
 
-  test("full flow: create agent, create task with agent, see task in inbox with agent badge", async ({
+  test("creating a task without an assignee auto-assigns the idle agent and starts it", async ({
     page,
     request,
   }) => {
     // 1. Create agent via API
     const agentRes = await apiCall(request, "post", "/agents", {
-      name: "flow-agent",
+      name: "auto-start-agent",
       cli_provider: "claude",
       avatar_emoji: "🚀",
       role: "lead_engineer",
@@ -29,25 +29,33 @@ test.describe("Task Flow (Agent + Task integration)", () => {
     await page.waitForSelector("text=TOWN MAP");
 
     // 3. Verify agent shows in header
-    await expect(page.locator("text=flow-agent")).toBeVisible();
+    await expect(page.locator("text=auto-start-agent")).toBeVisible();
 
-    // 4. Create task via UI with agent assigned
+    // 4. Create task via UI without explicitly assigning an agent
     await page.click("button:has-text('+ NEW QUEST')");
     await page.waitForSelector('input[placeholder="What needs to be done?"]');
-    await page.fill('input[placeholder="What needs to be done?"]', "Implement auth feature");
-    await page.fill('textarea[placeholder="Detailed instructions..."]', "Add JWT authentication to API");
+    await page.fill('input[placeholder="What needs to be done?"]', "Auto assign and start task");
+    await page.fill('textarea[placeholder="Detailed instructions..."]', "Verify task create auto-assigns and auto-starts");
 
-    // Select the agent by value (agent.id)
-    const agentSelect = page.locator('form select').first();
-    await agentSelect.selectOption(agent.id);
+    const createTaskResponsePromise = page.waitForResponse((response) =>
+      response.url().endsWith("/api/tasks") && response.request().method() === "POST"
+    );
 
     await page.click('button[type="submit"]:has-text("Create Task")');
+    const createdTask = await (await createTaskResponsePromise).json();
 
-    // 5. Wait for modal to close and verify task appears
-    await expect(page.locator("text=Implement auth feature")).toBeVisible({ timeout: 10_000 });
+    expect(createdTask.assigned_agent_id).toBe(agent.id);
+    expect(createdTask.status).toBe("in_progress");
+    expect(createdTask.started_at).toBeTruthy();
+
+    // 5. Wait for modal to close and verify task appears as running with the auto-assigned agent
+    const taskCard = page.locator(".eb-window", { hasText: "Auto assign and start task" }).first();
+    await expect(taskCard).toBeVisible({ timeout: 10_000 });
+    await expect(taskCard).toContainText("BATTLE");
+    await expect(taskCard).toContainText("auto-start-agent");
   });
 
-  test("task moves through statuses via API", async ({ request }) => {
+  test("task created with an assigned agent auto-starts, then moves through statuses via API", async ({ request }) => {
     // Create agent
     const agentRes = await apiCall(request, "post", "/agents", {
       name: "status-agent",
@@ -62,7 +70,9 @@ test.describe("Task Flow (Agent + Task integration)", () => {
       task_size: "small",
     });
     const task = await taskRes.json();
-    expect(task.status).toBe("inbox");
+    expect(task.assigned_agent_id).toBe(agent.id);
+    expect(task.status).toBe("in_progress");
+    expect(task.started_at).toBeTruthy();
 
     // Move to self_review
     const reviewRes = await apiCall(request, "put", `/tasks/${task.id}`, {
@@ -86,18 +96,12 @@ test.describe("Task Flow (Agent + Task integration)", () => {
   });
 
   test("task board columns show correct counts", async ({ page, request }) => {
-    // Create agent
-    await apiCall(request, "post", "/agents", {
-      name: "count-agent",
-      cli_provider: "claude",
-    });
-
-    // Create tasks in different statuses
-    const task1Res = await apiCall(request, "post", "/tasks", {
+    // Create tasks in different statuses without agents so they remain in inbox unless explicitly updated
+    await apiCall(request, "post", "/tasks", {
       title: "Inbox Task 1",
       task_size: "small",
     });
-    const task2Res = await apiCall(request, "post", "/tasks", {
+    await apiCall(request, "post", "/tasks", {
       title: "Inbox Task 2",
       task_size: "medium",
     });
