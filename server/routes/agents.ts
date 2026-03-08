@@ -19,6 +19,16 @@ const CreateAgentSchema = z.object({
 
 const UpdateAgentSchema = CreateAgentSchema.partial();
 
+export function resolveDefaultCliReasoningLevel(
+  cliProvider: "claude" | "codex" | "gemini",
+  requestedLevel: string | null | undefined,
+): string | null {
+  if (requestedLevel !== undefined) {
+    return requestedLevel ?? null;
+  }
+  return cliProvider === "codex" ? "high" : null;
+}
+
 export function createAgentsRouter(ctx: RuntimeContext): Router {
   const router = Router();
   const { db, ws, cache } = ctx;
@@ -46,11 +56,12 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
     const now = Date.now();
     const { name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, agent_type, personality } = parsed.data;
     const resolvedModel = cli_model ?? DEFAULT_CLI_MODELS[cli_provider] ?? null;
+    const resolvedReasoningLevel = resolveDefaultCliReasoningLevel(cli_provider, cli_reasoning_level);
 
     db.prepare(
       `INSERT INTO agents (id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, agent_type, personality, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, name, cli_provider, resolvedModel, cli_reasoning_level ?? null, avatar_emoji, role ?? null, agent_type, personality ?? null, now, now);
+    ).run(id, name, cli_provider, resolvedModel, resolvedReasoningLevel, avatar_emoji, role ?? null, agent_type, personality ?? null, now, now);
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(id);
     await cache.del("agents:all");

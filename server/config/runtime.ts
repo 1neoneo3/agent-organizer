@@ -121,7 +121,7 @@ export const SETTINGS_DEFAULTS = {
   review_count: 1,
   self_review_threshold: "small" as const, // task size for auto self-review: "small" | "medium" | "all" | "none"
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
-  auto_dispatch_mode: "github_only" as const, // "disabled" | "github_only" | "all_inbox"
+  auto_dispatch_mode: "all_inbox" as const, // "disabled" | "github_only" | "all_inbox"
 };
 
 

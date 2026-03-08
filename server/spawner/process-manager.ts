@@ -20,7 +20,7 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
-import { promoteTaskReviewArtifact } from "../workflow/review-artifact.js";
+import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
@@ -93,6 +93,13 @@ function invalidateCaches(cache?: CacheService): void {
   cache.del("agents:all");
 }
 
+export function isReviewRunTask(
+  task: Pick<Task, "status">,
+  previousStatus?: Task["status"] | string,
+): boolean {
+  return task.status === "pr_review" || previousStatus === "pr_review";
+}
+
 export function spawnAgent(
   db: DatabaseSync,
   ws: WsHub,
@@ -123,7 +130,7 @@ export function spawnAgent(
     (selfReviewThreshold === "small" && task.task_size === "small")
   );
 
-  const isReviewRun = task.review_count > 0;
+  const isReviewRun = isReviewRunTask(task, options?.previousStatus);
   const prompt = isContinue
     ? options!.continuePrompt!
     : (isReviewRun
@@ -155,6 +162,7 @@ export function spawnAgent(
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
+  let terminatedBySpawnError = false;
 
   activeProcesses.set(task.id, child);
 
@@ -361,8 +369,46 @@ export function spawnAgent(
     ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
   });
 
+  child.on("error", (error) => {
+    if (terminatedBySpawnError) return;
+    terminatedBySpawnError = true;
+
+    clearTimeout(idleTimer);
+    clearTimeout(hardTimer);
+    activeProcesses.delete(task.id);
+
+    const finishTime = Date.now();
+    const message = error instanceof Error ? error.message : String(error);
+
+    try {
+      logStream.write(`[spawn-error] ${message}\n`);
+    } catch {
+      // ignore secondary logging failures
+    }
+    logStream.end();
+
+    db.prepare(
+      "UPDATE tasks SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE id = ?"
+    ).run(finishTime, finishTime, task.id);
+
+    db.prepare(
+      "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
+    ).run(finishTime, agent.id);
+
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    ).run(task.id, `Process spawn failed: ${message}`);
+
+    invalidateCaches(cache);
+    const failedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+    ws.broadcast("task_update", failedTask ?? { id: task.id, status: "cancelled", completed_at: finishTime });
+    ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+  });
+
   // Process exit
   child.on("close", (code) => {
+    if (terminatedBySpawnError) return;
+
     clearTimeout(idleTimer);
     clearTimeout(hardTimer);
     activeProcesses.delete(task.id);
@@ -430,7 +476,7 @@ export function spawnAgent(
 
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
-    const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview) : "cancelled";
+    const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun) : "cancelled";
 
     db.prepare(
       "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?"
@@ -501,12 +547,12 @@ export function spawnAgent(
 export function determineCompletionStatus(
   db: DatabaseSync,
   task: Task,
-  selfReview: boolean
+  selfReview: boolean,
+  reviewRun = task.review_count > 0,
 ): string {
   const runStartedAt = task.started_at ?? 0;
 
-  // Auto-review completion: review_count > 0 means this was a review run
-  if (task.review_count > 0) {
+  if (reviewRun) {
     const logs = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
     ).all(task.id, runStartedAt) as Array<{ message: string }>;
@@ -531,6 +577,58 @@ export function determineCompletionStatus(
   const passed = logs.some((l) => l.message.includes("[SELF_REVIEW:PASS]"));
   if (passed) return "done"; // Auto-approved via self-review
   return "pr_review"; // Fallback to PR review
+}
+
+function getReviewArtifactCompletionBlockReason(
+  promotion: ReviewArtifactPromotionResult | null,
+): string | null {
+  if (!promotion) {
+    return "review artifact promotion was not executed";
+  }
+
+  if (promotion.syncStatus === "not_applicable") {
+    return null;
+  }
+
+  if (promotion.syncError) {
+    return promotion.syncError;
+  }
+
+  const missingFields: string[] = [];
+  if (!promotion.branchName) missingFields.push("review_branch");
+  if (!promotion.commitSha) missingFields.push("review_commit_sha");
+  if (!promotion.prUrl) missingFields.push("pr_url");
+  if (promotion.syncStatus !== "pr_open") missingFields.push(`review_sync_status=${promotion.syncStatus}`);
+
+  return missingFields.length > 0
+    ? `review artifact incomplete: ${missingFields.join(", ")}`
+    : null;
+}
+
+export function resolveCompletionStatusAfterPromotion(
+  task: Pick<Task, "status">,
+  candidateStatus: Task["status"],
+  selfReview: boolean,
+  reviewRun: boolean,
+  promotion: ReviewArtifactPromotionResult | null,
+): { status: Task["status"]; blockedReason: string | null } {
+  if (candidateStatus !== "pr_review" && candidateStatus !== "done") {
+    return { status: candidateStatus, blockedReason: null };
+  }
+
+  const blockedReason = getReviewArtifactCompletionBlockReason(promotion);
+  if (!blockedReason) {
+    return { status: candidateStatus, blockedReason: null };
+  }
+
+  if (candidateStatus === "done" && (reviewRun || task.status === "pr_review")) {
+    return { status: "pr_review", blockedReason };
+  }
+
+  return {
+    status: selfReview ? "self_review" : "inbox",
+    blockedReason,
+  };
 }
 
 export function killAgent(taskId: string, reason?: string): boolean {

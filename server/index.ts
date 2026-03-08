@@ -14,7 +14,11 @@ import { restorePendingInteractivePrompts } from "./spawner/process-manager.js";
 import { startTelegramControlPoller } from "./notify/telegram-control.js";
 import { startAutoDispatchScheduler } from "./dispatch/auto-dispatcher.js";
 import { startGithubIssueSync } from "./integrations/github-sync.js";
-import { PORT, IS_DEV, SESSION_AUTH_TOKEN } from "./config/runtime.js";
+import {
+  PORT,
+  IS_DEV,
+  SESSION_AUTH_TOKEN,
+} from "./config/runtime.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

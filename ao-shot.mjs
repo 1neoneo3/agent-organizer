@@ -1,0 +1,13 @@
+import { chromium } from '@playwright/test';
+import fs from 'node:fs';
+const env = fs.readFileSync('/home/mk/workspace/agent-organizer/.env','utf8');
+const token = (env.match(/^SESSION_AUTH_TOKEN=(.+)$/m)||[])[1];
+if (!token) throw new Error('SESSION_AUTH_TOKEN not found');
+const browser = await chromium.launch({ headless: true });
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+await context.addCookies([{ name: 'ao_session', value: token, domain: '127.0.0.1', path: '/', httpOnly: true, sameSite: 'Strict' }]);
+const page = await context.newPage();
+await page.goto('http://127.0.0.1:8791', { waitUntil: 'networkidle' });
+await page.waitForTimeout(2000);
+await page.screenshot({ path: '/tmp/agent-organizer-correct.png', fullPage: true });
+await browser.close();
