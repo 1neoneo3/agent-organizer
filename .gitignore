@@ -1,6 +1,7 @@
 node_modules/
 dist/
 data/
+.ao-worktrees/
 *.db
 *.db-wal
 *.db-shm
