@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
-import { determineCompletionStatus } from "./process-manager.js";
+import { determineCompletionStatus, isReviewRunTask, resolveCompletionStatusAfterPromotion } from "./process-manager.js";
 import type { Task } from "../types/runtime.js";
 
 function createDb(): DatabaseSync {
@@ -90,6 +90,23 @@ function insertAssistantLog(db: DatabaseSync, taskId: string, message: string, c
     .run(taskId, message, createdAt);
 }
 
+describe("isReviewRunTask", () => {
+  it("treats pr_review tasks as review runs", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+    assert.equal(isReviewRunTask(task), true);
+  });
+
+  it("does not treat inbox reruns as review runs just because review_count is non-zero", () => {
+    const task = insertTask(createDb(), { status: "inbox", review_count: 3 });
+    assert.equal(isReviewRunTask(task), false);
+  });
+
+  it("keeps review mode when resuming from an interactive prompt raised during pr_review", () => {
+    const task = insertTask(createDb(), { status: "in_progress", review_count: 3 });
+    assert.equal(isReviewRunTask(task, "pr_review"), true);
+  });
+});
+
 describe("determineCompletionStatus", () => {
   it("ignores old review logs from previous runs", () => {
     const db = createDb();
@@ -131,5 +148,65 @@ describe("determineCompletionStatus", () => {
 
     const status = determineCompletionStatus(db, task, false);
     assert.equal(status, "done");
+  });
+
+  it("sends inbox reruns with prior reviews back to pr_review after implementation succeeds", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "inbox", review_count: 5, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "実装修正を反映しました。", 12_000);
+
+    const status = determineCompletionStatus(db, task, false, false);
+    assert.equal(status, "pr_review");
+  });
+});
+
+describe("resolveCompletionStatusAfterPromotion", () => {
+  it("keeps a reviewed task in pr_review when push failed", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", false, true, {
+      branchName: "issue/t1",
+      commitSha: "abc123",
+      prUrl: null,
+      syncStatus: "local_commit_ready",
+      syncError: "push failed: Could not resolve host: github.com",
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /push failed/);
+  });
+
+  it("keeps implementation tasks incomplete when review metadata is missing", () => {
+    const task = insertTask(createDb(), { status: "in_progress", review_count: 0 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "pr_review", false, false, {
+      branchName: "issue/t2",
+      commitSha: "def456",
+      prUrl: null,
+      syncStatus: "pushed",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "inbox");
+    assert.match(resolution.blockedReason ?? "", /pr_url/);
+  });
+
+  it("allows completion when review artifact sync is fully ready", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", false, true, {
+      branchName: "issue/t3",
+      commitSha: "ghi789",
+      prUrl: "https://github.com/example/repo/pull/3",
+      syncStatus: "pr_open",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "done");
+    assert.equal(resolution.blockedReason, null);
   });
 });

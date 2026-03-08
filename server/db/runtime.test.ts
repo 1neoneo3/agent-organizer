@@ -40,6 +40,6 @@ describe("initializeDb", () => {
     assert.ok(reviewCommitSha);
     assert.ok(reviewSyncStatus);
     assert.ok(reviewSyncError);
-    assert.equal(autoDispatch?.value, "github_only");
+    assert.equal(autoDispatch?.value, "all_inbox");
   });
 });
