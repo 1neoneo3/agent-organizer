@@ -4,12 +4,12 @@ import { DirectiveDetailModal } from "./DirectiveDetailModal.js";
 import { createDirective } from "../../api/endpoints.js";
 import type { Directive, Task } from "../../types/index.js";
 
-const STATUS_STYLES: Record<string, { label: string; color: string; bg: string }> = {
-  pending: { label: "Pending", color: "text-gray-600 dark:text-gray-400", bg: "bg-gray-100 dark:bg-gray-800" },
-  decomposing: { label: "Decomposing", color: "text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-50 dark:bg-yellow-900/20" },
-  active: { label: "Active", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-900/20" },
-  completed: { label: "Completed", color: "text-green-600 dark:text-green-400", bg: "bg-green-50 dark:bg-green-900/20" },
-  cancelled: { label: "Cancelled", color: "text-red-600 dark:text-red-400", bg: "bg-red-50 dark:bg-red-900/20" },
+const STATUS_STYLES: Record<string, { label: string; color: string }> = {
+  pending: { label: "Pending", color: "var(--status-inbox)" },
+  decomposing: { label: "Decomposing", color: "var(--status-progress)" },
+  active: { label: "Active", color: "var(--accent-primary)" },
+  completed: { label: "Completed", color: "var(--status-done)" },
+  cancelled: { label: "Cancelled", color: "var(--status-cancelled)" },
 };
 
 function formatTimestamp(ts: number): string {
@@ -45,30 +45,37 @@ export function DirectivesPage({ directives, tasks, onReload, onWsEvent }: Direc
   const selectedDirective = directives.find((d) => d.id === selectedId);
 
   return (
-    <div className="flex flex-col h-full gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">Directives</h2>
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Directives</h2>
         <button
           onClick={() => setShowCreate(true)}
-          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+          className="eb-btn eb-btn--primary"
         >
           + New Directive
         </button>
       </div>
 
       {directives.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-gray-500">
-          <p className="text-lg mb-2">No directives yet</p>
-          <p className="text-sm mb-4">Create a directive to auto-generate tasks</p>
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "64px 0",
+          color: "var(--text-tertiary)",
+        }}>
+          <p style={{ fontSize: "16px", fontWeight: 500, marginBottom: "8px", color: "var(--text-secondary)" }}>No directives yet</p>
+          <p style={{ fontSize: "13px", marginBottom: "20px" }}>Create a directive to auto-generate tasks</p>
           <button
             onClick={() => setShowCreate(true)}
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+            className="eb-btn eb-btn--primary"
           >
             + Create First Directive
           </button>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           {directives.map((d) => {
             const linkedTasks = tasks.filter((t) => t.directive_id === d.id);
             const doneCount = linkedTasks.filter((t) => t.status === "done").length;
@@ -78,27 +85,60 @@ export function DirectivesPage({ directives, tasks, onReload, onWsEvent }: Direc
               <div
                 key={d.id}
                 onClick={() => setSelectedId(d.id)}
-                className={`${style.bg} rounded-lg p-4 cursor-pointer hover:opacity-80 transition-opacity border border-gray-200 dark:border-gray-700`}
+                style={{
+                  background: "var(--bg-secondary)",
+                  border: "1px solid var(--border-default)",
+                  borderRadius: "8px",
+                  padding: "14px 16px",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s ease",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--text-tertiary)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-default)"; }}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">{d.title}</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">{d.content}</p>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)", margin: 0 }}>{d.title}</h3>
+                    <p style={{
+                      fontSize: "12px",
+                      color: "var(--text-tertiary)",
+                      marginTop: "4px",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical" as const,
+                    }}>{d.content}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <span className={`text-xs font-medium ${style.color}`}>{style.label}</span>
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500">{formatTimestamp(d.created_at)}</span>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px", flexShrink: 0 }}>
+                    <span style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      color: style.color,
+                    }}>
+                      <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: style.color }} />
+                      {style.label}
+                    </span>
+                    <span style={{ fontSize: "10px", color: "var(--text-tertiary)" }}>{formatTimestamp(d.created_at)}</span>
                   </div>
                 </div>
                 {linkedTasks.length > 0 && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+                    <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: "4px", height: "4px" }}>
                       <div
-                        className="bg-green-500 h-1.5 rounded-full transition-all"
-                        style={{ width: `${linkedTasks.length > 0 ? (doneCount / linkedTasks.length) * 100 : 0}%` }}
+                        style={{
+                          background: "var(--status-done)",
+                          height: "4px",
+                          borderRadius: "4px",
+                          transition: "width 0.3s ease",
+                          width: `${linkedTasks.length > 0 ? (doneCount / linkedTasks.length) * 100 : 0}%`,
+                        }}
                       />
                     </div>
-                    <span className="text-[10px] text-gray-500 dark:text-gray-400 shrink-0">
+                    <span style={{ fontSize: "10px", color: "var(--text-tertiary)", flexShrink: 0 }}>
                       {doneCount}/{linkedTasks.length}
                     </span>
                   </div>

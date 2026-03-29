@@ -1,7 +1,7 @@
 /**
  * OfficePage – Bird's-eye view of the virtual office.
  *
- * Two zones rendered in the EarthBound design system:
+ * Two zones rendered in Linear-style design:
  *   1. **Desk area** – agents with status "working" sit at desks with monitors.
  *   2. **Lobby / waiting area** – idle and offline agents chill on chairs.
  *
@@ -18,34 +18,6 @@ interface OfficePageProps {
   agents: Agent[];
   tasks: Task[];
   on: WsOn;
-}
-
-function EmptyDeskSvg() {
-  return (
-    <svg
-      width={120}
-      height={60}
-      viewBox="0 0 60 30"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated", opacity: 0.35 }}
-    >
-      {/* monitor bezel (off) */}
-      <rect x={20} y={2} width={20} height={14} fill="#2d2d2d" />
-      <rect x={21} y={3} width={18} height={12} fill="#1e293b" />
-      {/* monitor stand */}
-      <rect x={29} y={16} width={2} height={3} fill="#404040" />
-      <rect x={26} y={19} width={8} height={1} fill="#333" />
-      {/* desk surface */}
-      <rect x={0} y={22} width={60} height={3} fill="var(--eb-border-out)" />
-      <rect x={0} y={23} width={60} height={2} fill="var(--eb-border-in)" />
-      {/* desk front */}
-      <rect x={1} y={25} width={58} height={4} fill="var(--eb-bg-deep)" />
-      <rect x={1} y={25} width={58} height={1} fill="var(--eb-border-out)" />
-      {/* legs */}
-      <rect x={2} y={29} width={3} height={1} fill="var(--eb-border-out)" />
-      <rect x={55} y={29} width={3} height={1} fill="var(--eb-border-out)" />
-    </svg>
-  );
 }
 
 export function OfficePage({ agents, tasks, on }: OfficePageProps) {
@@ -68,31 +40,26 @@ export function OfficePage({ agents, tasks, on }: OfficePageProps) {
     }
   };
 
-  // Calculate empty desk slots for a visually consistent grid
-  const totalDesks = Math.max(4, deskAgents.length + 1); // always show at least one empty desk
+  const totalDesks = Math.max(4, deskAgents.length + 1);
   const emptyDesks = totalDesks - deskAgents.length;
 
   return (
-    <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 16, height: "100%", overflow: "auto" }}>
-      {/* ---- Desk Area ---- */}
+    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+      {/* Desk Area */}
       <section>
-        <div className="eb-window" style={{ marginBottom: 8 }}>
-          <div className="eb-window-header">
-            <span>WORK AREA</span>
-            <span className="eb-label" style={{ marginLeft: "auto", fontSize: "7px" }}>
-              {deskAgents.length} ACTIVE
-            </span>
-          </div>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "12px",
+        }}>
+          <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Work Area</h2>
+          <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-tertiary)" }}>
+            {deskAgents.length} active
+          </span>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 12,
-            padding: "8px 0",
-          }}
-        >
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
           {deskAgents.map(({ agent, task }) => (
             <div key={agent.id} className={getTransitionClass(agent.id)}>
               <DeskUnit agent={agent} task={task} />
@@ -103,60 +70,57 @@ export function OfficePage({ agents, tasks, on }: OfficePageProps) {
           {Array.from({ length: emptyDesks }).map((_, i) => (
             <div
               key={`empty-${i}`}
-              className="eb-window"
               style={{
+                background: "var(--bg-secondary)",
+                border: "1px dashed var(--border-default)",
+                borderRadius: "8px",
                 maxWidth: 180,
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                padding: "12px 8px",
+                padding: "24px 16px",
                 opacity: 0.5,
               }}
             >
-              <EmptyDeskSvg />
-              <div className="eb-label" style={{ fontSize: "7px", marginTop: 6, color: "var(--eb-text-sub)" }}>
-                VACANT
-              </div>
+              <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-tertiary)" }}>
+                Vacant
+              </span>
             </div>
           ))}
         </div>
       </section>
 
-      {/* ---- Lobby / Waiting Area ---- */}
+      {/* Lobby / Waiting Area */}
       <section>
-        <div className="eb-window" style={{ marginBottom: 8 }}>
-          <div className="eb-window-header">
-            <span>LOBBY</span>
-            <span className="eb-label" style={{ marginLeft: "auto", fontSize: "7px" }}>
-              {lobbyAgents.filter((a) => a.status === "idle").length} STANDBY
-              {" / "}
-              {lobbyAgents.filter((a) => a.status === "offline").length} OFFLINE
-            </span>
-          </div>
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "12px",
+        }}>
+          <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Lobby</h2>
+          <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-tertiary)" }}>
+            {lobbyAgents.filter((a) => a.status === "idle").length} standby
+            {" / "}
+            {lobbyAgents.filter((a) => a.status === "offline").length} offline
+          </span>
         </div>
 
         {lobbyAgents.length === 0 ? (
-          <div
-            className="eb-window"
-            style={{
-              padding: "16px 12px",
-              textAlign: "center",
-            }}
-          >
-            <span className="eb-label" style={{ fontSize: "8px", color: "var(--eb-text-sub)" }}>
-              ALL AGENTS ARE WORKING
+          <div style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-default)",
+            borderRadius: "8px",
+            padding: "16px",
+            textAlign: "center",
+          }}>
+            <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-tertiary)" }}>
+              All agents are working
             </span>
           </div>
         ) : (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 10,
-              padding: "8px 0",
-            }}
-          >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
             {lobbyAgents.map((agent) => (
               <div key={agent.id} className={getTransitionClass(agent.id)}>
                 <ChairUnit agent={agent} />

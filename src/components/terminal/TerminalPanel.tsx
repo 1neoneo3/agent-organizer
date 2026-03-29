@@ -13,8 +13,8 @@ interface Tab {
 
 const TABS: Tab[] = [
   { key: "terminal", label: "Terminal", icon: ">" },
-  { key: "all", label: "All", icon: "⚡" },
-  { key: "output", label: "Output", icon: "📟" },
+  { key: "all", label: "All", icon: "\u26a1" },
+  { key: "output", label: "Output", icon: "\ud83d\udcdf" },
 ];
 
 type TimelineEntry = { type: "log"; data: TaskLog };
@@ -41,53 +41,53 @@ function LogEntry({ log }: { log: TaskLog }) {
 
   const kindStyles: Record<string, { bg: string; text: string; border: string; label: string; icon: string }> = {
     stdout: {
-      bg: "bg-emerald-50 dark:bg-emerald-50",
-      text: "text-emerald-900 dark:text-emerald-900",
-      border: "border-emerald-400 dark:border-emerald-400",
+      bg: "#0d1f0d",
+      text: "#86efac",
+      border: "#22c55e",
       label: "stdout",
-      icon: "▸",
+      icon: "\u25b8",
     },
     stderr: {
-      bg: "bg-red-50 dark:bg-red-50",
-      text: "text-red-800 dark:text-red-800",
-      border: "border-red-400 dark:border-red-400",
+      bg: "#1f0d0d",
+      text: "#fca5a5",
+      border: "#ef4444",
       label: "stderr",
-      icon: "✗",
+      icon: "\u2717",
     },
     system: {
-      bg: "bg-amber-50 dark:bg-amber-50",
-      text: "text-amber-900 dark:text-amber-900",
-      border: "border-amber-400 dark:border-amber-400",
+      bg: "#1f1a0d",
+      text: "#fde68a",
+      border: "#f59e0b",
       label: "system",
-      icon: "⚙",
+      icon: "\u2699",
     },
     thinking: {
-      bg: "bg-violet-50 dark:bg-violet-50",
-      text: "text-violet-900 dark:text-violet-900",
-      border: "border-violet-400 dark:border-violet-400",
+      bg: "#170d1f",
+      text: "#c4b5fd",
+      border: "#8b5cf6",
       label: "thinking",
-      icon: "🧠",
+      icon: "\ud83e\udde0",
     },
     assistant: {
-      bg: "bg-sky-50 dark:bg-sky-50",
-      text: "text-sky-900 dark:text-sky-900",
-      border: "border-sky-400 dark:border-sky-400",
+      bg: "#0d171f",
+      text: "#93c5fd",
+      border: "#3b82f6",
       label: "assistant",
-      icon: "💬",
+      icon: "\ud83d\udcac",
     },
     tool_call: {
-      bg: "bg-cyan-50 dark:bg-cyan-50",
-      text: "text-cyan-900 dark:text-cyan-900",
-      border: "border-cyan-400 dark:border-cyan-400",
+      bg: "#0d1a1f",
+      text: "#67e8f9",
+      border: "#06b6d4",
       label: "tool",
-      icon: "🔧",
+      icon: "\ud83d\udd27",
     },
     tool_result: {
-      bg: "bg-teal-50 dark:bg-teal-50",
-      text: "text-teal-900 dark:text-teal-900",
-      border: "border-teal-400 dark:border-teal-400",
+      bg: "#0d1f1a",
+      text: "#5eead4",
+      border: "#14b8a6",
       label: "result",
-      icon: "📋",
+      icon: "\ud83d\udccb",
     },
   };
 
@@ -95,37 +95,51 @@ function LogEntry({ log }: { log: TaskLog }) {
   const isThinking = log.kind === "thinking";
   const isAssistant = log.kind === "assistant";
 
-  const displayMessage = isLong && collapsed ? log.message.slice(0, 300) + "…" : log.message;
+  const displayMessage = isLong && collapsed ? log.message.slice(0, 300) + "\u2026" : log.message;
 
   return (
-    <div className={`${style.bg} border-l-3 ${style.border} rounded-xl mb-1.5 shadow-sm`}>
-      <div className="flex items-start gap-2 px-2 py-1">
-        <span className="text-[10px] text-gray-500 dark:text-gray-500 font-mono shrink-0 mt-0.5 w-14">
+    <div style={{
+      background: style.bg,
+      borderLeft: `2px solid ${style.border}`,
+      borderRadius: "4px",
+      marginBottom: "4px",
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 8px" }}>
+        <span style={{ fontSize: "10px", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", flexShrink: 0, marginTop: "2px", width: "52px" }}>
           {formatTime(log.created_at)}
         </span>
-        <span className="text-[10px] font-medium shrink-0 mt-0.5 w-12 text-right text-gray-600 dark:text-gray-600">
+        <span style={{ fontSize: "10px", fontWeight: 500, flexShrink: 0, marginTop: "2px", width: "48px", textAlign: "right", color: style.text }}>
           {style.icon} {style.label}
         </span>
-        <div className="flex-1 min-w-0">
+        <div style={{ flex: 1, minWidth: 0 }}>
           {isThinking ? (
-            <div className={`text-xs ${style.text} italic`}>
-              <span className="whitespace-pre-wrap">{displayMessage}</span>
+            <div style={{ fontSize: "12px", color: style.text, fontStyle: "italic" }}>
+              <span style={{ whiteSpace: "pre-wrap" }}>{displayMessage}</span>
             </div>
           ) : isAssistant ? (
-            <div className={`text-xs ${style.text} font-medium`}>
-              <span className="whitespace-pre-wrap">{displayMessage}</span>
+            <div style={{ fontSize: "12px", color: style.text, fontWeight: 500 }}>
+              <span style={{ whiteSpace: "pre-wrap" }}>{displayMessage}</span>
             </div>
           ) : (
-            <span className={`text-xs ${style.text} whitespace-pre-wrap font-mono`}>
+            <span style={{ fontSize: "12px", color: style.text, whiteSpace: "pre-wrap", fontFamily: "var(--font-mono)" }}>
               {displayMessage}
             </span>
           )}
           {isLong && (
             <button
               onClick={() => setCollapsed((v) => !v)}
-              className="text-[10px] text-blue-500 hover:text-blue-400 mt-0.5 block"
+              style={{
+                fontSize: "10px",
+                color: "var(--accent-primary)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+                marginTop: "2px",
+                display: "block",
+              }}
             >
-              {collapsed ? "▼ Show more" : "▲ Show less"}
+              {collapsed ? "\u25bc Show more" : "\u25b2 Show less"}
             </button>
           )}
         </div>
@@ -183,14 +197,12 @@ function TerminalView({
     });
   }, [taskId, on]);
 
-  // Auto-scroll when follow is on and text changes
   useEffect(() => {
     if (follow && containerRef.current) {
       containerRef.current.scrollTo({ top: containerRef.current.scrollHeight });
     }
   }, [text, follow]);
 
-  // Detect manual scroll → pause follow
   const handleScroll = () => {
     const el = containerRef.current;
     if (!el) return;
@@ -206,22 +218,30 @@ function TerminalView({
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Terminal content */}
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto bg-sky-50/80 dark:bg-sky-50/80"
+        style={{ flex: 1, overflowY: "auto", background: "#0d0d0d" }}
       >
         {text ? (
           <pre
             ref={preRef}
-            className="text-xs leading-relaxed text-gray-900 dark:text-gray-900 p-3 font-mono whitespace-pre-wrap break-words m-0"
+            style={{
+              fontSize: "12px",
+              lineHeight: "1.6",
+              color: "#e8e8e8",
+              padding: "12px",
+              fontFamily: "var(--font-mono)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              margin: 0,
+            }}
           >
             {text}
           </pre>
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-tertiary)", fontSize: "12px" }}>
             Waiting for output...
           </div>
         )}
@@ -236,7 +256,6 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load initial logs (for non-terminal tabs)
   useEffect(() => {
     fetchTaskLogs(taskId).then((data) => {
       startTransition(() => {
@@ -245,7 +264,6 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
     });
   }, [taskId]);
 
-  // WebSocket: CLI output streaming
   useEffect(() => {
     if (!subscribeTask) {
       return;
@@ -269,7 +287,6 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
     });
   }, [taskId, on]);
 
-  // Build filtered timeline (for non-terminal tabs)
   const timeline = useMemo((): TimelineEntry[] => {
     if (activeTab === "terminal") return [];
 
@@ -285,14 +302,12 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
     return entries;
   }, [logs, activeTab]);
 
-  // Auto-scroll (non-terminal tabs)
   useEffect(() => {
     if (activeTab !== "terminal" && autoScroll && scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight });
     }
   }, [timeline, autoScroll, activeTab]);
 
-  // Detect manual scroll (non-terminal tabs)
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
@@ -300,7 +315,6 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
     setAutoScroll(atBottom);
   };
 
-  // Tab counts
   const counts = useMemo(() => {
     return countLogsByTab(logs);
   }, [logs]);
@@ -308,33 +322,52 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   const isTerminalTab = activeTab === "terminal";
 
   return (
-    <div className="bg-sky-50 dark:bg-sky-50 border-2 border-sky-400 dark:border-sky-400 rounded-2xl overflow-hidden flex flex-col h-96 shadow-lg">
+    <div style={{
+      background: "#111111",
+      border: "1px solid var(--border-default)",
+      borderRadius: "8px",
+      overflow: "hidden",
+      display: "flex",
+      flexDirection: "column",
+      height: "384px",
+    }}>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-1.5 bg-sky-600 dark:bg-sky-600 border-b-2 border-sky-700 dark:border-sky-700">
-        <div className="flex items-center gap-1">
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "6px 12px",
+        background: "#1a1a1a",
+        borderBottom: "1px solid var(--border-default)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`px-2 py-0.5 text-[11px] rounded-lg transition-colors ${
-                activeTab === tab.key
-                  ? tab.key === "terminal"
-                    ? "bg-sky-800 text-white font-mono font-medium"
-                    : "bg-sky-800 text-white font-medium shadow-sm"
-                  : "text-white/70 hover:bg-sky-500 hover:text-white"
-              }`}
+              style={{
+                padding: "4px 10px",
+                fontSize: "11px",
+                fontWeight: 500,
+                borderRadius: "4px",
+                border: "none",
+                cursor: "pointer",
+                transition: "background 0.15s",
+                background: activeTab === tab.key ? "var(--bg-hover)" : "transparent",
+                color: activeTab === tab.key ? "#e8e8e8" : "#666",
+              }}
             >
               {tab.icon} {tab.label}
               {tab.key !== "terminal" && counts[tab.key] > 0 && (
-                <span className={`ml-1 text-[9px] ${activeTab === tab.key ? "opacity-75" : "opacity-50"}`}>
+                <span style={{ marginLeft: "4px", fontSize: "9px", opacity: activeTab === tab.key ? 0.7 : 0.4 }}>
                   {counts[tab.key]}
                 </span>
               )}
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-white font-mono">
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "10px", color: "#666", fontFamily: "var(--font-mono)" }}>
             {taskId.slice(0, 8)}
           </span>
           {!isTerminalTab && !autoScroll && (
@@ -343,16 +376,18 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
                 setAutoScroll(true);
                 scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
               }}
-              className="text-[10px] text-white/70 hover:text-white"
+              style={{ fontSize: "10px", color: "#666", background: "none", border: "none", cursor: "pointer" }}
             >
-              ↓ Bottom
+              \u2193 Bottom
             </button>
           )}
           <button
             onClick={onClose}
-            className="text-white/70 hover:text-white text-sm"
+            style={{ color: "#666", background: "none", border: "none", cursor: "pointer", fontSize: "14px" }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "#e8e8e8"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "#666"; }}
           >
-            ✕
+            \u2715
           </button>
         </div>
       </div>
@@ -361,9 +396,9 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
       {isTerminalTab ? (
         <TerminalView taskId={taskId} on={on} />
       ) : (
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-2 bg-sky-50/50 dark:bg-sky-50/50">
+        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "#0d0d0d" }}>
           {timeline.length === 0 && (
-            <div className="flex items-center justify-center h-full text-gray-400 text-xs">
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666", fontSize: "12px" }}>
               No activity yet
             </div>
           )}

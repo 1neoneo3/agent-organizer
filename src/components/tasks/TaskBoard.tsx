@@ -56,14 +56,34 @@ const TaskColumn = memo(function TaskColumn({
   onDelete,
 }: TaskColumnProps) {
   return (
-    <div style={{ flex: 1, minWidth: "220px", maxWidth: "320px" }}>
-      <div className="eb-window" style={{ marginBottom: "8px", borderColor: accentColor }}>
-        <div style={{ padding: "6px 10px", textAlign: "center" }}>
-          <div className="eb-heading" style={{ fontSize: "10px", color: accentColor }}>{town}</div>
-          <div className="eb-label" style={{ fontSize: "7px", marginTop: "2px" }}>{label} ({tasks.length})</div>
-        </div>
+    <div style={{ flex: 1, minWidth: "240px", maxWidth: "340px" }}>
+      {/* Column header */}
+      <div style={{
+        padding: "8px 12px",
+        marginBottom: "8px",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+      }}>
+        <span style={{
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          background: accentColor,
+          flexShrink: 0,
+        }} />
+        <span style={{
+          fontSize: "13px",
+          fontWeight: 600,
+          color: "var(--text-primary)",
+        }}>{town}</span>
+        <span style={{
+          fontSize: "12px",
+          fontWeight: 500,
+          color: "var(--text-tertiary)",
+        }}>{tasks.length}</span>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         {tasks.map((task) => (
           <TaskCard
             key={task.id}
@@ -130,7 +150,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   }, [onReload, play]);
 
   const handleDelete = useCallback(async (taskId: string) => {
-    if (!window.confirm("このタスクを削除しますか？")) return;
+    if (!window.confirm("Delete this task?")) return;
     play("cancel");
     await deleteTask(taskId);
     onReload();
@@ -162,85 +182,89 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   }, []);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       {/* Header bar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <h2 className="eb-heading" style={{ fontSize: "12px" }}>TOWN MAP</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Tasks</h2>
           {agents.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               {agents.map((a) => {
                 const isWorking = a.status === "working";
                 return (
                   <span
                     key={a.id}
-                    className="eb-window"
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
-                      gap: "4px",
-                      padding: "3px 6px",
-                      fontSize: "8px",
-                      fontFamily: "var(--eb-font-heading)",
-                      boxShadow: "2px 2px 0 var(--eb-shadow)",
+                      gap: "6px",
+                      padding: "4px 10px",
+                      fontSize: "12px",
+                      fontWeight: 500,
+                      background: "var(--bg-secondary)",
+                      border: "1px solid var(--border-default)",
+                      borderRadius: "6px",
+                      color: "var(--text-secondary)",
                     }}
                     title={`${a.name} (${a.status})`}
                   >
-                    <span className={isWorking ? "eb-sprite-working" : "eb-sprite-idle"}>
-                      <PixelAvatar role={a.role} size={16} className="inline-block align-middle" />
-                    </span>
+                    <PixelAvatar role={a.role} size={16} className="inline-block align-middle" />
                     <span>{a.name}</span>
                     {agentView.roleLabelById.get(a.id) && (
-                      <span className="eb-label" style={{ fontSize: "7px" }}>[{agentView.roleLabelById.get(a.id)}]</span>
+                      <span style={{ fontSize: "10px", color: "var(--text-tertiary)" }}>{agentView.roleLabelById.get(a.id)}</span>
                     )}
-                    {/* Mini HP bar */}
-                    <div className="eb-hp-bar" style={{ width: "24px", height: "4px" }}>
-                      <div
-                        className={`eb-hp-fill ${isWorking ? "" : "eb-hp-fill--warning"}`}
-                        style={{ width: isWorking ? "100%" : "40%" }}
-                      />
-                    </div>
+                    <span style={{
+                      width: "6px",
+                      height: "6px",
+                      borderRadius: "50%",
+                      background: isWorking ? "#22c55e" : "#a0a0a0",
+                      flexShrink: 0,
+                    }} />
                   </span>
                 );
               })}
             </div>
           )}
         </div>
-        <div style={{ display: "flex", gap: "6px" }}>
+        <div style={{ display: "flex", gap: "8px" }}>
           <button
             onClick={() => { play("select"); setShowAddAgent(true); }}
             className="eb-btn"
           >
-            + AGENT
+            + Agent
           </button>
           <button
             onClick={() => { play("select"); setShowCreate(true); }}
             className="eb-btn eb-btn--primary"
           >
-            + NEW QUEST
+            + New Task
           </button>
         </div>
       </div>
 
       {/* Empty state */}
       {agents.length === 0 && tasks.length === 0 && !showAddAgent && (
-        <div className="eb-window" style={{ padding: "32px", textAlign: "center" }}>
-          <div className="eb-window-body">
-            <p className="eb-heading" style={{ marginBottom: "8px" }}>NO PARTY MEMBERS</p>
-            <p className="eb-body" style={{ marginBottom: "16px", color: "var(--eb-text-sub)" }}>Create an agent to start running quests</p>
-            <button
-              onClick={() => { play("select"); setShowAddAgent(true); }}
-              className="eb-btn eb-btn--primary"
-            >
-              + CREATE FIRST AGENT
-            </button>
-          </div>
+        <div style={{
+          padding: "48px",
+          textAlign: "center",
+          background: "var(--bg-secondary)",
+          border: "1px solid var(--border-default)",
+          borderRadius: "8px",
+        }}>
+          <p style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "8px" }}>No agents yet</p>
+          <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "20px" }}>Create an agent to start running tasks</p>
+          <button
+            onClick={() => { play("select"); setShowAddAgent(true); }}
+            className="eb-btn eb-btn--primary"
+          >
+            + Create First Agent
+          </button>
         </div>
       )}
 
       {/* Kanban columns */}
       <Profiler id="TaskBoardColumns" onRender={handleBoardRender}>
-      <div style={{ display: "flex", gap: "10px", overflowX: "auto" }}>
+      <div style={{ display: "flex", gap: "12px", overflowX: "auto" }}>
         {TASK_BOARD_COLUMNS.map((col) => {
           const colTasks = tasksByStatus[col.key];
           return (

@@ -15,7 +15,7 @@ interface AppLayoutProps {
 
 export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, timeOfDay, toggleTimeOfDay, flavors }: AppLayoutProps) {
   return (
-    <div className="flex h-screen eb-overworld-bg" style={{ color: "var(--eb-text)" }}>
+    <div className="flex h-screen" style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
       <Sidebar
         connected={connected}
         theme={theme}
@@ -26,7 +26,7 @@ export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, ti
         toggleTimeOfDay={toggleTimeOfDay}
         flavors={flavors}
       />
-      <main className="flex-1 min-h-0 overflow-y-auto p-4">
+      <main className="flex-1 min-h-0 overflow-y-auto" style={{ padding: "24px 32px" }}>
         <Outlet />
       </main>
     </div>

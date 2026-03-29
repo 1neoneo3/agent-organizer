@@ -26,11 +26,28 @@ interface AgentFormProps {
   submitLabel?: string;
 }
 
+const inputStyle = {
+  background: "var(--bg-tertiary)",
+  border: "1px solid var(--border-default)",
+  borderRadius: "6px",
+  padding: "8px 12px",
+  fontSize: "13px",
+  color: "var(--text-primary)",
+  outline: "none",
+  width: "100%",
+} as const;
+
+const labelStyle = {
+  fontSize: "12px",
+  fontWeight: 500,
+  color: "var(--text-secondary)",
+} as const;
+
 export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" }: AgentFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [provider, setProvider] = useState(initial?.cli_provider ?? "claude");
   const [model, setModel] = useState(initial?.cli_model ?? "");
-  const [emoji, setEmoji] = useState(initial?.avatar_emoji ?? "🤖");
+  const [emoji, setEmoji] = useState(initial?.avatar_emoji ?? "\ud83e\udd16");
   const [role, setRole] = useState(initial?.role ?? "");
   const [agentType, setAgentType] = useState<"worker" | "ceo">(initial?.agent_type ?? "worker");
   const [personality, setPersonality] = useState(initial?.personality ?? "");
@@ -50,27 +67,36 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 max-w-lg">
-      <div className="grid grid-cols-[auto_1fr] gap-3 items-center">
-        <label className="text-sm text-gray-500 dark:text-gray-400">Emoji</label>
+    <form
+      onSubmit={handleSubmit}
+      style={{
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "12px",
+        padding: "24px",
+        maxWidth: "480px",
+      }}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "12px", alignItems: "center" }}>
+        <label style={labelStyle}>Emoji</label>
         <input
-          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm w-16 text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={{ ...inputStyle, width: "64px", textAlign: "center" }}
           value={emoji}
           onChange={(e) => setEmoji(e.target.value)}
         />
 
-        <label className="text-sm text-gray-500 dark:text-gray-400">Name</label>
+        <label style={labelStyle}>Name</label>
         <input
-          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={inputStyle}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. coder-01"
           autoFocus
         />
 
-        <label className="text-sm text-gray-500 dark:text-gray-400">Provider</label>
+        <label style={labelStyle}>Provider</label>
         <select
-          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={inputStyle}
           value={provider}
           onChange={(e) => setProvider(e.target.value)}
         >
@@ -79,21 +105,21 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
           <option value="gemini">Gemini CLI</option>
         </select>
 
-        <label className="text-sm text-gray-500 dark:text-gray-400">Role</label>
+        <label style={labelStyle}>Role</label>
         <select
-          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={inputStyle}
           value={role}
           onChange={(e) => setRole(e.target.value)}
         >
-          <option value="">— None —</option>
+          <option value="">\u2014 None \u2014</option>
           {AGENT_ROLES.map((r) => (
             <option key={r.id} value={r.id}>{r.label}</option>
           ))}
         </select>
 
-        <label className="text-sm text-gray-500 dark:text-gray-400">Type</label>
+        <label style={labelStyle}>Type</label>
         <select
-          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={inputStyle}
           value={agentType}
           onChange={(e) => setAgentType(e.target.value as "worker" | "ceo")}
         >
@@ -101,34 +127,34 @@ export function AgentForm({ initial, onSubmit, onCancel, submitLabel = "Create" 
           <option value="ceo">CEO</option>
         </select>
 
-        <label className="text-sm text-gray-500 dark:text-gray-400">Model</label>
+        <label style={labelStyle}>Model</label>
         <input
-          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={inputStyle}
           value={model}
           onChange={(e) => setModel(e.target.value)}
           placeholder="(default)"
         />
 
-        <label className="text-sm text-gray-500 dark:text-gray-400">Personality</label>
+        <label style={labelStyle}>Personality</label>
         <textarea
-          className="bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm h-16 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={{ ...inputStyle, height: "64px", resize: "none" }}
           value={personality}
           onChange={(e) => setPersonality(e.target.value)}
           placeholder="Optional system prompt..."
         />
       </div>
 
-      <div className="flex justify-end gap-2 mt-4">
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "16px" }}>
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+          className="eb-btn"
         >
           Cancel
         </button>
         <button
           type="submit"
-          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+          className="eb-btn eb-btn--primary"
         >
           {submitLabel}
         </button>

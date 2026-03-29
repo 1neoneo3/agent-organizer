@@ -1,9 +1,8 @@
 /**
- * ChairUnit – Waiting-area chair for idle / offline agents.
+ * ChairUnit – Waiting-area card for idle / offline agents.
  *
- * Shows a pixel-art bench/chair with the agent's avatar sitting on it.
- * Much simpler than DeskUnit – no monitor, no task info.  Just the agent
- * chilling in the lobby, Mother-2 overworld style.
+ * Shows the agent's avatar with a status indicator.
+ * Clean Linear-style design.
  */
 import { AgentAvatar } from "./AgentAvatar.js";
 import { getRoleLabel } from "../agents/roles.js";
@@ -14,102 +13,61 @@ interface ChairUnitProps {
   onClick?: () => void;
 }
 
-/** Inline pixel-art waiting-room chair SVG */
-function ChairSvg() {
-  return (
-    <svg
-      width={56}
-      height={32}
-      viewBox="0 0 28 16"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated" }}
-    >
-      {/* chair back */}
-      <rect x={2} y={0} width={2} height={10} fill="var(--eb-border-out)" />
-      <rect x={24} y={0} width={2} height={10} fill="var(--eb-border-out)" />
-      <rect x={2} y={0} width={24} height={2} fill="var(--eb-border-out)" />
-      <rect x={3} y={2} width={22} height={1} fill="var(--eb-border-in)" />
-
-      {/* seat cushion */}
-      <rect x={1} y={9} width={26} height={3} fill="var(--eb-border-in)" />
-      <rect x={1} y={9} width={26} height={1} fill="var(--eb-border-out)" />
-
-      {/* chair legs */}
-      <rect x={3} y={12} width={2} height={4} fill="var(--eb-border-out)" />
-      <rect x={23} y={12} width={2} height={4} fill="var(--eb-border-out)" />
-      {/* cross bar */}
-      <rect x={5} y={14} width={18} height={1} fill="var(--eb-border-in)" />
-    </svg>
-  );
-}
-
 export function ChairUnit({ agent, onClick }: ChairUnitProps) {
   const roleLabel = getRoleLabel(agent.role);
 
   return (
     <div
-      className="eb-window"
       style={{
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "8px",
         cursor: onClick ? "pointer" : "default",
         maxWidth: 120,
-        transition: "transform 0.1s",
+        transition: "border-color 0.15s ease",
         opacity: agent.status === "offline" ? 0.6 : 1,
       }}
       onClick={onClick}
-      onMouseEnter={(e) => { if (onClick) e.currentTarget.style.transform = "translateY(-1px)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
+      onMouseEnter={(e) => { if (onClick) e.currentTarget.style.borderColor = "var(--text-tertiary)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-default)"; }}
     >
-      {/* Visual area */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          padding: "6px 8px 0",
-        }}
-      >
-        {/* Agent sitting on chair */}
-        <div style={{ position: "relative" }}>
-          {/* Avatar floats above the chair seat */}
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: -8, zIndex: 1, position: "relative" }}>
-            <AgentAvatar agent={agent} size={24} />
-          </div>
-          <ChairSvg />
-        </div>
+      {/* Avatar */}
+      <div style={{
+        display: "flex",
+        justifyContent: "center",
+        padding: "12px 12px 4px",
+      }}>
+        <AgentAvatar agent={agent} size={28} />
       </div>
 
-      {/* Name label */}
-      <div className="eb-window-body" style={{ padding: "4px 6px", textAlign: "center" }}>
-        <div className="eb-heading" style={{ fontSize: "8px", color: "var(--eb-text)" }}>
+      {/* Name + status */}
+      <div style={{ padding: "4px 10px 10px", textAlign: "center" }}>
+        <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>
           {agent.name}
         </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3, marginTop: 2 }}>
-          <span
-            style={{
-              width: 5,
-              height: 5,
-              borderRadius: "50%",
-              background: agent.status === "idle" ? "#fbbf24" : "#64748b",
-              flexShrink: 0,
-            }}
-          />
-          <span className="eb-label" style={{ fontSize: "6px" }}>
-            {agent.status === "idle" ? "STANDBY" : "OFFLINE"}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "4px", marginTop: "3px" }}>
+          <span style={{
+            width: "5px",
+            height: "5px",
+            borderRadius: "50%",
+            background: agent.status === "idle" ? "#f59e0b" : "#64748b",
+            flexShrink: 0,
+          }} />
+          <span style={{ fontSize: "10px", fontWeight: 500, color: "var(--text-tertiary)" }}>
+            {agent.status === "idle" ? "Standby" : "Offline"}
           </span>
         </div>
         {roleLabel && (
-          <span
-            className="eb-label"
-            style={{
-              display: "inline-block",
-              marginTop: 2,
-              padding: "1px 3px",
-              background: "var(--eb-border-in)",
-              color: "var(--eb-bg)",
-              borderRadius: "2px",
-              fontSize: "6px",
-            }}
-          >
+          <span style={{
+            display: "inline-block",
+            marginTop: "3px",
+            padding: "1px 5px",
+            background: "var(--accent-subtle)",
+            color: "var(--accent-primary)",
+            borderRadius: "3px",
+            fontSize: "9px",
+            fontWeight: 600,
+          }}>
             {roleLabel}
           </span>
         )}

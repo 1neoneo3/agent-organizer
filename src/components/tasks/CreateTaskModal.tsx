@@ -36,14 +36,30 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <form
         onSubmit={handleSubmit}
-        className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-lg border border-gray-200 dark:border-gray-700"
+        style={{
+          background: "var(--bg-secondary)",
+          border: "1px solid var(--border-default)",
+          borderRadius: "12px",
+          padding: "24px",
+          width: "100%",
+          maxWidth: "480px",
+        }}
       >
-        <h2 className="text-lg font-bold mb-4">New Task</h2>
+        <h2 style={{ fontSize: "16px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "20px" }}>New Task</h2>
 
-        <label className="block mb-3">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Title</span>
+        <label style={{ display: "block", marginBottom: "16px" }}>
+          <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Title</span>
           <input
-            className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{
+              width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              outline: "none",
+            }}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="What needs to be done?"
@@ -51,21 +67,41 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
           />
         </label>
 
-        <label className="block mb-3">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Description</span>
+        <label style={{ display: "block", marginBottom: "16px" }}>
+          <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Description</span>
           <textarea
-            className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm h-24 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{
+              width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              height: "96px",
+              resize: "none",
+              outline: "none",
+            }}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Detailed instructions..."
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <label className="block">
-            <span className="text-sm text-gray-500 dark:text-gray-400">Agent</span>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+          <label style={{ display: "block" }}>
+            <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Agent</span>
             <select
-              className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              style={{
+                width: "100%",
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--border-default)",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                fontSize: "13px",
+                color: "var(--text-primary)",
+                outline: "none",
+              }}
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
             >
@@ -78,10 +114,19 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
             </select>
           </label>
 
-          <label className="block">
-            <span className="text-sm text-gray-500 dark:text-gray-400">Size</span>
+          <label style={{ display: "block" }}>
+            <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Size</span>
             <select
-              className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              style={{
+                width: "100%",
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--border-default)",
+                borderRadius: "6px",
+                padding: "8px 12px",
+                fontSize: "13px",
+                color: "var(--text-primary)",
+                outline: "none",
+              }}
               value={taskSize}
               onChange={(e) => setTaskSize(e.target.value as "small" | "medium" | "large")}
             >
@@ -92,26 +137,36 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
           </label>
         </div>
 
-        <label className="block mb-4">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Project Path</span>
+        <label style={{ display: "block", marginBottom: "20px" }}>
+          <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Project Path</span>
           <input
-            className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{
+              width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-mono)",
+              outline: "none",
+            }}
             value={projectPath}
             onChange={(e) => setProjectPath(e.target.value)}
           />
         </label>
 
-        <div className="flex justify-end gap-2">
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            className="eb-btn"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+            className="eb-btn eb-btn--primary"
           >
             Create Task
           </button>

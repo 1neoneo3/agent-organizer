@@ -3,150 +3,121 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ========================================
-   EarthBound (MOTHER 2) Design System
+   Linear-style Design System
    ======================================== */
 
-/* --- Flavor: Mint (default) --- */
+/* --- Color Palette (dark-first) --- */
 :root {
-  --eb-bg: #d0f0e8;
-  --eb-bg-deep: #a0d8c0;
-  --eb-border-out: #306850;
-  --eb-border-in: #58a888;
-  --eb-text: #183828;
-  --eb-text-sub: #407058;
-  --eb-highlight: #48d8a0;
-  --eb-shadow: #204838;
-  --eb-font-heading: "Press Start 2P", monospace;
-  --eb-font-body: "Silkscreen", "Press Start 2P", monospace;
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #ebebeb;
+  --bg-hover: #e0e0e0;
+
+  --border-default: #d4d4d4;
+  --border-subtle: #e5e5e5;
+
+  --text-primary: #171717;
+  --text-secondary: #525252;
+  --text-tertiary: #a3a3a3;
+
+  --accent-primary: #8b5cf6;
+  --accent-hover: #7c3aed;
+  --accent-subtle: #ede9fe;
+
+  --status-inbox: #a0a0a0;
+  --status-progress: #f59e0b;
+  --status-review: #8b5cf6;
+  --status-done: #22c55e;
+  --status-cancelled: #ef4444;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Flavor accents (keep data-flavor system working) */
+  --flavor-accent: #8b5cf6;
+  --flavor-accent-subtle: #ede9fe;
 }
 
+/* --- Flavor accents --- */
+[data-flavor="mint"] {
+  --flavor-accent: #10b981;
+  --flavor-accent-subtle: #d1fae5;
+}
 [data-flavor="strawberry"] {
-  --eb-bg: #f8d0d8;
-  --eb-bg-deep: #e8a0b0;
-  --eb-border-out: #882848;
-  --eb-border-in: #c06080;
-  --eb-text: #381018;
-  --eb-text-sub: #884050;
-  --eb-highlight: #f06888;
-  --eb-shadow: #501828;
+  --flavor-accent: #f43f5e;
+  --flavor-accent-subtle: #ffe4e6;
 }
-
 [data-flavor="banana"] {
-  --eb-bg: #f8f0c0;
-  --eb-bg-deep: #e8d888;
-  --eb-border-out: #887820;
-  --eb-border-in: #c0a840;
-  --eb-text: #383010;
-  --eb-text-sub: #887040;
-  --eb-highlight: #f0d848;
-  --eb-shadow: #504818;
+  --flavor-accent: #eab308;
+  --flavor-accent-subtle: #fef9c3;
 }
-
 [data-flavor="peanut"] {
-  --eb-bg: #e8d8c0;
-  --eb-bg-deep: #d0b898;
-  --eb-border-out: #785830;
-  --eb-border-in: #a88860;
-  --eb-text: #302010;
-  --eb-text-sub: #786040;
-  --eb-highlight: #d0a060;
-  --eb-shadow: #483018;
+  --flavor-accent: #d97706;
+  --flavor-accent-subtle: #fef3c7;
 }
-
 [data-flavor="blueberry"] {
-  --eb-bg: #dce8ff;
-  --eb-bg-deep: #b8d0ff;
-  --eb-border-out: #3868d8;
-  --eb-border-in: #70a0ff;
-  --eb-text: #182048;
-  --eb-text-sub: #5070b8;
-  --eb-highlight: #60a8ff;
-  --eb-shadow: #203060;
+  --flavor-accent: #3b82f6;
+  --flavor-accent-subtle: #dbeafe;
 }
-
 [data-flavor="plain"] {
-  --eb-bg: #e0e0e8;
-  --eb-bg-deep: #b8b8c8;
-  --eb-border-out: #484858;
-  --eb-border-in: #787888;
-  --eb-text: #181820;
-  --eb-text-sub: #585868;
-  --eb-highlight: #9898b0;
-  --eb-shadow: #303040;
+  --flavor-accent: #8b5cf6;
+  --flavor-accent-subtle: #ede9fe;
 }
 
-/* --- Night mode overrides --- */
+/* --- Dark mode --- */
 .dark {
-  --eb-bg: #181828;
-  --eb-bg-deep: #101018;
-  --eb-text: #d0d0e0;
-  --eb-text-sub: #8888a0;
+  --bg-primary: #0d0d0d;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #242424;
+  --bg-hover: #2a2a2a;
+
+  --border-default: #333333;
+  --border-subtle: #2a2a2a;
+
+  --text-primary: #e8e8e8;
+  --text-secondary: #a0a0a0;
+  --text-tertiary: #666666;
+
+  --accent-subtle: #2e1065;
 }
 
 .dark[data-flavor="mint"] {
-  --eb-bg: #0c1c18;
-  --eb-bg-deep: #081410;
-  --eb-border-out: #48d8a0;
-  --eb-border-in: #306850;
-  --eb-text: #c0f0d8;
-  --eb-text-sub: #68a888;
-  --eb-highlight: #48d8a0;
-  --eb-shadow: #08100c;
+  --flavor-accent: #10b981;
+  --flavor-accent-subtle: #064e3b;
 }
-
 .dark[data-flavor="strawberry"] {
-  --eb-bg: #1c0c10;
-  --eb-bg-deep: #14080c;
-  --eb-border-out: #f06888;
-  --eb-border-in: #882848;
-  --eb-text: #f0c0d0;
-  --eb-text-sub: #c06080;
-  --eb-highlight: #f06888;
-  --eb-shadow: #100810;
+  --flavor-accent: #f43f5e;
+  --flavor-accent-subtle: #4c0519;
 }
-
 .dark[data-flavor="banana"] {
-  --eb-bg: #1c1808;
-  --eb-bg-deep: #141004;
-  --eb-border-out: #f0d848;
-  --eb-border-in: #887820;
-  --eb-text: #f0e8b8;
-  --eb-text-sub: #c0a840;
-  --eb-highlight: #f0d848;
-  --eb-shadow: #100c04;
+  --flavor-accent: #eab308;
+  --flavor-accent-subtle: #422006;
 }
-
 .dark[data-flavor="peanut"] {
-  --eb-bg: #18100c;
-  --eb-bg-deep: #100c08;
-  --eb-border-out: #d0a060;
-  --eb-border-in: #785830;
-  --eb-text: #e8d0b8;
-  --eb-text-sub: #a88860;
-  --eb-highlight: #d0a060;
-  --eb-shadow: #0c0804;
+  --flavor-accent: #d97706;
+  --flavor-accent-subtle: #431407;
 }
-
 .dark[data-flavor="blueberry"] {
-  --eb-bg: #101830;
-  --eb-bg-deep: #0c1224;
-  --eb-border-out: #60a8ff;
-  --eb-border-in: #3868d8;
-  --eb-text: #c8d8ff;
-  --eb-text-sub: #70a0ff;
-  --eb-highlight: #60a8ff;
-  --eb-shadow: #081020;
+  --flavor-accent: #3b82f6;
+  --flavor-accent-subtle: #172554;
+}
+.dark[data-flavor="plain"] {
+  --flavor-accent: #8b5cf6;
+  --flavor-accent-subtle: #2e1065;
 }
 
-.dark[data-flavor="plain"] {
-  --eb-bg: #141418;
-  --eb-bg-deep: #0c0c10;
-  --eb-border-out: #9898b0;
-  --eb-border-in: #484858;
-  --eb-text: #d0d0e0;
-  --eb-text-sub: #787888;
-  --eb-highlight: #9898b0;
-  --eb-shadow: #08080c;
+/* Legacy EB variable mappings (keep for any components that still reference them) */
+:root, .dark {
+  --eb-bg: var(--bg-primary);
+  --eb-bg-deep: var(--bg-secondary);
+  --eb-border-out: var(--border-default);
+  --eb-border-in: var(--border-subtle);
+  --eb-text: var(--text-primary);
+  --eb-text-sub: var(--text-secondary);
+  --eb-highlight: var(--flavor-accent);
+  --eb-shadow: var(--bg-tertiary);
+  --eb-font-heading: var(--font-sans);
+  --eb-font-body: var(--font-sans);
 }
 
 /* ========================================
@@ -156,9 +127,11 @@
 html, body, #root {
   height: 100%;
   margin: 0;
-  font-family: var(--eb-font-body);
-  background: var(--eb-bg);
-  color: var(--eb-text);
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ========================================
@@ -166,266 +139,239 @@ html, body, #root {
    ======================================== */
 
 .eb-heading {
-  font-family: var(--eb-font-heading);
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--eb-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 
 .eb-body {
-  font-family: var(--eb-font-body);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--eb-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
 }
 
 .eb-label {
-  font-family: var(--eb-font-heading);
-  font-size: 8px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--eb-text-sub);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-secondary);
 }
 
 /* ========================================
-   EB Window Frame
+   Card / Window Frame (Linear-style)
    ======================================== */
 
 .eb-window {
-  background: var(--eb-bg);
-  border: 3px solid var(--eb-border-out);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
   border-radius: 8px;
-  box-shadow:
-    inset 0 0 0 2px var(--eb-border-in),
-    4px 4px 0 var(--eb-shadow);
+  box-shadow: none;
   overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.eb-window:hover {
+  border-color: var(--border-default);
 }
 
 .eb-window-header {
-  font-family: var(--eb-font-heading);
-  font-size: 10px;
-  padding: 8px 12px;
-  border-bottom: 2px solid var(--eb-border-in);
-  color: var(--eb-text);
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  text-transform: none;
 }
 
 .eb-window-body {
-  background: var(--eb-bg-deep);
-  padding: 10px 12px;
+  background: var(--bg-secondary);
+  padding: 10px 14px;
 }
 
 /* ========================================
-   Buttons
+   Buttons (Linear-style)
    ======================================== */
 
 .eb-btn {
-  font-family: var(--eb-font-heading);
-  font-size: 8px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
   padding: 6px 12px;
-  border: 2px solid var(--eb-border-out);
-  border-radius: 4px;
-  background: var(--eb-bg);
-  color: var(--eb-text);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
   cursor: pointer;
-  box-shadow:
-    inset 0 0 0 1px var(--eb-border-in),
-    2px 2px 0 var(--eb-shadow);
-  transition: transform 0.05s, box-shadow 0.05s;
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
   white-space: nowrap;
 }
 
 .eb-btn:hover {
-  background: var(--eb-bg-deep);
+  background: var(--bg-hover);
+  border-color: var(--border-default);
 }
 
 .eb-btn:active {
-  transform: translate(2px, 2px);
-  box-shadow:
-    inset 0 0 0 1px var(--eb-border-in),
-    0 0 0 var(--eb-shadow);
+  transform: none;
+  box-shadow: none;
+  background: var(--bg-tertiary);
 }
 
 .eb-btn--primary {
-  background: var(--eb-border-out);
-  color: var(--eb-bg);
-  border-color: var(--eb-highlight);
-  box-shadow:
-    inset 0 0 0 1px var(--eb-border-in),
-    2px 2px 0 var(--eb-shadow);
+  background: var(--accent-primary);
+  color: #ffffff;
+  border-color: var(--accent-primary);
+  box-shadow: none;
 }
 
 .eb-btn--primary:hover {
-  background: var(--eb-highlight);
-  color: var(--eb-shadow);
+  background: var(--accent-hover);
+  color: #ffffff;
+  border-color: var(--accent-hover);
 }
 
 .eb-btn--danger {
-  background: #882020;
-  color: #ffd0d0;
-  border-color: #cc4040;
-  box-shadow:
-    inset 0 0 0 1px #aa3030,
-    2px 2px 0 #401010;
+  background: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
+  box-shadow: none;
 }
 
 .eb-btn--danger:hover {
-  background: #aa3030;
+  background: #b91c1c;
+  border-color: #b91c1c;
 }
 
 .eb-btn--danger:active {
-  transform: translate(2px, 2px);
-  box-shadow:
-    inset 0 0 0 1px #aa3030,
-    0 0 0 #401010;
+  transform: none;
+  box-shadow: none;
 }
 
 /* ========================================
-   HP Bar
+   Progress Bar (replaces HP bar)
    ======================================== */
 
 .eb-hp-bar {
-  height: 6px;
-  background: var(--eb-shadow);
-  border-radius: 3px;
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
   overflow: hidden;
-  border: 1px solid var(--eb-border-in);
+  border: none;
 }
 
 .eb-hp-fill {
   height: 100%;
   border-radius: 2px;
-  transition: width 0.6s ease;
-  background: linear-gradient(90deg, #20c048, #60e868);
+  transition: width 0.4s ease;
+  background: var(--status-done);
 }
 
 .eb-hp-fill--warning {
-  background: linear-gradient(90deg, #d8a020, #e8c840);
+  background: var(--status-progress);
 }
 
 .eb-hp-fill--danger {
-  background: linear-gradient(90deg, #c02020, #e84040);
+  background: var(--status-cancelled);
 }
 
 /* ========================================
-   Cursor
+   Cursor (subtle indicator)
    ======================================== */
 
 .eb-cursor::before {
-  content: "\25B6";
-  display: inline-block;
-  margin-right: 6px;
-  animation: eb-blink 0.6s steps(1) infinite;
-  color: var(--eb-highlight);
-  font-size: 10px;
-}
-
-@keyframes eb-blink {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
+  content: "";
+  display: none;
 }
 
 /* ========================================
-   Overworld Background
+   Background
    ======================================== */
 
 .eb-overworld-bg {
-  background-color: var(--eb-bg);
-}
-
-@keyframes eb-checker-scroll {
-  0% { background-position: 0 0, 0 10px, 10px -10px, -10px 0; }
-  100% { background-position: 20px 20px, 20px 30px, 30px 10px, 10px 20px; }
+  background-color: var(--bg-primary);
 }
 
 /* ========================================
-   Sprite Animations
+   Sprite / Agent animations (simplified)
    ======================================== */
 
 .eb-sprite-idle {
-  animation: eb-idle-bob 1.2s ease-in-out infinite;
-}
-
-@keyframes eb-idle-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
+  animation: none;
 }
 
 .eb-sprite-working {
-  animation: eb-working-bounce 0.4s ease-in-out infinite;
+  animation: linear-pulse 2s ease-in-out infinite;
 }
 
-@keyframes eb-working-bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-3px); }
+@keyframes linear-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
-/* Typing motion – slight lateral rock + vertical micro-bounce */
 .eb-sprite-typing {
-  animation: eb-typing 0.3s ease-in-out infinite alternate;
-}
-
-@keyframes eb-typing {
-  0%   { transform: translate(0, 0) rotate(0deg); }
-  25%  { transform: translate(-1px, -1px) rotate(-1deg); }
-  50%  { transform: translate(0, -2px) rotate(0deg); }
-  75%  { transform: translate(1px, -1px) rotate(1deg); }
-  100% { transform: translate(0, 0) rotate(0deg); }
+  animation: linear-pulse 2s ease-in-out infinite;
 }
 
 /* ========================================
-   Form Elements (EB style)
+   Form Elements (Linear-style)
    ======================================== */
 
 .eb-select,
 .eb-input,
 .eb-textarea {
-  font-family: var(--eb-font-body);
-  font-size: 11px;
-  padding: 5px 8px;
-  background: var(--eb-bg-deep);
-  color: var(--eb-text);
-  border: 2px solid var(--eb-border-in);
-  border-radius: 4px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
   outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .eb-select:focus,
 .eb-input:focus,
 .eb-textarea:focus {
-  border-color: var(--eb-highlight);
-  box-shadow: 0 0 0 1px var(--eb-highlight);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
 /* ========================================
-   Flavor Swatch
+   Flavor Swatch (minimal dots)
    ======================================== */
 
 .eb-swatch {
-  width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  border: 2px solid var(--eb-border-in);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid transparent;
   cursor: pointer;
-  transition: transform 0.1s;
+  transition: transform 0.15s ease, border-color 0.15s ease;
 }
 
 .eb-swatch:hover {
-  transform: scale(1.15);
+  transform: scale(1.2);
 }
 
 .eb-swatch--active {
-  border-color: var(--eb-highlight);
-  box-shadow: 0 0 0 2px var(--eb-highlight);
-  transform: scale(1.15);
+  border-color: var(--text-primary);
+  transform: scale(1.2);
+  box-shadow: none;
 }
 
 /* ========================================
-   Utility: Existing animations
+   Utility Animations
    ======================================== */
 
 @keyframes slide-in {
@@ -440,79 +386,74 @@ html, body, #root {
 }
 
 .animate-slide-in {
-  animation: slide-in 0.3s ease-out;
+  animation: slide-in 0.2s ease-out;
+}
+
+@keyframes eb-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
 
 /* ========================================
-   Office page: agent transition animations
+   Office page: agent transitions (subtle)
    ======================================== */
 
-/* Agent sits down at desk (task started) */
 @keyframes office-enter-desk {
   0% {
     opacity: 0;
-    transform: translateY(-12px) scale(0.9);
-  }
-  60% {
-    opacity: 1;
-    transform: translateY(2px) scale(1.02);
+    transform: translateY(-8px);
   }
   100% {
-    transform: translateY(0) scale(1);
-  }
-}
-.office-enter-desk {
-  animation: office-enter-desk 0.5s ease-out;
-}
-
-/* Agent leaves desk (task completed / went idle) */
-@keyframes office-leave-desk {
-  0% {
     opacity: 1;
     transform: translateY(0);
   }
-  40% {
-    opacity: 1;
-    transform: translateY(-4px);
-  }
-  100% {
-    opacity: 0.7;
-    transform: translateY(6px);
-  }
+}
+.office-enter-desk {
+  animation: office-enter-desk 0.3s ease-out;
+}
+
+@keyframes office-leave-desk {
+  0% { opacity: 1; }
+  100% { opacity: 0.5; }
 }
 .office-leave-desk {
-  animation: office-leave-desk 0.5s ease-in forwards;
+  animation: office-leave-desk 0.3s ease-in forwards;
 }
 
-/* Agent goes offline */
 @keyframes office-go-offline {
-  0% {
-    opacity: 1;
-    filter: saturate(1);
-  }
-  100% {
-    opacity: 0.5;
-    filter: saturate(0.3);
-  }
+  0% { opacity: 1; filter: saturate(1); }
+  100% { opacity: 0.4; filter: saturate(0.3); }
 }
 .office-go-offline {
-  animation: office-go-offline 0.6s ease-out forwards;
+  animation: office-go-offline 0.3s ease-out forwards;
 }
 
-/* Agent comes back online */
 @keyframes office-come-online {
-  0% {
-    opacity: 0.5;
-    filter: saturate(0.3);
-  }
-  50% {
-    filter: saturate(1.3);
-  }
-  100% {
-    opacity: 1;
-    filter: saturate(1);
-  }
+  0% { opacity: 0.4; filter: saturate(0.3); }
+  100% { opacity: 1; filter: saturate(1); }
 }
 .office-come-online {
-  animation: office-come-online 0.6s ease-out;
+  animation: office-come-online 0.3s ease-out;
+}
+
+/* ========================================
+   Scrollbar (Linear-style thin)
+   ======================================== */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
 }

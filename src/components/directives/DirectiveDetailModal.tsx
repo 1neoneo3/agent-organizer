@@ -6,24 +6,24 @@ import type { DecomposeLogEntry } from "../../api/endpoints.js";
 type WsOnFn = (type: WSEventType, fn: (payload: unknown) => void) => () => void;
 
 const LOG_KIND_COLORS: Record<string, string> = {
-  stdout: "text-green-400",
-  stderr: "text-red-400",
-  system: "text-yellow-400",
+  stdout: "#86efac",
+  stderr: "#fca5a5",
+  system: "#fde68a",
 };
 
 const STATUS_STYLES: Record<string, { label: string; color: string }> = {
-  pending: { label: "Pending", color: "bg-gray-600" },
-  decomposing: { label: "Decomposing...", color: "bg-yellow-600" },
-  active: { label: "Active", color: "bg-blue-600" },
-  completed: { label: "Completed", color: "bg-green-600" },
-  cancelled: { label: "Cancelled", color: "bg-red-600" },
+  pending: { label: "Pending", color: "var(--status-inbox)" },
+  decomposing: { label: "Decomposing...", color: "var(--status-progress)" },
+  active: { label: "Active", color: "var(--accent-primary)" },
+  completed: { label: "Completed", color: "var(--status-done)" },
+  cancelled: { label: "Cancelled", color: "var(--status-cancelled)" },
 };
 
-const TASK_STATUS_COLORS: Record<string, string> = {
-  inbox: "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300",
-  in_progress: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300",
-  done: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300",
-  cancelled: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300",
+const TASK_STATUS_COLORS: Record<string, { color: string; bg: string }> = {
+  inbox: { color: "var(--status-inbox)", bg: "var(--bg-tertiary)" },
+  in_progress: { color: "var(--status-progress)", bg: "var(--bg-tertiary)" },
+  done: { color: "var(--status-done)", bg: "var(--bg-tertiary)" },
+  cancelled: { color: "var(--status-cancelled)", bg: "var(--bg-tertiary)" },
 };
 
 function formatTimestamp(ts: number): string {
@@ -60,14 +60,12 @@ function DecomposeLogView({ directiveId, onWsEvent }: { directiveId: string; onW
   const [logs, setLogs] = useState<DecomposeLogEntry[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Fetch buffered logs on mount
   useEffect(() => {
     fetchDecomposeLogs(directiveId)
       .then((buffered) => setLogs(buffered))
       .catch(() => { /* no buffered logs */ });
   }, [directiveId]);
 
-  // Subscribe to real-time updates
   useEffect(() => {
     return onWsEvent("decompose_output", (payload) => {
       const entry = payload as DecomposeLogEntry;
@@ -79,7 +77,6 @@ function DecomposeLogView({ directiveId, onWsEvent }: { directiveId: string; onW
     });
   }, [directiveId, onWsEvent]);
 
-  // Auto-scroll
   useEffect(() => {
     const el = containerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -88,16 +85,25 @@ function DecomposeLogView({ directiveId, onWsEvent }: { directiveId: string; onW
   return (
     <div
       ref={containerRef}
-      className="bg-gray-900 rounded-lg p-3 font-mono text-xs leading-relaxed overflow-y-auto max-h-48 border border-gray-700"
+      style={{
+        background: "#0d0d0d",
+        borderRadius: "6px",
+        padding: "12px",
+        fontFamily: "var(--font-mono)",
+        fontSize: "12px",
+        lineHeight: "1.6",
+        overflowY: "auto",
+        maxHeight: "192px",
+        border: "1px solid var(--border-default)",
+      }}
     >
       {logs.length === 0 ? (
-        <div className="flex items-center gap-2 text-yellow-400">
-          <span className="animate-spin">&#9696;</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--status-progress)" }}>
           Waiting for output...
         </div>
       ) : (
         logs.map((log, i) => (
-          <div key={i} className={`${LOG_KIND_COLORS[log.kind] ?? "text-gray-400"} whitespace-pre-wrap break-all`}>
+          <div key={i} style={{ color: LOG_KIND_COLORS[log.kind] ?? "#a0a0a0", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
             {log.message}
           </div>
         ))
@@ -116,7 +122,7 @@ interface DirectiveDetailModalProps {
 
 export function DirectiveDetailModal({ directive, tasks, onClose, onReload, onWsEvent }: DirectiveDetailModalProps) {
   const linkedTasks = sortByTaskNumber(tasks.filter((t) => t.directive_id === directive.id));
-  const status = STATUS_STYLES[directive.status] ?? { label: directive.status, color: "bg-gray-600" };
+  const status = STATUS_STYLES[directive.status] ?? { label: directive.status, color: "var(--status-inbox)" };
   const doneCount = linkedTasks.filter((t) => t.status === "done").length;
   const progress = linkedTasks.length > 0 ? Math.round((doneCount / linkedTasks.length) * 100) : 0;
 
@@ -148,55 +154,94 @@ export function DirectiveDetailModal({ directive, tasks, onClose, onReload, onWs
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col border border-gray-200 dark:border-gray-700 shadow-xl"
+        style={{
+          background: "var(--bg-secondary)",
+          border: "1px solid var(--border-default)",
+          borderRadius: "12px",
+          width: "100%",
+          maxWidth: "40rem",
+          maxHeight: "85vh",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{directive.title}</h2>
-            <div className="flex items-center gap-2 mt-2">
-              <span className={`px-2 py-0.5 rounded text-xs font-medium text-white ${status.color}`}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", padding: "20px 24px 12px" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ fontSize: "16px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>{directive.title}</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+              <span style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "2px 8px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                fontWeight: 600,
+                color: status.color,
+                background: "var(--bg-tertiary)",
+              }}>
+                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: status.color }} />
                 {status.label}
               </span>
-              <span className="text-xs text-gray-500 dark:text-gray-400">
+              <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
                 {formatTimestamp(directive.created_at)}
               </span>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-lg leading-none p-1"
+            style={{
+              color: "var(--text-tertiary)",
+              fontSize: "16px",
+              lineHeight: 1,
+              padding: "4px",
+              cursor: "pointer",
+              background: "none",
+              border: "none",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; }}
           >
-            ✕
+            &#x2715;
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 pb-4">
+        <div style={{ flex: 1, overflowY: "auto", padding: "0 24px 20px" }}>
           {/* Content */}
-          <div className="mb-4">
-            <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+          <div style={{ marginBottom: "16px" }}>
+            <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
               Content
             </h3>
-            <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap bg-gray-50 dark:bg-gray-900 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
+            <div style={{
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              whiteSpace: "pre-wrap",
+              background: "var(--bg-tertiary)",
+              borderRadius: "8px",
+              padding: "12px",
+              border: "1px solid var(--border-subtle)",
+            }}>
               {directive.content}
             </div>
           </div>
 
           {directive.project_path && (
-            <div className="mb-4 text-sm">
-              <span className="text-gray-500 dark:text-gray-400">Project: </span>
-              <span className="font-mono text-xs text-gray-800 dark:text-gray-200">{directive.project_path}</span>
+            <div style={{ marginBottom: "16px", fontSize: "13px" }}>
+              <span style={{ color: "var(--text-tertiary)" }}>Project: </span>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: "12px", color: "var(--text-primary)" }}>{directive.project_path}</span>
             </div>
           )}
 
           {/* Decompose button */}
           {directive.status === "pending" && (
-            <div className="mb-4">
+            <div style={{ marginBottom: "16px" }}>
               <button
                 onClick={handleDecompose}
-                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+                className="eb-btn eb-btn--primary"
               >
                 Decompose into Tasks
               </button>
@@ -205,32 +250,57 @@ export function DirectiveDetailModal({ directive, tasks, onClose, onReload, onWs
 
           {/* Progress bar */}
           {linkedTasks.length > 0 && (
-            <div className="mb-4">
-              <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+            <div style={{ marginBottom: "16px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "12px", color: "var(--text-tertiary)", marginBottom: "4px" }}>
                 <span>Progress</span>
                 <span>{doneCount}/{linkedTasks.length} tasks ({progress}%)</span>
               </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+              <div style={{ width: "100%", background: "var(--bg-tertiary)", borderRadius: "4px", height: "6px" }}>
                 <div
-                  className="bg-green-500 h-2 rounded-full transition-all"
-                  style={{ width: `${progress}%` }}
+                  style={{
+                    background: "var(--status-done)",
+                    height: "6px",
+                    borderRadius: "4px",
+                    transition: "width 0.3s ease",
+                    width: `${progress}%`,
+                  }}
                 />
               </div>
             </div>
           )}
 
-          {/* Tabs: Tasks / Plan */}
+          {/* Tabs */}
           {linkedTasks.length > 0 && (
-            <div className="mb-3 flex gap-1 border-b border-gray-200 dark:border-gray-700">
+            <div style={{ marginBottom: "12px", display: "flex", gap: "2px", borderBottom: "1px solid var(--border-default)" }}>
               <button
                 onClick={() => setActiveTab("tasks")}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === "tasks" ? "border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"}`}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  background: "none",
+                  border: "none",
+                  borderBottom: activeTab === "tasks" ? "2px solid var(--accent-primary)" : "2px solid transparent",
+                  color: activeTab === "tasks" ? "var(--accent-primary)" : "var(--text-tertiary)",
+                  cursor: "pointer",
+                  transition: "color 0.15s",
+                }}
               >
                 Tasks ({linkedTasks.length})
               </button>
               <button
                 onClick={() => setActiveTab("plan")}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === "plan" ? "border-b-2 border-blue-500 text-blue-600 dark:text-blue-400" : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"}`}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  background: "none",
+                  border: "none",
+                  borderBottom: activeTab === "plan" ? "2px solid var(--accent-primary)" : "2px solid transparent",
+                  color: activeTab === "plan" ? "var(--accent-primary)" : "var(--text-tertiary)",
+                  cursor: "pointer",
+                  transition: "color 0.15s",
+                }}
               >
                 Plan
               </button>
@@ -239,28 +309,50 @@ export function DirectiveDetailModal({ directive, tasks, onClose, onReload, onWs
 
           {/* Tasks tab */}
           {activeTab === "tasks" && linkedTasks.length > 0 && (
-            <div className="flex flex-col gap-1.5">
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               {linkedTasks.map((t) => {
                 const deps = parseDependsOn(t.depends_on);
+                const taskStatusStyle = TASK_STATUS_COLORS[t.status] ?? { color: "var(--text-secondary)", bg: "var(--bg-tertiary)" };
                 return (
                   <div
                     key={t.id}
-                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-sm"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      background: "var(--bg-tertiary)",
+                      border: "1px solid var(--border-subtle)",
+                      fontSize: "13px",
+                    }}
                   >
-                    <div className="flex-1 min-w-0 mr-2">
-                      <div className="flex items-center gap-1.5">
+                    <div style={{ flex: 1, minWidth: 0, marginRight: "8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         {t.task_number && (
-                          <span className="text-blue-500 font-mono text-xs font-bold shrink-0">{t.task_number}</span>
+                          <span style={{ color: "var(--accent-primary)", fontFamily: "var(--font-mono)", fontSize: "11px", fontWeight: 600, flexShrink: 0 }}>{t.task_number}</span>
                         )}
-                        <span className="text-gray-800 dark:text-gray-200 truncate">{t.title}</span>
+                        <span style={{ color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</span>
                       </div>
                       {deps.length > 0 && (
-                        <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                        <div style={{ fontSize: "10px", color: "var(--text-tertiary)", marginTop: "2px" }}>
                           &larr; depends on: {deps.join(", ")}
                         </div>
                       )}
                     </div>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium shrink-0 ${TASK_STATUS_COLORS[t.status] ?? "bg-gray-200 text-gray-600"}`}>
+                    <span style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      color: taskStatusStyle.color,
+                      background: taskStatusStyle.bg,
+                      flexShrink: 0,
+                    }}>
+                      <span style={{ width: "5px", height: "5px", borderRadius: "50%", background: taskStatusStyle.color }} />
                       {t.status.replace("_", " ")}
                     </span>
                   </div>
@@ -273,18 +365,27 @@ export function DirectiveDetailModal({ directive, tasks, onClose, onReload, onWs
           {activeTab === "plan" && (
             <div>
               {planLoading && (
-                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-                  <span className="animate-spin">&#9696;</span>
+                <div style={{ fontSize: "13px", color: "var(--text-tertiary)" }}>
                   Loading plan...
                 </div>
               )}
               {planError && (
-                <div className="text-sm text-gray-500 dark:text-gray-400">
+                <div style={{ fontSize: "13px", color: "var(--text-tertiary)" }}>
                   No plan available for this directive.
                 </div>
               )}
               {planContent && (
-                <pre className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap bg-gray-50 dark:bg-gray-900 rounded-lg p-3 border border-gray-200 dark:border-gray-700 overflow-x-auto">
+                <pre style={{
+                  fontSize: "13px",
+                  color: "var(--text-primary)",
+                  whiteSpace: "pre-wrap",
+                  background: "var(--bg-tertiary)",
+                  borderRadius: "8px",
+                  padding: "12px",
+                  border: "1px solid var(--border-subtle)",
+                  overflowX: "auto",
+                  fontFamily: "var(--font-mono)",
+                }}>
                   {planContent}
                 </pre>
               )}
@@ -292,8 +393,8 @@ export function DirectiveDetailModal({ directive, tasks, onClose, onReload, onWs
           )}
 
           {directive.status === "decomposing" && (
-            <div className="mt-2">
-              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+            <div style={{ marginTop: "8px" }}>
+              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
                 Decompose Output
               </h3>
               <DecomposeLogView directiveId={directive.id} onWsEvent={onWsEvent} />

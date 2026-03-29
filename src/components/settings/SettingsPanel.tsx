@@ -7,6 +7,18 @@ interface SettingsPanelProps {
   onReload: () => void;
 }
 
+const inputStyle = {
+  width: "100%",
+  background: "var(--bg-tertiary)",
+  border: "1px solid var(--border-default)",
+  borderRadius: "6px",
+  padding: "8px 12px",
+  fontSize: "13px",
+  color: "var(--text-primary)",
+  outline: "none",
+  marginTop: "4px",
+} as const;
+
 export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   const [local, setLocal] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
@@ -31,16 +43,16 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-6">Settings</h2>
+      <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: "0 0 24px 0" }}>Settings</h2>
 
-      <div className="max-w-lg space-y-6">
+      <div style={{ maxWidth: "480px", display: "flex", flexDirection: "column", gap: "28px" }}>
         <section>
-          <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-3 uppercase tracking-wide">Review Settings</h3>
-          <div className="space-y-3">
-            <label className="block">
-              <span className="text-sm text-gray-500 dark:text-gray-400">Review Mode</span>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Settings</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Review Mode</span>
               <select
-                className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style={inputStyle}
                 value={local.review_mode ?? "pr_only"}
                 onChange={(e) => update("review_mode", e.target.value)}
               >
@@ -48,45 +60,45 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <option value="pr_only">PR Review only</option>
                 <option value="meeting">Meeting review</option>
               </select>
-              <p className="text-xs text-gray-500 mt-1">
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 "None" skips all reviews. "PR only" requires PR review for non-self-reviewed tasks.
               </p>
             </label>
 
-            <label className="block">
-              <span className="text-sm text-gray-500 dark:text-gray-400">Review Count</span>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Review Count</span>
               <input
                 type="number"
-                className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style={inputStyle}
                 value={local.review_count ?? "1"}
                 onChange={(e) => update("review_count", e.target.value)}
                 min={0}
                 max={5}
               />
-              <p className="text-xs text-gray-500 mt-1">
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 Number of review rounds required before approval.
               </p>
             </label>
 
-            <label className="block">
-              <span className="text-sm text-gray-500 dark:text-gray-400">Auto Review</span>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Auto Review</span>
               <select
-                className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style={inputStyle}
                 value={local.auto_review ?? "true"}
                 onChange={(e) => update("auto_review", e.target.value)}
               >
                 <option value="true">Enabled</option>
                 <option value="false">Disabled</option>
               </select>
-              <p className="text-xs text-gray-500 mt-1">
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 Automatically trigger a review agent when a task enters "PR Review" status.
               </p>
             </label>
 
-            <label className="block">
-              <span className="text-sm text-gray-500 dark:text-gray-400">Self-Review Threshold</span>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Self-Review Threshold</span>
               <select
-                className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style={inputStyle}
                 value={local.self_review_threshold ?? "small"}
                 onChange={(e) => update("self_review_threshold", e.target.value)}
               >
@@ -95,7 +107,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <option value="medium">Small + Medium tasks</option>
                 <option value="all">All tasks</option>
               </select>
-              <p className="text-xs text-gray-500 mt-1">
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 Tasks at or below this size will have the agent self-review and auto-approve.
               </p>
             </label>
@@ -103,12 +115,12 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         </section>
 
         <section>
-          <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 mb-3 uppercase tracking-wide">Auto Dispatch</h3>
-          <div className="space-y-3">
-            <label className="block">
-              <span className="text-sm text-gray-500 dark:text-gray-400">Auto Dispatch Mode</span>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Auto Dispatch</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Auto Dispatch Mode</span>
               <select
-                className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                style={inputStyle}
                 value={local.auto_dispatch_mode ?? "github_only"}
                 onChange={(e) => update("auto_dispatch_mode", e.target.value)}
               >
@@ -116,7 +128,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <option value="github_only">GitHub-synced inbox tasks only</option>
                 <option value="all_inbox">All inbox tasks</option>
               </select>
-              <p className="text-xs text-gray-500 mt-1">
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 Automatically assigns an idle worker agent and starts matching inbox tasks in the background.
               </p>
             </label>
@@ -126,7 +138,8 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 rounded transition-colors font-medium"
+          className="eb-btn eb-btn--primary"
+          style={{ alignSelf: "flex-start", opacity: saving ? 0.5 : 1 }}
         >
           {saving ? "Saving..." : "Save Settings"}
         </button>

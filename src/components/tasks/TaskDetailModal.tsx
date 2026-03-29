@@ -8,22 +8,22 @@ import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/in
 import { buildAgentViewState } from "./agent-view.js";
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  inbox: { label: "Inbox", color: "bg-gray-600" },
-  in_progress: { label: "In Progress", color: "bg-blue-600" },
-  self_review: { label: "Self Review", color: "bg-yellow-600" },
-  pr_review: { label: "PR Review", color: "bg-purple-600" },
-  done: { label: "Done", color: "bg-green-600" },
-  cancelled: { label: "Cancelled", color: "bg-red-600" },
+  inbox: { label: "Inbox", color: "var(--status-inbox)" },
+  in_progress: { label: "In Progress", color: "var(--status-progress)" },
+  self_review: { label: "Self Review", color: "var(--status-review)" },
+  pr_review: { label: "PR Review", color: "var(--status-review)" },
+  done: { label: "Done", color: "var(--status-done)" },
+  cancelled: { label: "Cancelled", color: "var(--status-cancelled)" },
 };
 
-const SIZE_LABELS: Record<string, { label: string; color: string }> = {
-  small: { label: "Small", color: "bg-gray-500" },
-  medium: { label: "Medium", color: "bg-yellow-600" },
-  large: { label: "Large", color: "bg-red-600" },
+const SIZE_LABELS: Record<string, string> = {
+  small: "Small",
+  medium: "Medium",
+  large: "Large",
 };
 
 function formatTimestamp(ts: number | null): string {
-  if (!ts) return "—";
+  if (!ts) return "\u2014";
   return new Date(ts).toLocaleString("ja-JP", {
     month: "2-digit",
     day: "2-digit",
@@ -65,124 +65,196 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
       setSendingFeedback(false);
     }
   };
-  const status = STATUS_LABELS[task.status] ?? { label: task.status, color: "bg-gray-600" };
-  const size = SIZE_LABELS[task.task_size] ?? { label: task.task_size, color: "bg-gray-500" };
+  const status = STATUS_LABELS[task.status] ?? { label: task.status, color: "var(--status-inbox)" };
+  const sizeLabel = SIZE_LABELS[task.task_size] ?? task.task_size;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col border border-gray-200 dark:border-gray-700 shadow-xl font-mono"
+        style={{
+          background: "var(--bg-secondary)",
+          border: "1px solid var(--border-default)",
+          borderRadius: "12px",
+          width: "100%",
+          maxWidth: "56rem",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100 leading-snug">
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", padding: "20px 24px 12px" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h2 style={{ fontSize: "16px", fontWeight: 600, color: "var(--text-primary)", lineHeight: 1.4, margin: 0 }}>
               {task.title}
             </h2>
-            <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <span className={`px-2 py-0.5 rounded text-xs font-medium text-white ${status.color}`}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
+              <span style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                padding: "2px 8px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                fontWeight: 600,
+                color: status.color,
+                background: "var(--bg-tertiary)",
+              }}>
+                <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: status.color }} />
                 {status.label}
               </span>
-              <span className={`px-2 py-0.5 rounded text-xs font-medium text-white ${size.color}`}>
-                {size.label}
+              <span style={{
+                padding: "2px 8px",
+                borderRadius: "4px",
+                fontSize: "11px",
+                fontWeight: 500,
+                color: "var(--text-secondary)",
+                background: "var(--bg-tertiary)",
+              }}>
+                {sizeLabel}
               </span>
               {agent && (
-                <>
-                  <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
-                    <PixelAvatar role={agent.role} size={18} className="inline-block align-middle" /> {agent.name}
-                    {agent.cli_model && (
-                      <span className="ml-1 text-gray-400 dark:text-gray-500" title={agent.cli_model}>
-                        ({agent.cli_model})
-                      </span>
-                    )}
-                  </span>
-                  {roleLabel && (
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${getRoleColorClass(agent.role)}`}>
-                      {roleLabel}
-                    </span>
+                <span style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  color: "var(--text-secondary)",
+                  background: "var(--bg-tertiary)",
+                }}>
+                  <PixelAvatar role={agent.role} size={14} className="inline-block align-middle" />
+                  {agent.name}
+                  {agent.cli_model && (
+                    <span style={{ color: "var(--text-tertiary)" }}>({agent.cli_model})</span>
                   )}
-                </>
+                </span>
+              )}
+              {roleLabel && (
+                <span style={{
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  color: "var(--accent-primary)",
+                  background: "var(--accent-subtle)",
+                }}>
+                  {roleLabel}
+                </span>
               )}
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-lg leading-none p-1"
+            style={{
+              color: "var(--text-tertiary)",
+              fontSize: "16px",
+              lineHeight: 1,
+              padding: "4px",
+              cursor: "pointer",
+              background: "none",
+              border: "none",
+              borderRadius: "4px",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; }}
           >
-            ✕
+            &#x2715;
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 pb-4">
+        <div style={{ flex: 1, overflowY: "auto", padding: "0 24px 20px" }}>
           {/* Description */}
           {task.description ? (
-            <div className="mb-4">
-              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+            <div style={{ marginBottom: "16px" }}>
+              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
                 Description
               </h3>
-              <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap bg-gray-50 dark:bg-gray-900 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
+              <div style={{
+                fontSize: "13px",
+                color: "var(--text-primary)",
+                whiteSpace: "pre-wrap",
+                background: "var(--bg-tertiary)",
+                borderRadius: "8px",
+                padding: "12px",
+                border: "1px solid var(--border-subtle)",
+              }}>
                 {task.description}
               </div>
             </div>
           ) : (
-            <div className="mb-4">
-              <p className="text-sm text-gray-400 dark:text-gray-500 italic">No description</p>
+            <div style={{ marginBottom: "16px" }}>
+              <p style={{ fontSize: "13px", color: "var(--text-tertiary)", fontStyle: "italic" }}>No description</p>
             </div>
           )}
 
           {/* Metadata grid */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm mb-4">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 24px", fontSize: "13px", marginBottom: "16px" }}>
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Priority</span>
-              <span className="ml-2 text-gray-800 dark:text-gray-200">{task.priority}</span>
+              <span style={{ color: "var(--text-tertiary)" }}>Priority</span>
+              <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{task.priority}</span>
             </div>
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Reviews</span>
-              <span className="ml-2 text-gray-800 dark:text-gray-200">{task.review_count}</span>
+              <span style={{ color: "var(--text-tertiary)" }}>Reviews</span>
+              <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{task.review_count}</span>
             </div>
             {agent?.cli_model && (
-              <div className="col-span-2">
-                <span className="text-gray-500 dark:text-gray-400">Model</span>
-                <span className="ml-2 text-gray-800 dark:text-gray-200 font-mono text-xs" title={agent.cli_model}>{agent.cli_model}</span>
+              <div style={{ gridColumn: "span 2" }}>
+                <span style={{ color: "var(--text-tertiary)" }}>Model</span>
+                <span style={{ marginLeft: "8px", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: "12px" }}>{agent.cli_model}</span>
               </div>
             )}
             {task.project_path && (
-              <div className="col-span-2">
-                <span className="text-gray-500 dark:text-gray-400">Project</span>
-                <span className="ml-2 text-gray-800 dark:text-gray-200 font-mono text-xs">{task.project_path}</span>
+              <div style={{ gridColumn: "span 2" }}>
+                <span style={{ color: "var(--text-tertiary)" }}>Project</span>
+                <span style={{ marginLeft: "8px", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: "12px" }}>{task.project_path}</span>
               </div>
             )}
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Created</span>
-              <span className="ml-2 text-gray-800 dark:text-gray-200">{formatTimestamp(task.created_at)}</span>
+              <span style={{ color: "var(--text-tertiary)" }}>Created</span>
+              <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{formatTimestamp(task.created_at)}</span>
             </div>
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Started</span>
-              <span className="ml-2 text-gray-800 dark:text-gray-200">{formatTimestamp(task.started_at)}</span>
+              <span style={{ color: "var(--text-tertiary)" }}>Started</span>
+              <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{formatTimestamp(task.started_at)}</span>
             </div>
             {task.completed_at && (
               <div>
-                <span className="text-gray-500 dark:text-gray-400">Completed</span>
-                <span className="ml-2 text-gray-800 dark:text-gray-200">{formatTimestamp(task.completed_at)}</span>
+                <span style={{ color: "var(--text-tertiary)" }}>Completed</span>
+                <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{formatTimestamp(task.completed_at)}</span>
               </div>
             )}
           </div>
 
           {/* PR Link */}
           {task.pr_url && (
-            <div className="mb-4">
-              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+            <div style={{ marginBottom: "16px" }}>
+              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
                 Pull Request
               </h3>
               <a
                 href={task.pr_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400 hover:underline bg-blue-50 dark:bg-blue-900/20 rounded-lg px-3 py-2 border border-blue-200 dark:border-blue-800"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontSize: "13px",
+                  color: "var(--accent-primary)",
+                  textDecoration: "none",
+                  background: "var(--accent-subtle)",
+                  borderRadius: "6px",
+                  padding: "6px 12px",
+                  border: "1px solid var(--border-subtle)",
+                }}
               >
-                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg>
+                <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg>
                 {task.pr_url}
               </a>
             </div>
@@ -190,25 +262,41 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
 
           {/* Result */}
           {task.result && (
-            <div className="mb-4">
-              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+            <div style={{ marginBottom: "16px" }}>
+              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
                 Result
               </h3>
-              <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap bg-green-50 dark:bg-green-900/20 rounded-lg p-3 border border-green-200 dark:border-green-800">
+              <div style={{
+                fontSize: "13px",
+                color: "var(--text-primary)",
+                whiteSpace: "pre-wrap",
+                background: "var(--bg-tertiary)",
+                borderRadius: "8px",
+                padding: "12px",
+                border: "1px solid var(--border-subtle)",
+              }}>
                 {task.result}
               </div>
             </div>
           )}
 
           {/* Actions */}
-          <div className="flex items-center gap-2 mb-4">
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
             {task.status === "inbox" && idleAgents.length > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">Run with:</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "12px", color: "var(--text-tertiary)", flexShrink: 0 }}>Run with:</span>
                 <select
                   value={selectedAgentId}
                   onChange={(e) => setSelectedAgentId(e.target.value)}
-                  className="px-2 py-1.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200"
+                  style={{
+                    padding: "4px 8px",
+                    fontSize: "12px",
+                    borderRadius: "6px",
+                    border: "1px solid var(--border-default)",
+                    background: "var(--bg-tertiary)",
+                    color: "var(--text-primary)",
+                    outline: "none",
+                  }}
                 >
                   {idleAgents.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -219,16 +307,18 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
                 <button
                   onClick={() => { if (selectedAgentId) onRun?.(task.id, selectedAgentId); }}
                   disabled={!selectedAgentId}
-                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium disabled:opacity-50"
+                  className="eb-btn eb-btn--primary"
+                  style={{ fontSize: "12px" }}
                 >
-                  ▶ Run
+                  Run
                 </button>
               </div>
             )}
             {task.status === "in_progress" && (
               <button
                 onClick={() => onStop?.(task.id)}
-                className="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-500 text-white rounded transition-colors font-medium"
+                className="eb-btn eb-btn--danger"
+                style={{ fontSize: "12px" }}
               >
                 Stop Task
               </button>
@@ -236,29 +326,41 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
             {(task.status === "in_progress" || task.status === "done" || task.status === "self_review" || task.status === "pr_review") && (
               <button
                 onClick={() => setShowTerminal((v) => !v)}
-                className="px-3 py-1.5 text-xs bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded transition-colors font-medium"
+                className="eb-btn"
+                style={{ fontSize: "12px" }}
               >
-                {showTerminal ? "Hide Activity" : "⚡ Activity"}
+                {showTerminal ? "Hide Activity" : "Activity"}
               </button>
             )}
           </div>
 
           {/* Interactive Prompt */}
           {interactivePrompt && (
-            <div className="mb-4">
+            <div style={{ marginBottom: "16px" }}>
               <InteractivePromptPanel prompt={interactivePrompt} />
             </div>
           )}
 
           {/* CEO Feedback */}
           {task.status === "in_progress" && (
-            <div className="mb-4">
-              <h3 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
-                CEO Feedback
+            <div style={{ marginBottom: "16px" }}>
+              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
+                Feedback
               </h3>
-              <div className="flex gap-2">
+              <div style={{ display: "flex", gap: "8px" }}>
                 <textarea
-                  className="flex-1 bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm h-16 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style={{
+                    flex: 1,
+                    background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border-default)",
+                    borderRadius: "6px",
+                    padding: "8px 12px",
+                    fontSize: "13px",
+                    color: "var(--text-primary)",
+                    height: "64px",
+                    resize: "none",
+                    outline: "none",
+                  }}
                   value={feedbackText}
                   onChange={(e) => setFeedbackText(e.target.value)}
                   placeholder="Send feedback to the running agent..."
@@ -266,7 +368,8 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
                 <button
                   onClick={handleSendFeedback}
                   disabled={!feedbackText.trim() || sendingFeedback}
-                  className="px-3 py-2 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded transition-colors font-medium self-end disabled:opacity-50"
+                  className="eb-btn eb-btn--primary"
+                  style={{ alignSelf: "flex-end", fontSize: "12px", opacity: (!feedbackText.trim() || sendingFeedback) ? 0.5 : 1 }}
                 >
                   {sendingFeedback ? "..." : "Send"}
                 </button>

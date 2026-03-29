@@ -1,12 +1,12 @@
 import type { Task } from "../../types/index.js";
 
 export const TASK_BOARD_COLUMNS = [
-  { key: "inbox", label: "INBOX", town: "Onett", accentColor: "var(--eb-highlight)" },
-  { key: "in_progress", label: "IN PROGRESS", town: "Twoson", accentColor: "var(--eb-highlight)" },
-  { key: "self_review", label: "SELF REVIEW", town: "Threed", accentColor: "#d9a441" },
-  { key: "pr_review", label: "PR REVIEW", town: "Fourside", accentColor: "#7dcfff" },
-  { key: "done", label: "DONE", town: "Magicant", accentColor: "#69c16f" },
-  { key: "cancelled", label: "CANCELLED", town: "Lost Underworld", accentColor: "#d95c5c" },
+  { key: "inbox", label: "INBOX", town: "Inbox", accentColor: "var(--status-inbox)" },
+  { key: "in_progress", label: "IN PROGRESS", town: "In Progress", accentColor: "var(--status-progress)" },
+  { key: "self_review", label: "SELF REVIEW", town: "Self Review", accentColor: "var(--status-review)" },
+  { key: "pr_review", label: "PR REVIEW", town: "PR Review", accentColor: "var(--status-review)" },
+  { key: "done", label: "DONE", town: "Done", accentColor: "var(--status-done)" },
+  { key: "cancelled", label: "CANCELLED", town: "Cancelled", accentColor: "var(--status-cancelled)" },
 ] as const satisfies ReadonlyArray<{
   key: Task["status"];
   label: string;

@@ -2,51 +2,15 @@ import { NavLink } from "react-router";
 import type { ReactNode } from "react";
 import type { Flavor, TimeOfDay } from "../../hooks/useTheme.js";
 
-function PixelHuman() {
-  const B = "#1e293b";
-  const SK = "#f8c8a0";
-  const pixels: [number, number, string][] = [
-    [6,0,B],[7,0,B],[8,0,B],[9,0,B],
-    [5,1,B],[6,1,"#5c3a1e"],[7,1,"#5c3a1e"],[8,1,"#5c3a1e"],[9,1,"#5c3a1e"],[10,1,B],
-    [4,2,B],[5,2,"#5c3a1e"],[6,2,"#5c3a1e"],[7,2,"#5c3a1e"],[8,2,"#5c3a1e"],[9,2,"#5c3a1e"],[10,2,"#5c3a1e"],[11,2,B],
-    [4,3,B],[5,3,SK],[6,3,SK],[7,3,SK],[8,3,SK],[9,3,SK],[10,3,SK],[11,3,B],
-    [4,4,B],[5,4,SK],[6,4,B],[7,4,SK],[8,4,SK],[9,4,B],[10,4,SK],[11,4,B],
-    [4,5,B],[5,5,SK],[6,5,SK],[7,5,SK],[8,5,SK],[9,5,SK],[10,5,SK],[11,5,B],
-    [5,6,B],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,B],
-    [4,7,B],[5,7,"#7c3aed"],[6,7,"#7c3aed"],[7,7,"#7c3aed"],[8,7,"#7c3aed"],[9,7,"#7c3aed"],[10,7,"#7c3aed"],[11,7,B],
-    [3,8,B],[4,8,SK],[5,8,"#7c3aed"],[6,8,"#7c3aed"],[7,8,"#7c3aed"],[8,8,"#7c3aed"],[9,8,"#7c3aed"],[10,8,"#7c3aed"],[11,8,SK],[12,8,B],
-    [5,9,B],[6,9,"#6b21a8"],[7,9,"#6b21a8"],[8,9,"#6b21a8"],[9,9,"#6b21a8"],[10,9,B],
-    [5,10,B],[6,10,"#1e3a5f"],[7,10,B],[8,10,B],[9,10,"#1e3a5f"],[10,10,B],
-    [4,11,B],[5,11,"#4a2c0a"],[6,11,"#4a2c0a"],[9,11,"#4a2c0a"],[10,11,"#4a2c0a"],[11,11,B],
-  ];
-
-  return (
-    <svg width="28" height="28" viewBox="0 0 16 14" shapeRendering="crispEdges" className="w-7 h-7">
-      {pixels.map(([x, y, fill], i) => (
-        <rect key={i} x={x} y={y} width={1} height={1} fill={fill} />
-      ))}
-    </svg>
-  );
-}
-
-type NavItem = { to: string; label: string; rpgLabel: string; icon: ReactNode };
+type NavItem = { to: string; label: string; icon: ReactNode };
 
 const NAV_ITEMS: NavItem[] = [
-  { to: "/", label: "Tasks", rpgLabel: "QUESTS", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>Q</span> },
-  { to: "/directives", label: "Directives", rpgLabel: "ORDERS", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>O</span> },
-  { to: "/office", label: "Office", rpgLabel: "OFFICE", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>F</span> },
-  { to: "/agents", label: "Agents", rpgLabel: "PARTY", icon: <PixelHuman /> },
-  { to: "/settings", label: "Settings", rpgLabel: "CONFIG", icon: <span style={{ fontFamily: "var(--eb-font-heading)", fontSize: "10px" }}>C</span> },
+  { to: "/", label: "Tasks", icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="2" width="12" height="12" rx="2" /><path d="M5 8l2 2 4-4" /></svg> },
+  { to: "/directives", label: "Directives", icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 2h8l2 3-6 9-6-9z" /></svg> },
+  { to: "/office", label: "Office", icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="6" width="12" height="8" rx="1" /><path d="M4 6V4a4 4 0 018 0v2" /></svg> },
+  { to: "/agents", label: "Agents", icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="5" r="3" /><path d="M2 14c0-3 2.5-5 6-5s6 2 6 5" /></svg> },
+  { to: "/settings", label: "Settings", icon: <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="8" cy="8" r="2" /><path d="M8 1v2m0 10v2M1 8h2m10 0h2M2.9 2.9l1.4 1.4m7.4 7.4l1.4 1.4M13.1 2.9l-1.4 1.4M4.3 11.7l-1.4 1.4" /></svg> },
 ];
-
-const FLAVOR_COLORS: Record<Flavor, string> = {
-  mint: "#48d8a0",
-  strawberry: "#f06888",
-  banana: "#f0d848",
-  peanut: "#d0a060",
-  blueberry: "#60a8ff",
-  plain: "#9898b0",
-};
 
 interface SidebarProps {
   connected: boolean;
@@ -59,97 +23,135 @@ interface SidebarProps {
   flavors: readonly Flavor[];
 }
 
-export function Sidebar({ connected, flavor, setFlavor, timeOfDay, toggleTimeOfDay, flavors }: SidebarProps) {
+export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps) {
   return (
-    <aside className="w-56 flex flex-col h-full eb-window" style={{ borderRadius: "0 8px 8px 0" }}>
+    <aside
+      className="flex flex-col h-full"
+      style={{
+        width: "220px",
+        background: "var(--bg-secondary)",
+        borderRight: "1px solid var(--border-default)",
+      }}
+    >
       {/* Header */}
-      <div className="eb-window-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span>AGENT ORGANIZER</span>
+      <div style={{
+        padding: "16px 16px 12px",
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+      }}>
+        <div style={{
+          width: "24px",
+          height: "24px",
+          borderRadius: "6px",
+          background: "var(--accent-primary)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2">
+            <path d="M2 8l4 4 8-8" />
+          </svg>
+        </div>
+        <span style={{
+          fontSize: "14px",
+          fontWeight: 600,
+          color: "var(--text-primary)",
+          letterSpacing: "-0.02em",
+        }}>
+          Agent Organizer
+        </span>
       </div>
 
       {/* Connection status */}
-      <div style={{ padding: "6px 12px", borderBottom: "1px solid var(--eb-border-in)", background: "var(--eb-bg-deep)" }}>
-        <span className="eb-label" style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+      <div style={{
+        padding: "0 16px 12px",
+      }}>
+        <span style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "6px",
+          fontSize: "11px",
+          fontWeight: 500,
+          color: "var(--text-tertiary)",
+        }}>
           <span style={{
             display: "inline-block",
             width: "6px",
             height: "6px",
-            borderRadius: "1px",
-            background: connected ? "#48d8a0" : "#e04040",
-            boxShadow: connected ? "0 0 4px #48d8a0" : "0 0 4px #e04040",
+            borderRadius: "50%",
+            background: connected ? "#22c55e" : "#ef4444",
           }} />
-          {connected ? "ONLINE" : "OFFLINE"}
+          {connected ? "Connected" : "Disconnected"}
         </span>
       </div>
 
       {/* Navigation */}
-      <nav style={{ flex: 1, padding: "4px 0" }}>
+      <nav style={{ flex: 1, padding: "0 8px" }}>
         {NAV_ITEMS.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === "/"}
-            className={({ isActive }) =>
-              isActive ? "eb-cursor" : ""
-            }
             style={({ isActive }) => ({
               display: "flex",
               alignItems: "center",
-              gap: "8px",
-              padding: "8px 12px",
-              fontFamily: "var(--eb-font-heading)",
-              fontSize: "9px",
-              letterSpacing: "1px",
-              color: isActive ? "var(--eb-highlight)" : "var(--eb-text)",
-              background: isActive ? "var(--eb-bg-deep)" : "transparent",
+              gap: "10px",
+              padding: "7px 8px",
+              fontSize: "13px",
+              fontWeight: isActive ? 500 : 400,
+              color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+              background: isActive ? "var(--bg-hover)" : "transparent",
               textDecoration: "none",
-              transition: "background 0.1s",
+              borderRadius: "6px",
+              transition: "background 0.1s, color 0.1s",
               cursor: "pointer",
+              marginBottom: "1px",
             })}
             onMouseEnter={(e) => {
-              if (!e.currentTarget.classList.contains("eb-cursor")) {
-                e.currentTarget.style.background = "var(--eb-bg-deep)";
+              const link = e.currentTarget;
+              if (!link.style.background || link.style.background === "transparent") {
+                link.style.background = "var(--bg-hover)";
               }
             }}
             onMouseLeave={(e) => {
-              if (!e.currentTarget.classList.contains("eb-cursor")) {
-                e.currentTarget.style.background = "transparent";
+              const link = e.currentTarget;
+              // Check if it's the active link by looking at the font weight
+              if (link.style.fontWeight !== "500") {
+                link.style.background = "transparent";
               }
             }}
           >
-            <span style={{ width: "28px", display: "flex", justifyContent: "center" }}>{item.icon}</span>
-            {item.rpgLabel}
+            <span style={{ width: "20px", display: "flex", justifyContent: "center", color: "var(--text-tertiary)" }}>{item.icon}</span>
+            {item.label}
           </NavLink>
         ))}
       </nav>
 
-      {/* Flavor Picker */}
-      <div style={{ padding: "8px 12px", borderTop: "2px solid var(--eb-border-in)" }}>
-        <div className="eb-label" style={{ marginBottom: "6px" }}>FLAVOR</div>
-        <div style={{ display: "flex", gap: "6px" }}>
-          {flavors.map((f) => (
-            <button
-              key={f}
-              onClick={() => setFlavor(f)}
-              className={`eb-swatch ${flavor === f ? "eb-swatch--active" : ""}`}
-              style={{ background: FLAVOR_COLORS[f] }}
-              title={f.charAt(0).toUpperCase() + f.slice(1)}
-            />
-          ))}
-        </div>
-      </div>
-
       {/* Day/Night Toggle */}
-      <div style={{ padding: "8px 12px", borderTop: "1px solid var(--eb-border-in)" }}>
+      <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--border-subtle)" }}>
         <button
           onClick={toggleTimeOfDay}
-          className="eb-btn"
-          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "6px",
+            padding: "6px 12px",
+            fontSize: "12px",
+            fontWeight: 500,
+            color: "var(--text-secondary)",
+            background: "var(--bg-tertiary)",
+            border: "1px solid var(--border-default)",
+            borderRadius: "6px",
+            cursor: "pointer",
+            transition: "background 0.15s ease",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-tertiary)"; }}
         >
-          <span style={{ fontSize: "14px", imageRendering: "pixelated" }}>
-            {timeOfDay === "night" ? "☀" : "☾"}
-          </span>
-          {timeOfDay === "night" ? "DAY" : "NIGHT"}
+          {timeOfDay === "night" ? "Light Mode" : "Dark Mode"}
         </button>
       </div>
     </aside>

@@ -32,14 +32,30 @@ export function CreateDirectiveModal({ onClose, onCreate }: CreateDirectiveModal
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-lg border border-gray-200 dark:border-gray-700"
+        style={{
+          background: "var(--bg-secondary)",
+          border: "1px solid var(--border-default)",
+          borderRadius: "12px",
+          padding: "24px",
+          width: "100%",
+          maxWidth: "480px",
+        }}
       >
-        <h2 className="text-lg font-bold mb-4">New Directive</h2>
+        <h2 style={{ fontSize: "16px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "20px" }}>New Directive</h2>
 
-        <label className="block mb-3">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Title</span>
+        <label style={{ display: "block", marginBottom: "16px" }}>
+          <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Title</span>
           <input
-            className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{
+              width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              outline: "none",
+            }}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g. Implement user authentication"
@@ -47,46 +63,67 @@ export function CreateDirectiveModal({ onClose, onCreate }: CreateDirectiveModal
           />
         </label>
 
-        <label className="block mb-3">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Content</span>
+        <label style={{ display: "block", marginBottom: "16px" }}>
+          <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Content</span>
           <textarea
-            className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm h-32 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{
+              width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              height: "128px",
+              resize: "none",
+              outline: "none",
+            }}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Describe what needs to be accomplished..."
           />
         </label>
 
-        <label className="block mb-3">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Project Path</span>
+        <label style={{ display: "block", marginBottom: "16px" }}>
+          <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Project Path</span>
           <input
-            className="mt-1 w-full bg-gray-100 dark:bg-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style={{
+              width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-mono)",
+              outline: "none",
+            }}
             value={projectPath}
             onChange={(e) => setProjectPath(e.target.value)}
           />
         </label>
 
-        <label className="flex items-center gap-2 mb-4 cursor-pointer">
+        <label style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "20px", cursor: "pointer" }}>
           <input
             type="checkbox"
             checked={autoDecompose}
             onChange={(e) => setAutoDecompose(e.target.checked)}
-            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            style={{ width: "16px", height: "16px", accentColor: "var(--accent-primary)" }}
           />
-          <span className="text-sm text-gray-700 dark:text-gray-300">Auto-decompose into tasks</span>
+          <span style={{ fontSize: "13px", color: "var(--text-primary)" }}>Auto-decompose into tasks</span>
         </label>
 
-        <div className="flex justify-end gap-2">
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            className="eb-btn"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+            className="eb-btn eb-btn--primary"
           >
             Create Directive
           </button>

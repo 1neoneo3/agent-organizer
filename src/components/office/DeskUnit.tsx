@@ -1,9 +1,8 @@
 /**
- * DeskUnit – Pixel-art desk with monitor, chair, and a seated agent.
+ * DeskUnit – Clean card for a working agent.
  *
  * Displays the agent's name, current task title, and elapsed work time.
- * The monitor screen pulses when the agent is actively working.
- * Designed for the EarthBound (Mother 2) design system.
+ * Linear-style design with status indicator.
  */
 import { AgentAvatar } from "./AgentAvatar.js";
 import { getRoleLabel } from "../agents/roles.js";
@@ -24,146 +23,69 @@ function formatElapsed(startedAt: number | null): string {
   return `${m}m`;
 }
 
-/** Inline 16×16 pixel-art monitor SVG */
-function MonitorSvg({ isWorking }: { isWorking: boolean }) {
-  return (
-    <svg
-      width={48}
-      height={40}
-      viewBox="0 0 16 14"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated" }}
-    >
-      {/* monitor bezel */}
-      <rect x={1} y={0} width={14} height={10} fill="#2d2d2d" rx={0} />
-      {/* screen */}
-      <rect x={2} y={1} width={12} height={8} fill={isWorking ? "#0f172a" : "#1e293b"} />
-
-      {/* screen content – code lines when working, dark when off */}
-      {isWorking && (
-        <>
-          <rect x={3} y={2} width={6} height={1} fill="#22c55e" opacity={0.9}>
-            <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1.5s" repeatCount="indefinite" />
-          </rect>
-          <rect x={3} y={4} width={8} height={1} fill="#60a5fa" opacity={0.7}>
-            <animate attributeName="opacity" values="0.7;0.3;0.7" dur="2s" repeatCount="indefinite" />
-          </rect>
-          <rect x={3} y={6} width={5} height={1} fill="#a855f7" opacity={0.6}>
-            <animate attributeName="opacity" values="0.6;0.2;0.6" dur="1.8s" repeatCount="indefinite" />
-          </rect>
-          {/* blinking cursor */}
-          <rect x={9} y={6} width={1} height={1} fill="#22c55e">
-            <animate attributeName="opacity" values="1;0;1" dur="0.8s" repeatCount="indefinite" />
-          </rect>
-        </>
-      )}
-
-      {/* monitor stand */}
-      <rect x={7} y={10} width={2} height={2} fill="#404040" />
-      {/* stand base */}
-      <rect x={5} y={12} width={6} height={1} fill="#404040" />
-      <rect x={4} y={13} width={8} height={1} fill="#333333" />
-    </svg>
-  );
-}
-
-/** Inline pixel-art desk surface SVG */
-function DeskSvg() {
-  return (
-    <svg
-      width={120}
-      height={20}
-      viewBox="0 0 60 10"
-      xmlns="http://www.w3.org/2000/svg"
-      style={{ imageRendering: "pixelated" }}
-    >
-      {/* desk top surface */}
-      <rect x={0} y={0} width={60} height={3} fill="var(--eb-border-out)" />
-      <rect x={0} y={1} width={60} height={2} fill="var(--eb-border-in)" />
-      {/* desk front panel */}
-      <rect x={1} y={3} width={58} height={6} fill="var(--eb-bg-deep)" />
-      <rect x={1} y={3} width={58} height={1} fill="var(--eb-border-out)" />
-      {/* desk legs */}
-      <rect x={2} y={9} width={3} height={1} fill="var(--eb-border-out)" />
-      <rect x={55} y={9} width={3} height={1} fill="var(--eb-border-out)" />
-    </svg>
-  );
-}
-
 export function DeskUnit({ agent, task, onClick }: DeskUnitProps) {
   const isWorking = agent.status === "working";
   const roleLabel = getRoleLabel(agent.role);
 
   return (
     <div
-      className="eb-window"
-      style={{ cursor: onClick ? "pointer" : "default", maxWidth: 180, transition: "transform 0.1s" }}
+      style={{
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "8px",
+        cursor: onClick ? "pointer" : "default",
+        maxWidth: 200,
+        transition: "border-color 0.15s ease",
+      }}
       onClick={onClick}
-      onMouseEnter={(e) => { if (onClick) e.currentTarget.style.transform = "translateY(-1px)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
+      onMouseEnter={(e) => { if (onClick) e.currentTarget.style.borderColor = "var(--text-tertiary)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-default)"; }}
     >
-      {/* Visual area */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          padding: "8px 8px 0",
-          gap: 0,
-        }}
-      >
-        {/* Agent sitting behind monitor */}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, marginBottom: -4, zIndex: 1 }}>
-          <AgentAvatar agent={agent} size={28} />
-          <MonitorSvg isWorking={isWorking} />
-        </div>
-
-        {/* Desk surface */}
-        <DeskSvg />
+      {/* Avatar area */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px 16px 8px",
+      }}>
+        <AgentAvatar agent={agent} size={32} />
       </div>
 
       {/* Info panel */}
-      <div className="eb-window-body" style={{ padding: "6px 8px" }}>
+      <div style={{ padding: "8px 14px 12px" }}>
         {/* Agent name + role */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-          <span
-            className="eb-heading"
-            style={{ fontSize: "9px", color: "var(--eb-text)" }}
-          >
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>
             {agent.name}
           </span>
           {roleLabel && (
-            <span
-              className="eb-label"
-              style={{
-                padding: "1px 3px",
-                background: "var(--eb-border-in)",
-                color: "var(--eb-bg)",
-                borderRadius: "2px",
-                fontSize: "6px",
-              }}
-            >
+            <span style={{
+              padding: "1px 5px",
+              background: "var(--accent-subtle)",
+              color: "var(--accent-primary)",
+              borderRadius: "3px",
+              fontSize: "10px",
+              fontWeight: 600,
+            }}>
               {roleLabel}
             </span>
           )}
         </div>
 
         {/* Status indicator */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3 }}>
-          <span
-            style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: isWorking ? "#22c55e" : agent.status === "idle" ? "#fbbf24" : "#64748b",
-              flexShrink: 0,
-            }}
-          />
-          <span className="eb-label" style={{ fontSize: "7px" }}>
-            {isWorking ? "WORKING" : agent.status === "idle" ? "IDLE" : "OFFLINE"}
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
+          <span style={{
+            width: "6px",
+            height: "6px",
+            borderRadius: "50%",
+            background: isWorking ? "#22c55e" : agent.status === "idle" ? "#f59e0b" : "#64748b",
+            flexShrink: 0,
+          }} />
+          <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--text-secondary)" }}>
+            {isWorking ? "Working" : agent.status === "idle" ? "Idle" : "Offline"}
           </span>
           {isWorking && task?.started_at && (
-            <span className="eb-label" style={{ fontSize: "7px", color: "var(--eb-highlight)", marginLeft: "auto" }}>
+            <span style={{ fontSize: "11px", fontWeight: 500, color: "var(--flavor-accent)", marginLeft: "auto" }}>
               {formatElapsed(task.started_at)}
             </span>
           )}
@@ -171,26 +93,22 @@ export function DeskUnit({ agent, task, onClick }: DeskUnitProps) {
 
         {/* Current task */}
         {task && (
-          <div
-            style={{
-              marginTop: 4,
-              padding: "3px 5px",
-              background: "var(--eb-shadow)",
-              borderRadius: 2,
+          <div style={{
+            marginTop: "6px",
+            padding: "4px 8px",
+            background: "var(--bg-tertiary)",
+            borderRadius: "4px",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              fontSize: "11px",
+              fontWeight: 500,
+              color: "var(--text-secondary)",
+              whiteSpace: "nowrap",
               overflow: "hidden",
-            }}
-          >
-            <div
-              className="eb-label"
-              style={{
-                fontSize: "7px",
-                color: "var(--eb-highlight)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {task.task_number && <span style={{ marginRight: 3 }}>{task.task_number}</span>}
+              textOverflow: "ellipsis",
+            }}>
+              {task.task_number && <span style={{ color: "var(--flavor-accent)", marginRight: "4px" }}>{task.task_number}</span>}
               {task.title}
             </div>
           </div>

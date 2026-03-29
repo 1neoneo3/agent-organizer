@@ -34,27 +34,40 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
     onReload();
   };
 
-  const STATUS_DOTS: Record<string, string> = {
-    idle: "bg-gray-400",
-    working: "bg-green-400 animate-pulse",
-    offline: "bg-red-400",
+  const STATUS_COLORS: Record<string, string> = {
+    idle: "#a0a0a0",
+    working: "#22c55e",
+    offline: "#ef4444",
   };
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">Agents</h2>
-        <div className="flex items-center gap-3">
-          <div className="flex gap-2 text-xs text-gray-500 dark:text-gray-400">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
+        <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Agents</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div style={{ display: "flex", gap: "6px" }}>
             {Object.entries(cliStatus).map(([cli, ok]) => (
-              <span key={cli} className={`px-2 py-1 rounded ${ok ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500"}`}>
-                {cli} {ok ? "✓" : "✗"}
+              <span
+                key={cli}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  borderRadius: "4px",
+                  color: ok ? "var(--status-done)" : "var(--text-tertiary)",
+                  background: "var(--bg-tertiary)",
+                }}
+              >
+                {cli} {ok ? "\u2713" : "\u2717"}
               </span>
             ))}
           </div>
           <button
             onClick={() => setShowForm(true)}
-            className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors font-medium"
+            className="eb-btn eb-btn--primary"
           >
             + New Agent
           </button>
@@ -62,7 +75,7 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
       </div>
 
       {showForm && (
-        <div className="mb-4">
+        <div style={{ marginBottom: "16px" }}>
           <AgentForm
             onSubmit={handleCreate}
             onCancel={() => setShowForm(false)}
@@ -70,7 +83,7 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
         </div>
       )}
 
-      <div className="grid gap-3">
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         {agents.map((agent) =>
           editingId === agent.id ? (
             <AgentForm
@@ -83,34 +96,58 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
           ) : (
             <div
               key={agent.id}
-              className="bg-white dark:bg-gray-800 rounded-lg p-4 flex items-center gap-4 border border-gray-200 dark:border-gray-700"
+              style={{
+                background: "var(--bg-secondary)",
+                border: "1px solid var(--border-default)",
+                borderRadius: "8px",
+                padding: "14px 16px",
+                display: "flex",
+                alignItems: "center",
+                gap: "14px",
+                transition: "border-color 0.15s ease",
+              }}
             >
               <PixelAvatar role={agent.role} size={36} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{agent.name}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{agent.name}</span>
                   {getRoleLabel(agent.role) && (
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${getRoleColorClass(agent.role)}`}>
+                    <span style={{
+                      padding: "1px 6px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      color: "var(--accent-primary)",
+                      background: "var(--accent-subtle)",
+                    }}>
                       {getRoleLabel(agent.role)}
                     </span>
                   )}
-                  <span className={`w-2 h-2 rounded-full ${STATUS_DOTS[agent.status]}`} />
-                  <span className="text-xs text-gray-500">{agent.status}</span>
+                  <span style={{
+                    width: "7px",
+                    height: "7px",
+                    borderRadius: "50%",
+                    background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
+                    flexShrink: 0,
+                  }} />
+                  <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>{agent.status}</span>
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                  {agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} — {agent.stats_tasks_done} tasks done
+                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
+                  {agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} \u2014 {agent.stats_tasks_done} tasks done
                 </div>
               </div>
-              <div className="flex gap-1">
+              <div style={{ display: "flex", gap: "4px" }}>
                 <button
                   onClick={() => setEditingId(agent.id)}
-                  className="px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
+                  className="eb-btn"
+                  style={{ fontSize: "11px", padding: "4px 10px" }}
                 >
                   Edit
                 </button>
                 <button
                   onClick={() => handleDelete(agent.id)}
-                  className="px-2 py-1 text-xs text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 transition-colors"
+                  className="eb-btn eb-btn--danger"
+                  style={{ fontSize: "11px", padding: "4px 10px" }}
                 >
                   Delete
                 </button>
@@ -120,7 +157,12 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
         )}
 
         {agents.length === 0 && !showForm && (
-          <div className="text-center py-12 text-gray-500">
+          <div style={{
+            textAlign: "center",
+            padding: "48px",
+            color: "var(--text-tertiary)",
+            fontSize: "14px",
+          }}>
             No agents yet. Create one to get started.
           </div>
         )}

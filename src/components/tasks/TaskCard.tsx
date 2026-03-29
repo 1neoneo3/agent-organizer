@@ -5,19 +5,28 @@ import { sendTaskFeedback, sendInteractiveResponse } from "../../api/endpoints.j
 import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 
-const SIZE_TO_LV: Record<string, string> = {
-  small: "LV.1",
-  medium: "LV.2",
-  large: "LV.3",
+const SIZE_LABEL: Record<string, string> = {
+  small: "S",
+  medium: "M",
+  large: "L",
 };
 
 const STATUS_DISPLAY: Record<string, string> = {
-  inbox: "WAITING",
-  in_progress: "BATTLE",
-  self_review: "CHECK",
-  pr_review: "REVIEW",
-  done: "CLEAR",
-  cancelled: "FLED",
+  inbox: "Inbox",
+  in_progress: "In Progress",
+  self_review: "Review",
+  pr_review: "PR Review",
+  done: "Done",
+  cancelled: "Cancelled",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  inbox: "var(--status-inbox)",
+  in_progress: "var(--status-progress)",
+  self_review: "var(--status-review)",
+  pr_review: "var(--status-review)",
+  done: "var(--status-done)",
+  cancelled: "var(--status-cancelled)",
 };
 
 interface TaskCardProps {
@@ -108,129 +117,153 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
     }
   };
 
+  const statusColor = STATUS_COLORS[task.status] ?? "var(--status-inbox)";
+
   return (
     <div
-      className="eb-window"
-      style={{ cursor: "pointer", transition: "transform 0.1s" }}
+      style={{
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "8px",
+        cursor: "pointer",
+        transition: "border-color 0.15s ease, background 0.15s ease",
+      }}
       onClick={() => { play("select"); onSelect?.(task.id); }}
-      onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-1px)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "var(--text-tertiary)";
+        e.currentTarget.style.background = "var(--bg-hover)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--border-default)";
+        e.currentTarget.style.background = "var(--bg-secondary)";
+      }}
     >
       {/* Card header: title + status */}
-      <div style={{ padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "6px" }}>
+      <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--eb-text)", fontFamily: "system-ui, -apple-system, sans-serif" }}>
+          <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
             {task.task_number && (
-              <span className="eb-heading" style={{ color: "var(--eb-highlight)", marginRight: "4px", fontSize: "9px" }}>{task.task_number}</span>
+              <span style={{ color: "var(--text-secondary)", marginRight: "4px", fontSize: "11px", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{task.task_number}</span>
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
-            <span className="eb-label" style={{
-              padding: "2px 4px",
-              background: "#c08800",
+            <span style={{
+              padding: "2px 6px",
+              background: "#f59e0b",
               color: "#fff",
-              borderRadius: "2px",
-              fontSize: "7px",
-              animation: "eb-blink 0.8s steps(1) infinite",
+              borderRadius: "4px",
+              fontSize: "10px",
+              fontWeight: 600,
             }}>
-              INPUT
+              Input
             </span>
           )}
-          <span className="eb-label" style={{
-            padding: "2px 4px",
-            background: "var(--eb-border-out)",
-            color: "var(--eb-bg)",
-            borderRadius: "2px",
-            fontSize: "7px",
+          <span style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "2px 6px",
+            borderRadius: "4px",
+            fontSize: "10px",
+            fontWeight: 600,
+            color: statusColor,
+            background: "var(--bg-tertiary)",
           }}>
+            <span style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: statusColor,
+              flexShrink: 0,
+            }} />
             {STATUS_DISPLAY[task.status] ?? task.status}
           </span>
         </div>
       </div>
 
-      {/* Plan Approval — show directly on card */}
+      {/* Plan Approval */}
       {interactivePrompt?.promptType === "exit_plan_mode" && (
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
-            padding: "8px 10px",
-            background: "var(--eb-shadow)",
-            borderTop: "2px solid var(--eb-highlight)",
-            borderBottom: "2px solid var(--eb-highlight)",
+            padding: "8px 12px",
+            background: "var(--bg-tertiary)",
+            borderTop: "1px solid var(--border-default)",
+            borderBottom: "1px solid var(--border-default)",
           }}
         >
-          <div className="eb-label" style={{ fontSize: "8px", color: "var(--eb-highlight)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
-            <span style={{ animation: "eb-blink 0.6s steps(1) infinite" }}>!</span>
-            PLAN APPROVAL
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-progress)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+            Plan Approval
           </div>
           <div style={{ display: "flex", gap: "6px" }}>
             <button
               onClick={handleApprove}
               disabled={sendingPromptResponse}
               className="eb-btn eb-btn--primary"
-              style={{ flex: 1, fontSize: "8px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
+              style={{ flex: 1, fontSize: "11px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
             >
-              {sendingPromptResponse ? "..." : "APPROVE"}
+              {sendingPromptResponse ? "..." : "Approve"}
             </button>
             <button
               onClick={handleReject}
               disabled={sendingPromptResponse}
               className="eb-btn eb-btn--danger"
-              style={{ flex: 1, fontSize: "8px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
+              style={{ flex: 1, fontSize: "11px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
             >
-              {sendingPromptResponse ? "..." : "REJECT"}
+              {sendingPromptResponse ? "..." : "Reject"}
             </button>
           </div>
         </div>
       )}
 
-      {/* Agent Question / Text Input Request — prompt to open modal */}
+      {/* Agent Question / Text Input */}
       {(interactivePrompt?.promptType === "ask_user_question" || interactivePrompt?.promptType === "text_input_request") && (
         <div
           style={{
-            padding: "6px 10px",
-            background: "var(--eb-shadow)",
-            borderTop: "2px solid var(--eb-highlight)",
-            borderBottom: "2px solid var(--eb-highlight)",
+            padding: "6px 12px",
+            background: "var(--bg-tertiary)",
+            borderTop: "1px solid var(--border-default)",
+            borderBottom: "1px solid var(--border-default)",
             textAlign: "center",
           }}
         >
-          <div className="eb-label" style={{ fontSize: "8px", color: "var(--eb-highlight)", display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
-            <span style={{ animation: "eb-blink 0.6s steps(1) infinite" }}>?</span>
-            {interactivePrompt.promptType === "text_input_request" ? "INPUT REQUIRED" : "CLICK TO ANSWER"}
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-progress)", display: "flex", alignItems: "center", justifyContent: "center", gap: "4px" }}>
+            {interactivePrompt.promptType === "text_input_request" ? "Input Required" : "Click to Answer"}
           </div>
         </div>
       )}
 
       {/* Card body */}
-      <div className="eb-window-body" style={{ padding: "6px 10px" }}>
-        {/* RPG stats row */}
+      <div style={{ padding: "6px 12px 10px" }}>
+        {/* Metadata row */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-          <span className="eb-label" style={{
-            padding: "1px 4px",
-            background: "var(--eb-shadow)",
-            color: "var(--eb-highlight)",
-            borderRadius: "2px",
-            fontSize: "7px",
+          <span style={{
+            padding: "1px 6px",
+            background: "var(--bg-tertiary)",
+            color: "var(--text-secondary)",
+            borderRadius: "4px",
+            fontSize: "10px",
+            fontWeight: 600,
           }}>
-            {SIZE_TO_LV[task.task_size] ?? "LV.?"}
+            {SIZE_LABEL[task.task_size] ?? "?"}
           </span>
           {task.directive_id && (
-            <span className="eb-label" style={{
-              padding: "1px 4px",
-              background: "var(--eb-border-in)",
-              color: "var(--eb-bg)",
-              borderRadius: "2px",
-              fontSize: "7px",
+            <span style={{
+              padding: "1px 6px",
+              background: "var(--accent-subtle)",
+              color: "var(--accent-primary)",
+              borderRadius: "4px",
+              fontSize: "10px",
+              fontWeight: 600,
             }}>
-              DIRECTIVE
+              Directive
             </span>
           )}
           {task.depends_on && (() => { try { const deps = JSON.parse(task.depends_on); return deps.length > 0 ? (
-            <span className="eb-label" style={{ fontSize: "7px" }}>
+            <span style={{ fontSize: "10px", color: "var(--text-tertiary)" }}>
               &larr; {deps.join(", ")}
             </span>
           ) : null; } catch { return null; } })()}
@@ -238,18 +271,17 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
         {/* Assigned agent */}
         {agent && (
-          <div style={{ display: "flex", alignItems: "center", gap: "4px", marginTop: "4px" }}>
-            <span className={agent.status === "working" ? "eb-sprite-working" : "eb-sprite-idle"}>
-              <PixelAvatar role={agent.role} size={18} />
-            </span>
-            <span className="eb-label" style={{ fontSize: "8px", color: "var(--eb-text)" }}>{agent.name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "6px" }}>
+            <PixelAvatar role={agent.role} size={18} />
+            <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{agent.name}</span>
             {roleLabel && (
-              <span className="eb-label" style={{
-                padding: "1px 3px",
-                background: "var(--eb-border-in)",
-                color: "var(--eb-bg)",
-                borderRadius: "2px",
-                fontSize: "6px",
+              <span style={{
+                padding: "1px 4px",
+                background: "var(--bg-tertiary)",
+                color: "var(--text-tertiary)",
+                borderRadius: "3px",
+                fontSize: "10px",
+                fontWeight: 500,
               }}>
                 {roleLabel}
               </span>
@@ -257,33 +289,33 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           </div>
         )}
         {agent?.cli_model && (
-          <div className="eb-label" style={{ fontSize: "7px", marginTop: "2px", color: "var(--eb-text-sub)" }}>
+          <div style={{ fontSize: "10px", marginTop: "2px", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
             {agent.cli_model}
           </div>
         )}
 
         {/* Inbox actions */}
         {task.status === "inbox" && idleAgents.length === 0 && (
-          <div style={{ marginTop: "6px", display: "flex", gap: "4px" }}>
+          <div style={{ marginTop: "8px", display: "flex", gap: "4px" }}>
             <button
               onClick={(e) => { e.stopPropagation(); play("cancel"); onDelete?.(task.id); }}
               title="Delete task"
               className="eb-btn eb-btn--danger"
-              style={{ fontSize: "7px", padding: "3px 6px" }}
+              style={{ fontSize: "11px", padding: "3px 8px" }}
             >
-              DEL
+              Delete
             </button>
           </div>
         )}
 
         {task.status === "inbox" && idleAgents.length > 0 && (
-          <div style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
             <select
               value={selectedAgentId}
               onChange={(e) => { e.stopPropagation(); setSelectedAgentId(e.target.value); }}
               onClick={(e) => e.stopPropagation()}
               className="eb-select"
-              style={{ width: "100%", fontSize: "10px" }}
+              style={{ width: "100%", fontSize: "12px" }}
             >
               {idleAgents.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -296,17 +328,17 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
                 onClick={(e) => { e.stopPropagation(); play("confirm"); if (selectedAgentId) onRun?.(task.id, selectedAgentId); }}
                 disabled={!selectedAgentId}
                 className="eb-btn eb-btn--primary"
-                style={{ flex: 1, fontSize: "7px", padding: "4px 6px", opacity: selectedAgentId ? 1 : 0.5 }}
+                style={{ flex: 1, fontSize: "11px", padding: "4px 8px", opacity: selectedAgentId ? 1 : 0.5 }}
               >
-                RUN
+                Run
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); play("cancel"); onDelete?.(task.id); }}
                 title="Delete"
                 className="eb-btn eb-btn--danger"
-                style={{ fontSize: "7px", padding: "4px 6px" }}
+                style={{ fontSize: "11px", padding: "4px 8px" }}
               >
-                DEL
+                Delete
               </button>
             </div>
           </div>
@@ -314,47 +346,53 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
         {/* Non-inbox actions */}
         {task.status !== "inbox" && (
-          <div style={{ marginTop: "6px", display: "flex", gap: "4px" }}>
+          <div style={{ marginTop: "8px", display: "flex", gap: "4px" }}>
             {task.status === "in_progress" && (
               <button
                 onClick={(e) => { e.stopPropagation(); onStop?.(task.id); }}
                 className="eb-btn eb-btn--danger"
-                style={{ fontSize: "7px", padding: "3px 6px" }}
+                style={{ fontSize: "11px", padding: "3px 8px" }}
               >
-                STOP
+                Stop
               </button>
             )}
             {task.status === "pr_review" && (
               <button
                 onClick={(e) => { e.stopPropagation(); play("confirm"); onDone?.(task.id); }}
                 className="eb-btn eb-btn--primary"
-                style={{ fontSize: "7px", padding: "3px 6px" }}
+                style={{ fontSize: "11px", padding: "3px 8px" }}
               >
-                DONE
+                Done
               </button>
             )}
             <button
               onClick={(e) => { e.stopPropagation(); play("select"); onShowLog?.(task.id); }}
               className="eb-btn"
-              style={{ fontSize: "7px", padding: "3px 6px" }}
+              style={{ fontSize: "11px", padding: "3px 8px" }}
             >
-              LOG
+              Log
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); play("select"); setShowMessageForm((v) => !v); }}
               title="Send message"
               className="eb-btn"
-              style={{ fontSize: "7px", padding: "3px 6px", background: showMessageForm ? "var(--eb-highlight)" : undefined, color: showMessageForm ? "var(--eb-shadow)" : undefined }}
+              style={{
+                fontSize: "11px",
+                padding: "3px 8px",
+                background: showMessageForm ? "var(--accent-primary)" : undefined,
+                color: showMessageForm ? "#fff" : undefined,
+                borderColor: showMessageForm ? "var(--accent-primary)" : undefined,
+              }}
             >
-              MSG
+              Msg
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); play("cancel"); onDelete?.(task.id); }}
               title="Delete"
               className="eb-btn eb-btn--danger"
-              style={{ fontSize: "7px", padding: "3px 6px" }}
+              style={{ fontSize: "11px", padding: "3px 8px" }}
             >
-              DEL
+              Del
             </button>
           </div>
         )}
@@ -377,15 +415,15 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
               placeholder={task.status === "in_progress" ? "Feedback..." : "Message..."}
               disabled={sending}
               className="eb-input"
-              style={{ flex: 1, minWidth: 0, fontSize: "10px" }}
+              style={{ flex: 1, minWidth: 0, fontSize: "12px" }}
             />
             <button
               onClick={handleSendMessage}
               disabled={!messageText.trim() || sending}
               className="eb-btn eb-btn--primary"
-              style={{ fontSize: "7px", padding: "3px 6px", opacity: (!messageText.trim() || sending) ? 0.5 : 1 }}
+              style={{ fontSize: "11px", padding: "3px 8px", opacity: (!messageText.trim() || sending) ? 0.5 : 1 }}
             >
-              {sending ? "..." : sent ? "OK!" : "SEND"}
+              {sending ? "..." : sent ? "OK!" : "Send"}
             </button>
           </div>
         )}

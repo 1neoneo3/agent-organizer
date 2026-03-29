@@ -69,55 +69,75 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
     });
   };
 
+  const inputStyle = {
+    width: "100%",
+    background: "var(--bg-tertiary)",
+    border: "1px solid var(--border-default)",
+    borderRadius: "6px",
+    padding: "8px 12px",
+    fontSize: "13px",
+    color: "var(--text-primary)",
+    resize: "none" as const,
+    outline: "none",
+  };
+
   if (prompt.promptType === "exit_plan_mode") {
     return (
-      <div className="border-2 border-amber-400 dark:border-amber-500 rounded-lg p-4 bg-amber-50 dark:bg-amber-950/30">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-          <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300">
+      <div style={{
+        border: "1px solid var(--status-progress)",
+        borderRadius: "8px",
+        padding: "16px",
+        background: "var(--bg-tertiary)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--status-progress)" }} />
+          <h3 style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
             Plan Approval Required
           </h3>
         </div>
-        <p className="text-sm text-gray-700 dark:text-gray-300 mb-4">
+        <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "16px" }}>
           The agent has created a plan and is waiting for your approval before proceeding with implementation.
         </p>
 
         {!showRejectForm ? (
-          <div className="flex gap-2">
+          <div style={{ display: "flex", gap: "8px" }}>
             <button
               onClick={handleApprove}
               disabled={sending}
-              className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded transition-colors disabled:opacity-50"
+              className="eb-btn eb-btn--primary"
+              style={{ opacity: sending ? 0.5 : 1 }}
             >
               {sending ? "..." : "Approve"}
             </button>
             <button
               onClick={() => setShowRejectForm(true)}
               disabled={sending}
-              className="px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded transition-colors disabled:opacity-50"
+              className="eb-btn eb-btn--danger"
+              style={{ opacity: sending ? 0.5 : 1 }}
             >
               Reject
             </button>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             <textarea
               value={rejectFeedback}
               onChange={(e) => setRejectFeedback(e.target.value)}
               placeholder="Optional: provide feedback on what to change..."
-              className="w-full bg-white dark:bg-gray-800 rounded px-3 py-2 text-sm h-20 resize-none border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500"
+              style={{ ...inputStyle, height: "80px" }}
             />
-            <div className="flex gap-2">
+            <div style={{ display: "flex", gap: "8px" }}>
               <button
                 onClick={handleReject}
                 disabled={sending}
-                className="px-4 py-2 text-sm font-medium bg-red-600 hover:bg-red-500 text-white rounded transition-colors disabled:opacity-50"
+                className="eb-btn eb-btn--danger"
+                style={{ opacity: sending ? 0.5 : 1 }}
               >
                 {sending ? "..." : "Reject with Feedback"}
               </button>
               <button
                 onClick={() => setShowRejectForm(false)}
-                className="px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+                className="eb-btn"
               >
                 Cancel
               </button>
@@ -128,19 +148,24 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
     );
   }
 
-  // text_input_request — simple text response panel
+  // text_input_request
   if (prompt.promptType === "text_input_request") {
     const detectedText = prompt.detectedText || prompt.questions?.[0]?.question || "";
     return (
-      <div className="border-2 border-emerald-400 dark:border-emerald-500 rounded-lg p-4 bg-emerald-50 dark:bg-emerald-950/30">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <h3 className="text-sm font-bold text-emerald-800 dark:text-emerald-300">
+      <div style={{
+        border: "1px solid var(--status-done)",
+        borderRadius: "8px",
+        padding: "16px",
+        background: "var(--bg-tertiary)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--status-done)" }} />
+          <h3 style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
             Input Required
           </h3>
         </div>
         {detectedText && (
-          <p className="text-sm text-gray-700 dark:text-gray-300 mb-3 whitespace-pre-wrap">
+          <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "12px", whiteSpace: "pre-wrap" }}>
             {detectedText}
           </p>
         )}
@@ -148,17 +173,16 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
           value={freeText}
           onChange={(e) => setFreeText(e.target.value)}
           placeholder="Type your response..."
-          className="w-full bg-white dark:bg-gray-800 rounded px-3 py-2 text-sm h-20 resize-none border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          style={{ ...inputStyle, height: "80px", marginBottom: "8px" }}
         />
-        <div className="mt-2">
-          <button
-            onClick={handleSubmitAnswer}
-            disabled={sending || !freeText.trim()}
-            className="px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-50"
-          >
-            {sending ? "..." : "Send Response"}
-          </button>
-        </div>
+        <button
+          onClick={handleSubmitAnswer}
+          disabled={sending || !freeText.trim()}
+          className="eb-btn eb-btn--primary"
+          style={{ opacity: (sending || !freeText.trim()) ? 0.5 : 1 }}
+        >
+          {sending ? "..." : "Send Response"}
+        </button>
       </div>
     );
   }
@@ -169,25 +193,41 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
   const hasAnswer = Object.keys(selectedOptions).length > 0 || freeText.trim().length > 0;
 
   return (
-    <div className="border-2 border-blue-400 dark:border-blue-500 rounded-lg p-4 bg-blue-50 dark:bg-blue-950/30">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="inline-block w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-        <h3 className="text-sm font-bold text-blue-800 dark:text-blue-300">
+    <div style={{
+      border: "1px solid var(--accent-primary)",
+      borderRadius: "8px",
+      padding: "16px",
+      background: "var(--bg-tertiary)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent-primary)" }} />
+        <h3 style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>
           Agent Question
         </h3>
       </div>
 
-      <div className="space-y-4">
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
         {questions.map((q, qi) => (
           <div key={qi}>
             {q.header && (
-              <span className="inline-block text-[10px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/50 px-1.5 py-0.5 rounded mb-1">
+              <span style={{
+                display: "inline-block",
+                fontSize: "10px",
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                color: "var(--accent-primary)",
+                background: "var(--accent-subtle)",
+                padding: "2px 6px",
+                borderRadius: "3px",
+                marginBottom: "4px",
+              }}>
                 {q.header}
               </span>
             )}
-            <p className="text-sm text-gray-800 dark:text-gray-200 mb-2">{q.question}</p>
+            <p style={{ fontSize: "13px", color: "var(--text-primary)", marginBottom: "8px" }}>{q.question}</p>
             {q.options && q.options.length > 0 && (
-              <div className="flex flex-col gap-1.5">
+              <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                 {q.options.map((opt, oi) => {
                   const selected = q.multiSelect
                     ? (Array.isArray(selectedOptions[q.question]) && (selectedOptions[q.question] as string[]).includes(opt.label))
@@ -196,15 +236,21 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
                     <button
                       key={oi}
                       onClick={() => toggleOption(q.question, opt.label, !!q.multiSelect)}
-                      className={`text-left px-3 py-2 rounded border text-sm transition-colors ${
-                        selected
-                          ? "border-blue-500 bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200"
-                          : "border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-blue-300 dark:hover:border-blue-600"
-                      }`}
+                      style={{
+                        textAlign: "left",
+                        padding: "8px 12px",
+                        borderRadius: "6px",
+                        border: `1px solid ${selected ? "var(--accent-primary)" : "var(--border-default)"}`,
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        transition: "border-color 0.15s, background 0.15s",
+                        background: selected ? "var(--accent-subtle)" : "var(--bg-secondary)",
+                        color: selected ? "var(--text-primary)" : "var(--text-secondary)",
+                      }}
                     >
-                      <div className="font-medium">{opt.label}</div>
+                      <div style={{ fontWeight: 500 }}>{opt.label}</div>
                       {opt.description && (
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{opt.description}</div>
+                        <div style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "2px" }}>{opt.description}</div>
                       )}
                     </button>
                   );
@@ -215,20 +261,21 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
         ))}
       </div>
 
-      <div className="mt-3">
+      <div style={{ marginTop: "12px" }}>
         <textarea
           value={freeText}
           onChange={(e) => setFreeText(e.target.value)}
           placeholder={hasOptions ? "Or type a custom answer..." : "Type your answer..."}
-          className="w-full bg-white dark:bg-gray-800 rounded px-3 py-2 text-sm h-16 resize-none border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style={{ ...inputStyle, height: "64px" }}
         />
       </div>
 
-      <div className="mt-2">
+      <div style={{ marginTop: "8px" }}>
         <button
           onClick={handleSubmitAnswer}
           disabled={sending || !hasAnswer}
-          className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors disabled:opacity-50"
+          className="eb-btn eb-btn--primary"
+          style={{ opacity: (sending || !hasAnswer) ? 0.5 : 1 }}
         >
           {sending ? "..." : "Submit Answer"}
         </button>
