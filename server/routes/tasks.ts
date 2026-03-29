@@ -134,10 +134,23 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const parsed = CreateTaskSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+    const { title, description, assigned_agent_id, project_path, priority, task_size } = parsed.data;
+
+    // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
+    const duplicate = db.prepare(
+      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'in_progress', 'self_review', 'qa_testing', 'pr_review') LIMIT 1"
+    ).get(title) as { id: string; task_number: string; status: string } | undefined;
+    if (duplicate) {
+      return res.status(409).json({
+        error: "duplicate_task",
+        message: `Active task with same title already exists: ${duplicate.task_number} (${duplicate.status})`,
+        existing_task_id: duplicate.id,
+      });
+    }
+
     const id = randomUUID();
     const now = Date.now();
     const taskNumber = nextTaskNumber(db);
-    const { title, description, assigned_agent_id, project_path, priority, task_size } = parsed.data;
 
     db.prepare(
       `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, created_at, updated_at)

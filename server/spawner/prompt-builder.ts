@@ -238,6 +238,10 @@ export function buildTaskPrompt(
   parts.push("After outputting the contract, proceed with implementation.");
   parts.push("Before finishing, self-check each acceptance criterion.");
   parts.push("");
+  parts.push("## Prohibited Actions");
+  parts.push("- Do NOT create new tasks in Agent Organizer (no ao-cli.sh, no POST /api/tasks)");
+  parts.push("- Do NOT call AO API endpoints — your only job is to implement the current task");
+  parts.push("");
 
   appendWorkflowContext(parts, opts?.workflow, opts?.runtimePolicy);
 
