@@ -236,7 +236,20 @@ export function buildTaskPrompt(
   parts.push("");
   parts.push("This contract will be used by the QA agent to verify your work.");
   parts.push("After outputting the contract, proceed with implementation.");
-  parts.push("Before finishing, self-check each acceptance criterion.");
+  parts.push("");
+  parts.push("## Mandatory Pre-Completion Checklist (MUST DO before finishing)");
+  parts.push("");
+  parts.push("Before you declare your work done, you MUST run ALL of the following and fix any issues:");
+  parts.push("");
+  parts.push("1. **Lint**: Run `npm run lint` (or the project's lint command). Fix ALL errors and warnings. Zero tolerance.");
+  parts.push("2. **Build**: Run `npm run build` (or the project's build command). It MUST succeed with zero errors.");
+  parts.push("3. **Type check**: Run `npx tsc --noEmit` if TypeScript. Fix all type errors.");
+  parts.push("4. **Run the code**: Actually execute the code/app and verify it works. Do not assume — verify.");
+  parts.push("5. **Console errors**: If it's a web app, check for browser console errors (hydration, runtime, etc.).");
+  parts.push("6. **Framework compatibility**: Verify your code is compatible with the ACTUAL version installed (check package.json). Do not use deprecated or removed APIs.");
+  parts.push("");
+  parts.push("If ANY of these checks fail, fix the issue BEFORE completing. Do NOT leave known issues for later.");
+  parts.push("A task that introduces lint errors, build failures, or runtime errors is NOT done — it is broken.");
   parts.push("");
   parts.push("## Prohibited Actions");
   parts.push("- Do NOT create new tasks in Agent Organizer (no ao-cli.sh, no POST /api/tasks)");
@@ -346,6 +359,18 @@ export function buildReviewPrompt(task: Task): string {
   parts.push("2. If the code is runnable, actually run it and any existing tests to verify correctness");
   parts.push("");
 
+  parts.push("## Mandatory Build/Lint Gate (check FIRST)");
+  parts.push("");
+  parts.push("Before scoring, verify these pass. ANY failure = automatic [REVIEW:NEEDS_CHANGES]:");
+  parts.push("1. `npm run lint` — zero errors and zero warnings");
+  parts.push("2. `npm run build` — success with zero errors");
+  parts.push("3. `npx tsc --noEmit` if TypeScript — zero type errors");
+  parts.push("4. Run the app and check for runtime/console errors");
+  parts.push("");
+  parts.push("If any gate fails, output [REVIEW:NEEDS_CHANGES:<which gate failed>] immediately.");
+  parts.push("Do NOT give passing scores to code that doesn't build or lint.");
+  parts.push("");
+
   parts.push("## Review Checklist");
   parts.push("");
   parts.push("Grade each aspect (1-5):");
@@ -441,7 +466,18 @@ export function buildQaPrompt(task: Task): string {
   parts.push("- [ ] No hardcoded test data or placeholder implementations");
   parts.push("");
 
-  parts.push("### Step 2: Active Verification");
+  parts.push("### Step 2: Mandatory Build/Lint Gate (ALWAYS check these FIRST)");
+  parts.push("Before checking acceptance criteria, run these and report results:");
+  parts.push("1. `npm run lint` (or project lint command) — ANY error = automatic [QA:FAIL]");
+  parts.push("2. `npm run build` (or project build command) — ANY error = automatic [QA:FAIL]");
+  parts.push("3. `npx tsc --noEmit` if TypeScript — ANY type error = automatic [QA:FAIL]");
+  parts.push("4. Run the app/code and check for runtime errors — ANY crash/exception = automatic [QA:FAIL]");
+  parts.push("5. If web app: check for console errors (hydration, deprecation warnings, etc.) — report all");
+  parts.push("");
+  parts.push("If ANY of the above fails, immediately output [QA:FAIL:<reason>] without further testing.");
+  parts.push("Do NOT proceed to acceptance criteria if the build is broken.");
+  parts.push("");
+  parts.push("### Step 3: Active Verification of Acceptance Criteria");
   parts.push("For EACH criterion:");
   parts.push("1. **Execute** the relevant command (run the code, check file existence, verify output)");
   parts.push("2. **Record** the actual result");
@@ -450,7 +486,7 @@ export function buildQaPrompt(task: Task): string {
   parts.push("IMPORTANT: You MUST actually run the code. Do not just read it and assume it works.");
   parts.push("");
 
-  parts.push("### Step 3: Report");
+  parts.push("### Step 4: Report");
   parts.push("Summarize results in this format:");
   parts.push("");
   parts.push("```");
@@ -462,7 +498,7 @@ export function buildQaPrompt(task: Task): string {
   parts.push("```");
   parts.push("");
 
-  parts.push("### Step 4: Verdict");
+  parts.push("### Step 5: Verdict");
   parts.push("- If ALL criteria pass: output `[QA:PASS]`");
   parts.push("- If ANY criterion fails: output `[QA:FAIL:<brief summary of failures>]`");
   parts.push("");
