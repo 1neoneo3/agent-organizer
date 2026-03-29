@@ -676,7 +676,14 @@ export function determineCompletionStatus(
 
     const needsChanges = logs.some((l) => l.message.includes("[REVIEW:NEEDS_CHANGES]"));
     if (needsChanges) return "inbox"; // Send back for rework
-    return "done"; // Review passed (or no explicit marker = pass)
+
+    const passed = logs.some((l) => l.message.includes("[REVIEW:PASS]"));
+    const autoDone = getSetting(db, "auto_done") ?? "true";
+    if (autoDone !== "true") {
+      // When auto_done is disabled, only move to done if explicit PASS marker found
+      return passed ? "done" : "pr_review";
+    }
+    return "done"; // Review passed (or no explicit marker = pass when auto_done is enabled)
   }
 
   if (!selfReview) {
