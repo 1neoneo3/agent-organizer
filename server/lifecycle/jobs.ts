@@ -36,10 +36,10 @@ export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, cache?: CacheSe
 
         const now = Date.now();
         db.prepare(
-          "UPDATE tasks SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE id = ?"
-        ).run(now, now, task.id);
+          "UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?"
+        ).run(now, task.id);
         db.prepare(
-          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'Task cancelled by orphan recovery (no active process)')"
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'Task returned to inbox by orphan recovery (no active process). Will be re-dispatched automatically.')"
         ).run(task.id);
 
         if (task.assigned_agent_id) {
@@ -53,7 +53,7 @@ export function startOrphanRecovery(db: DatabaseSync, ws: WsHub, cache?: CacheSe
           cache.invalidatePattern("tasks:*");
           cache.del("agents:all");
         }
-        ws.broadcast("task_update", { id: task.id, status: "cancelled" });
+        ws.broadcast("task_update", { id: task.id, status: "inbox" });
       }
     }
   }, intervalMs);
