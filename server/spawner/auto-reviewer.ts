@@ -31,13 +31,13 @@ export async function triggerAutoReview(
     return;
   }
 
-  // Loop prevention: auto-approve if review_count reaches the configured max
+  // Loop prevention: stop auto-review if review_count reaches the configured max
   const maxReviewCount = Number(getSetting(db, "review_count") ?? "3");
   if (currentTask.review_count >= maxReviewCount) {
     const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(now, now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto-approved: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Moving to done.`);
-    ws.broadcast("task_status", { id: currentTask.id, status: "done" });
+    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, currentTask.id);
+    logSystem(db, currentTask.id, `Auto review stopped: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Returning to inbox for manual review — acceptance criteria not met after ${maxReviewCount} attempts.`);
+    ws.broadcast("task_status", { id: currentTask.id, status: "inbox" });
     return;
   }
 

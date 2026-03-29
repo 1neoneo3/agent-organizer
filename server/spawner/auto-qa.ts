@@ -36,14 +36,9 @@ export async function triggerAutoQa(
   const maxQaCount = Number(getSetting(db, "qa_count") ?? "2");
   if (qaCount >= maxQaCount) {
     const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'pr_review', updated_at = ? WHERE id = ?").run(now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto QA skipped: qa iterations (${qaCount}) reached max (${maxQaCount}). Advancing to pr_review.`);
-    ws.broadcast("task_update", { id: currentTask.id, status: "pr_review" });
-
-    // Trigger auto-review since we moved to pr_review
-    const { triggerAutoReview } = await import("./auto-reviewer.js");
-    const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(currentTask.id) as unknown as Task;
-    setTimeout(() => triggerAutoReview(db, ws, freshTask, cache), 500);
+    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, currentTask.id);
+    logSystem(db, currentTask.id, `Auto QA stopped: qa iterations (${qaCount}) reached max (${maxQaCount}). Returning to inbox for manual review — acceptance criteria not met after ${maxQaCount} attempts.`);
+    ws.broadcast("task_update", { id: currentTask.id, status: "inbox" });
     return;
   }
 
