@@ -2,6 +2,8 @@
 git_workflow: default
 workspace_mode: git-worktree
 branch_prefix: issue
+codex_sandbox_mode: danger-full-access
+codex_approval_policy: never
 before_run: ["pnpm install"]
 after_run: ["git status --short"]
 include_task: true

@@ -72,12 +72,7 @@ export function buildAgentArgs(
       ) {
         args.push("--full-auto");
       } else {
-        args.push(
-          "--sandbox",
-          codexSandboxMode,
-          "--ask-for-approval",
-          codexApprovalPolicy,
-        );
+        args.push("--sandbox", codexSandboxMode);
       }
       return args;
     }

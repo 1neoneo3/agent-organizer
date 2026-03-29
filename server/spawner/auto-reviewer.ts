@@ -31,9 +31,13 @@ export async function triggerAutoReview(
     return;
   }
 
-  // Loop prevention: skip if already reviewed
-  if (currentTask.review_count > 0) {
-    logSystem(db, currentTask.id, "Auto review skipped: already reviewed (review_count > 0)");
+  // Loop prevention: auto-approve if review_count reaches the configured max
+  const maxReviewCount = Number(getSetting(db, "review_count") ?? "3");
+  if (currentTask.review_count >= maxReviewCount) {
+    const now = Date.now();
+    db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?").run(now, now, currentTask.id);
+    logSystem(db, currentTask.id, `Auto-approved: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Moving to done.`);
+    ws.broadcast("task_status", { id: currentTask.id, status: "done" });
     return;
   }
 
