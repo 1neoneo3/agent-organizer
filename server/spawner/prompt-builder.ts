@@ -216,6 +216,29 @@ export function buildTaskPrompt(
     parts.push("");
   }
 
+  parts.push("## Sprint Contract (Required Before Implementation)");
+  parts.push("");
+  parts.push("Before writing ANY code, output a sprint contract in this format:");
+  parts.push("");
+  parts.push("---SPRINT CONTRACT---");
+  parts.push("**Deliverables:**");
+  parts.push("1. [specific file/feature]");
+  parts.push("2. [specific file/feature]");
+  parts.push("");
+  parts.push("**Acceptance Criteria:**");
+  parts.push("- [ ] [testable criterion 1]");
+  parts.push("- [ ] [testable criterion 2]");
+  parts.push("- [ ] [testable criterion 3]");
+  parts.push("");
+  parts.push("**Out of Scope:**");
+  parts.push("- [what you will NOT do]");
+  parts.push("---END CONTRACT---");
+  parts.push("");
+  parts.push("This contract will be used by the QA agent to verify your work.");
+  parts.push("After outputting the contract, proceed with implementation.");
+  parts.push("Before finishing, self-check each acceptance criterion.");
+  parts.push("");
+
   appendWorkflowContext(parts, opts?.workflow, opts?.runtimePolicy);
 
   // Self-review instruction
@@ -308,21 +331,152 @@ export function buildReviewPrompt(task: Task): string {
     parts.push("");
   }
 
+  parts.push("## Sprint Contract Reference");
+  parts.push("Check the task logs for a ---SPRINT CONTRACT--- from the implementation phase.");
+  parts.push("Verify the implementation satisfies the stated deliverables and acceptance criteria.");
+  parts.push("");
+
   parts.push("## Review Instructions");
   parts.push("");
   parts.push("1. Run `git diff HEAD~1` and `git log --oneline -5` to understand recent changes");
-  parts.push("2. Review the changes for:");
-  parts.push("   - **Correctness**: Does the implementation match the task requirements?");
-  parts.push("   - **Code Quality**: Clean code, proper naming, no duplication");
-  parts.push("   - **Security**: No hardcoded secrets, injection vulnerabilities, or unsafe patterns");
-  parts.push("   - **Tests**: Are there adequate tests? Do they pass?");
-  parts.push("   - **Edge Cases**: Are boundary conditions handled?");
+  parts.push("2. If the code is runnable, actually run it and any existing tests to verify correctness");
   parts.push("");
-  parts.push("3. Write a brief review summary (in Japanese)");
+
+  parts.push("## Review Checklist");
   parts.push("");
-  parts.push("4. Output your verdict as the **final line** of your response:");
-  parts.push("   - `[REVIEW:PASS]` — if the implementation is acceptable");
-  parts.push("   - `[REVIEW:NEEDS_CHANGES]` — if changes are required (explain what)");
+  parts.push("Grade each aspect (1-5):");
+  parts.push("1. **Correctness** - Does the code do what the task asks?");
+  parts.push("2. **Code Quality** - Is it clean, readable, well-structured? Proper naming, no duplication");
+  parts.push("3. **Error Handling** - Are edge cases and boundary conditions handled?");
+  parts.push("4. **Completeness** - Are all requirements from the task description met?");
+  parts.push("5. **Security** - No hardcoded secrets, injection vulnerabilities, or unsafe patterns?");
+  parts.push("");
+  parts.push("## Report Format");
+  parts.push("");
+  parts.push("For each aspect, provide:");
+  parts.push("```");
+  parts.push("REVIEW RESULTS:");
+  parts.push("Correctness:    [X/5] - Evidence: <what you verified>");
+  parts.push("Code Quality:   [X/5] - Evidence: <specific observations>");
+  parts.push("Error Handling: [X/5] - Evidence: <what you checked>");
+  parts.push("Completeness:   [X/5] - Evidence: <requirements coverage>");
+  parts.push("Security:       [X/5] - Evidence: <what you checked>");
+  parts.push("```");
+  parts.push("");
+  parts.push("## Scoring Threshold");
+  parts.push("");
+  parts.push("- 4-5 on all aspects → `[REVIEW:PASS]`");
+  parts.push("- Any aspect scored 1-2 → `[REVIEW:NEEDS_CHANGES:<aspects to fix>]`");
+  parts.push("- Mixed 3s → Use judgment, lean toward PASS if functionally complete");
+  parts.push("");
+  parts.push("## Example Review (for calibration)");
+  parts.push("");
+  parts.push('Task: "Add user authentication middleware"');
+  parts.push("");
+  parts.push("REVIEW RESULTS:");
+  parts.push("Correctness:    [5/5] - Evidence: middleware correctly validates JWT tokens, tested with valid/invalid/expired tokens");
+  parts.push("Code Quality:   [4/5] - Evidence: clean separation of concerns, good naming, minor: one function could be extracted");
+  parts.push("Error Handling: [4/5] - Evidence: handles missing token, expired token, malformed token; returns appropriate HTTP status codes");
+  parts.push("Completeness:   [5/5] - Evidence: all 3 requirements met (JWT validation, role-based access, token refresh)");
+  parts.push("Security:       [3/5] - Evidence: tokens validated correctly, but secret is loaded from env (good), rate limiting not implemented");
+  parts.push("");
+  parts.push("[REVIEW:PASS]");
+  parts.push("");
+  parts.push("## Verdict");
+  parts.push("");
+  parts.push("Write a brief review summary (in Japanese), then output your verdict as the **final line**:");
+  parts.push("- `[REVIEW:PASS]` — if the implementation is acceptable");
+  parts.push("- `[REVIEW:NEEDS_CHANGES:<aspects to fix>]` — if changes are required");
+  parts.push("");
+
+  return parts.join("\n");
+}
+
+/**
+ * Build a prompt for an automated QA testing run.
+ * The QA agent verifies the implementation and outputs a verdict marker.
+ */
+export function buildQaPrompt(task: Task): string {
+  const parts: string[] = [];
+
+  parts.push("## Language");
+  parts.push(
+    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
+  );
+  parts.push("");
+
+  // Inject CLAUDE.md + rules
+  appendSharedContext(parts, task.project_path);
+
+  parts.push("# QA Testing Task");
+  parts.push("");
+  parts.push(`You are a QA engineer testing the implementation of a task.`);
+  parts.push("");
+  parts.push("## Task Under Test");
+  parts.push(`**Title**: ${task.title}`);
+  parts.push(`**Description**: ${task.description ?? "No description"}`);
+  parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
+  parts.push("");
+
+  parts.push("## Sprint Contract");
+  parts.push("Check the task logs for a ---SPRINT CONTRACT--- block from the implementation phase.");
+  parts.push("If found, use those acceptance criteria as your primary checklist.");
+  parts.push("If not found, derive your own criteria from the task description.");
+  parts.push("");
+
+  parts.push("## Your Process");
+  parts.push("");
+  parts.push("### Step 1: Extract Acceptance Criteria");
+  parts.push("From the task description (or the Sprint Contract if available), derive 3-7 concrete, testable acceptance criteria. Each criterion should be binary (pass/fail).");
+  parts.push("");
+  parts.push("Example criteria format:");
+  parts.push("- [ ] File exists at the specified path");
+  parts.push("- [ ] Code runs without errors (exit code 0)");
+  parts.push("- [ ] Output matches expected format");
+  parts.push("- [ ] All required features are implemented (list each)");
+  parts.push("- [ ] No hardcoded test data or placeholder implementations");
+  parts.push("");
+
+  parts.push("### Step 2: Active Verification");
+  parts.push("For EACH criterion:");
+  parts.push("1. **Execute** the relevant command (run the code, check file existence, verify output)");
+  parts.push("2. **Record** the actual result");
+  parts.push("3. **Grade** as PASS or FAIL with evidence");
+  parts.push("");
+  parts.push("IMPORTANT: You MUST actually run the code. Do not just read it and assume it works.");
+  parts.push("");
+
+  parts.push("### Step 3: Report");
+  parts.push("Summarize results in this format:");
+  parts.push("");
+  parts.push("```");
+  parts.push("CRITERIA RESULTS:");
+  parts.push("[PASS] Criterion 1 - Evidence: <what you observed>");
+  parts.push("[FAIL] Criterion 2 - Evidence: <what went wrong>");
+  parts.push("...");
+  parts.push("OVERALL: X/Y criteria passed");
+  parts.push("```");
+  parts.push("");
+
+  parts.push("### Step 4: Verdict");
+  parts.push("- If ALL criteria pass: output `[QA:PASS]`");
+  parts.push("- If ANY criterion fails: output `[QA:FAIL:<brief summary of failures>]`");
+  parts.push("");
+
+  parts.push("## Example QA Report (for calibration)");
+  parts.push("");
+  parts.push('Task: "Create a Python sorting algorithm comparison script"');
+  parts.push("");
+  parts.push("CRITERIA RESULTS:");
+  parts.push("[PASS] File exists at /home/mk/python_samples/sort_compare.py - Evidence: ls confirms file, 85 lines");
+  parts.push("[PASS] Code runs without errors - Evidence: python3 sort_compare.py exits with code 0");
+  parts.push("[PASS] Implements bubble sort - Evidence: function bubble_sort() found at line 5");
+  parts.push("[PASS] Implements quick sort - Evidence: function quick_sort() found at line 18");
+  parts.push("[FAIL] Includes timing comparison - Evidence: no timing/benchmark code found, only sort implementations");
+  parts.push("[PASS] Results are printed - Evidence: stdout shows sorted arrays for both algorithms");
+  parts.push("OVERALL: 5/6 criteria passed");
+  parts.push("");
+  parts.push("[QA:FAIL:Missing timing/benchmark comparison between algorithms]");
   parts.push("");
 
   return parts.join("\n");
