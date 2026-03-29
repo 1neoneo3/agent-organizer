@@ -22,6 +22,7 @@ const STATUS_STYLES: Record<string, { label: string; color: string }> = {
 const TASK_STATUS_COLORS: Record<string, { color: string; bg: string }> = {
   inbox: { color: "var(--status-inbox)", bg: "var(--bg-tertiary)" },
   in_progress: { color: "var(--status-progress)", bg: "var(--bg-tertiary)" },
+  qa_testing: { color: "var(--status-qa)", bg: "var(--bg-tertiary)" },
   done: { color: "var(--status-done)", bg: "var(--bg-tertiary)" },
   cancelled: { color: "var(--status-cancelled)", bg: "var(--bg-tertiary)" },
 };

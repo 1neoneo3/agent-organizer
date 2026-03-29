@@ -31,7 +31,7 @@ export interface Task {
   description: string | null;
   assigned_agent_id: string | null;
   project_path: string | null;
-  status: "inbox" | "in_progress" | "self_review" | "pr_review" | "done" | "cancelled";
+  status: "inbox" | "in_progress" | "self_review" | "qa_testing" | "pr_review" | "done" | "cancelled";
   priority: number;
   task_size: "small" | "medium" | "large";
   task_number: string | null;

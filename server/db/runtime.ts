@@ -26,6 +26,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddPrUrl(db);
   migrateAddExternalTaskRef(db);
   migrateAddReviewArtifactFields(db);
+  migrateAddQaTestingStatus(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -102,6 +103,11 @@ function migrateAddReviewArtifactFields(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === "review_sync_error")) {
     db.exec("ALTER TABLE tasks ADD COLUMN review_sync_error TEXT");
   }
+}
+
+function migrateAddQaTestingStatus(_db: DatabaseSync): void {
+  // Migration already applied — CHECK constraint includes qa_testing.
+  // No-op to avoid repeated table rebuild attempts.
 }
 
 function backfillTaskNumbers(db: DatabaseSync): void {

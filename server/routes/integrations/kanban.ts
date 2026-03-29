@@ -40,6 +40,7 @@ function mapStatusToKanbanAction(status: string): string | null {
       return "add";
     case "in_progress":
       return "doing";
+    case "qa_testing":
     case "pr_review":
     case "self_review":
       return "review";

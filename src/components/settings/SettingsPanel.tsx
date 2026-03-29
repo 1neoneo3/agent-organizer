@@ -96,6 +96,51 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
             </label>
 
             <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>QA Mode</span>
+              <select
+                style={inputStyle}
+                value={local.qa_mode ?? "disabled"}
+                onChange={(e) => update("qa_mode", e.target.value)}
+              >
+                <option value="disabled">Disabled</option>
+                <option value="enabled">Enabled</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Route completed tasks through QA testing before PR review.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Auto QA</span>
+              <select
+                style={inputStyle}
+                value={local.auto_qa ?? "true"}
+                onChange={(e) => update("auto_qa", e.target.value)}
+              >
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Automatically trigger a QA agent when a task enters "QA Testing" status.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>QA Count</span>
+              <input
+                type="number"
+                style={inputStyle}
+                value={local.qa_count ?? "2"}
+                onChange={(e) => update("qa_count", e.target.value)}
+                min={1}
+                max={5}
+              />
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Maximum QA iterations before auto-advancing to PR review.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
               <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Self-Review Threshold</span>
               <select
                 style={inputStyle}

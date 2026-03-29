@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
+import { triggerAutoQa } from "../spawner/auto-qa.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/runtime.js";
@@ -25,7 +26,7 @@ const UpdateTaskSchema = z.object({
   description: z.string().nullish(),
   assigned_agent_id: z.string().nullish(),
   project_path: z.string().nullish(),
-  status: z.enum(["inbox", "in_progress", "self_review", "pr_review", "done", "cancelled"]).optional(),
+  status: z.enum(["inbox", "in_progress", "self_review", "qa_testing", "pr_review", "done", "cancelled"]).optional(),
   priority: z.number().int().min(0).max(10).optional(),
   task_size: z.enum(["small", "medium", "large"]).optional(),
   result: z.string().nullish(),
@@ -189,6 +190,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
     await invalidateTaskCaches();
     ws.broadcast("task_update", task);
+
+    // Trigger auto-QA on manual status change to qa_testing
+    if (updates.status === "qa_testing") {
+      setTimeout(() => triggerAutoQa(db, ws, task, cache), 500);
+    }
 
     // Trigger auto-review on manual status change to pr_review
     if (updates.status === "pr_review") {

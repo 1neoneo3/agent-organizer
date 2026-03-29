@@ -6,8 +6,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
-import { buildTaskPrompt, buildReviewPrompt } from "./prompt-builder.js";
+import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
+import { triggerAutoQa } from "./auto-qa.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
 import { notifyTaskStatus } from "../notify/telegram.js";
@@ -26,6 +27,9 @@ const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
+const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
+
+const MAX_CONTEXT_RESETS = 3;
 
 /** Restore pending interactive prompts from DB on server startup */
 export function restorePendingInteractivePrompts(db: DatabaseSync): void {
@@ -131,11 +135,26 @@ export function spawnAgent(
   );
 
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
+  const isQaRun = task.status === "qa_testing";
+
+  // Extract handoff context for QA/review agents
+  let handoffContext = "";
+  if ((isQaRun || isReviewRun) && !isContinue) {
+    const handoffs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[HANDOFF]%' ORDER BY created_at DESC LIMIT 3"
+    ).all(task.id) as Array<{ message: string }>;
+    if (handoffs.length > 0) {
+      handoffContext = "\n\n## Previous Phase Context\n" + handoffs.map(h => h.message.replace("[HANDOFF] ", "")).join("\n");
+    }
+  }
+
   const prompt = isContinue
     ? options!.continuePrompt!
-    : (isReviewRun
-      ? buildReviewPrompt(task)
-      : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy }));
+    : (isQaRun
+      ? buildQaPrompt(task) + handoffContext
+      : (isReviewRun
+        ? buildReviewPrompt(task) + handoffContext
+        : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy })));
 
   // Log directory
   const logDir = join("data", "logs");
@@ -448,6 +467,76 @@ export function spawnAgent(
       return;
     }
 
+    // Context reset on timeout: instead of cancelling, save handoff and reset to inbox
+    const timeoutReason = timeoutReasons.get(task.id);
+    if (timeoutReason) {
+      timeoutReasons.delete(task.id);
+
+      const finishTime = Date.now();
+      const timeoutMs = timeoutReason === "idle_timeout" ? TASK_RUN_IDLE_TIMEOUT_MS : TASK_RUN_HARD_TIMEOUT_MS;
+
+      // Count previous context resets from task_logs
+      const resetLogs = db.prepare(
+        "SELECT COUNT(*) as cnt FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '%[Context Reset]%'"
+      ).get(task.id) as { cnt: number };
+      const resetCount = resetLogs.cnt;
+
+      if (resetCount >= MAX_CONTEXT_RESETS) {
+        // Max resets reached — actually cancel
+        const cancelMsg = `[Context Reset] Max resets (${MAX_CONTEXT_RESETS}) reached. Cancelling task.`;
+        insertLogStmt.run(task.id, "system", cancelMsg);
+
+        db.prepare(
+          "UPDATE tasks SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE id = ?"
+        ).run(finishTime, finishTime, task.id);
+        db.prepare(
+          "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
+        ).run(finishTime, agent.id);
+
+        invalidateCaches(cache);
+        const cancelledTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+        ws.broadcast("task_update", cancelledTask ?? { id: task.id, status: "cancelled", completed_at: finishTime });
+        ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+
+        notifyTaskStatus(task.title, "cancelled", {
+          taskNumber: task.task_number ?? undefined,
+          agentName: agent.name,
+        });
+        return;
+      }
+
+      // Extract recent assistant logs for handoff context
+      const recentLogs = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' ORDER BY id DESC LIMIT 10"
+      ).all(task.id) as Array<{ message: string }>;
+      const handoffSummary = recentLogs.map(l => l.message).reverse().join("\n").slice(0, 2000);
+
+      const handoff = {
+        phase: "context_reset",
+        reason: timeoutReason,
+        resetNumber: resetCount + 1,
+        summary: handoffSummary || "No assistant output captured before timeout.",
+      };
+      insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`);
+
+      const resetMsg = `[Context Reset] ${timeoutReason === "idle_timeout" ? "Idle" : "Hard"} timeout after ${timeoutMs}ms. Resetting context for fresh agent. (reset ${resetCount + 1}/${MAX_CONTEXT_RESETS})`;
+      insertLogStmt.run(task.id, "system", resetMsg);
+
+      // Reset task to inbox for auto-dispatcher to pick up
+      db.prepare(
+        "UPDATE tasks SET status = 'inbox', started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ?"
+      ).run(finishTime, task.id);
+      db.prepare(
+        "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
+      ).run(finishTime, agent.id);
+
+      invalidateCaches(cache);
+      const resetTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+      ws.broadcast("task_update", resetTask ?? { id: task.id, status: "inbox" });
+      ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+      return;
+    }
+
     const finishTime = Date.now();
 
     // Feedback respawn completed: restore previous status instead of finalizing as done
@@ -478,6 +567,17 @@ export function spawnAgent(
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
     const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun) : "cancelled";
 
+    // Artifact-based handoff: log structured context for the next phase agent
+    if (finalStatus === "qa_testing" || finalStatus === "pr_review") {
+      const handoff = {
+        phase: completionTask.status,
+        nextPhase: finalStatus,
+        filesModified: [] as string[],
+        summary: `Implementation completed. Moving to ${finalStatus}.`,
+      };
+      insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`);
+    }
+
     db.prepare(
       "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?"
     ).run(finalStatus, finishTime, finishTime, task.id);
@@ -490,7 +590,7 @@ export function spawnAgent(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
 
-    if (code === 0 && (finalStatus === "pr_review" || finalStatus === "done")) {
+    if (code === 0 && (finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "done")) {
       const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace);
       db.prepare(
         `UPDATE tasks
@@ -526,12 +626,18 @@ export function spawnAgent(
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
     // Telegram notification for review/done/cancelled
-    if (finalStatus === "pr_review" || finalStatus === "done" || finalStatus === "cancelled") {
+    if (finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "done" || finalStatus === "cancelled") {
       notifyTaskStatus(task.title, finalStatus, {
         taskNumber: task.task_number ?? undefined,
         prUrl: (finishedTask as Task | undefined)?.pr_url ?? undefined,
         agentName: agent.name,
       });
+    }
+
+    // Trigger auto-QA if task landed in qa_testing
+    if (finalStatus === "qa_testing") {
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+      setTimeout(() => triggerAutoQa(db, ws, freshTask, cache), 500);
     }
 
     // Trigger auto-review if task landed in pr_review
@@ -552,6 +658,17 @@ export function determineCompletionStatus(
 ): string {
   const runStartedAt = task.started_at ?? 0;
 
+  // QA run completed — check QA verdict
+  if (task.status === "qa_testing") {
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
+    ).all(task.id, runStartedAt) as Array<{ message: string }>;
+
+    const qaFailed = logs.some((l) => l.message.includes("[QA:FAIL"));
+    if (qaFailed) return "inbox"; // Send back for rework
+    return "pr_review"; // QA passed → move to PR review
+  }
+
   if (reviewRun) {
     const logs = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
@@ -563,9 +680,11 @@ export function determineCompletionStatus(
   }
 
   if (!selfReview) {
-    // Check review_mode setting
+    // Check qa_mode setting — if enabled, route to qa_testing instead of pr_review
+    const qaMode = getSetting(db, "qa_mode") ?? "disabled";
     const reviewMode = getSetting(db, "review_mode") ?? "pr_only";
-    if (reviewMode === "none") return "done";
+    if (reviewMode === "none" && qaMode !== "enabled") return "done";
+    if (qaMode === "enabled") return "qa_testing";
     if (reviewMode === "pr_only") return "pr_review";
     return "pr_review";
   }
@@ -634,6 +753,12 @@ export function resolveCompletionStatusAfterPromotion(
 export function killAgent(taskId: string, reason?: string): boolean {
   const child = activeProcesses.get(taskId);
   if (!child) return false;
+
+  // Track timeout reason so the close handler can perform context reset
+  if (reason === "idle_timeout" || reason === "hard_timeout") {
+    timeoutReasons.set(taskId, reason);
+  }
+
   try {
     child.kill("SIGTERM");
     setTimeout(() => {
