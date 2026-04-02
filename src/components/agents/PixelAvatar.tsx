@@ -1,7 +1,7 @@
 /**
  * Modern SVG icon avatars for each agent role.
- * Minimal, flat vector design with gradient/glow effects.
- * Each icon uses abstract symbols to represent the role.
+ * Premium flat vector design with dual-tone gradients, soft glow, and refined symbols.
+ * viewBox 0 0 32 32, dark-mode optimized palette.
  */
 import React from "react";
 
@@ -11,28 +11,67 @@ interface PixelAvatarProps {
   className?: string;
 }
 
-type RoleRenderer = (defsId: string) => React.ReactElement;
+type RoleRenderer = (id: string) => React.ReactElement;
+
+function Defs({
+  id,
+  from,
+  to,
+}: {
+  id: string;
+  from: string;
+  to: string;
+}): React.ReactElement {
+  return (
+    <defs>
+      <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor={from} />
+        <stop offset="100%" stopColor={to} />
+      </linearGradient>
+      <radialGradient id={`${id}-shine`} cx="0.35" cy="0.35" r="0.65">
+        <stop offset="0%" stopColor="#fff" stopOpacity="0.18" />
+        <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+      </radialGradient>
+      <filter id={`${id}-glow`}>
+        <feGaussianBlur stdDeviation="0.8" result="b" />
+        <feMerge>
+          <feMergeNode in="b" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+    </defs>
+  );
+}
+
+function Bg({ id }: { id: string }): React.ReactElement {
+  return (
+    <>
+      <circle cx="16" cy="16" r="15" fill={`url(#${id}-bg)`} />
+      <circle cx="16" cy="16" r="15" fill={`url(#${id}-shine)`} />
+    </>
+  );
+}
 
 function LeadEngineer(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#3b82f6" />
-          <stop offset="100%" stopColor="#6366f1" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#e0e7ff" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* { } brackets */}
-        <path d="M10 10 L8 12 L8 14 L6 16 L8 18 L8 20 L10 22" />
-        <path d="M22 10 L24 12 L24 14 L26 16 L24 18 L24 20 L22 22" />
-        {/* lightning bolt */}
-        <path d="M15 11 L13 17 L16 16 L14 22" strokeWidth="2" stroke="#fbbf24" />
+      <Defs id={id} from="#3b82f6" to="#6366f1" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#e0e7ff"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M11 9.5 L8.5 12 L8.5 14.5 L6.5 16 L8.5 17.5 L8.5 20 L11 22.5" />
+        <path d="M21 9.5 L23.5 12 L23.5 14.5 L25.5 16 L23.5 17.5 L23.5 20 L21 22.5" />
+        <path
+          d="M15.5 10.5 L13 16.5 L16.5 15.5 L14 22"
+          strokeWidth="2"
+          stroke="#fbbf24"
+        />
       </g>
     </>
   );
@@ -41,23 +80,23 @@ function LeadEngineer(id: string): React.ReactElement {
 function Tester(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#22c55e" />
-          <stop offset="100%" stopColor="#16a34a" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#dcfce7" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* magnifying glass */}
-        <circle cx="14" cy="14" r="5" />
-        <line x1="18" y1="18" x2="23" y2="23" strokeWidth="2.2" />
-        {/* checkmark inside */}
-        <polyline points="11.5,14 13.5,16 17,12" strokeWidth="1.6" stroke="#bbf7d0" />
+      <Defs id={id} from="#10b981" to="#059669" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#d1fae5"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="13.5" cy="13.5" r="5.5" />
+        <line x1="17.5" y1="17.5" x2="24" y2="24" strokeWidth="2.4" />
+        <polyline
+          points="10.5,13.5 12.5,15.8 17,11"
+          strokeWidth="1.8"
+          stroke="#6ee7b7"
+        />
       </g>
     </>
   );
@@ -66,25 +105,22 @@ function Tester(id: string): React.ReactElement {
 function CodeReviewer(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#a855f7" />
-          <stop offset="100%" stopColor="#7c3aed" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#ede9fe" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* eye */}
-        <path d="M6 16 Q16 8 26 16 Q16 24 6 16 Z" />
-        <circle cx="16" cy="16" r="3" fill="#ede9fe" stroke="none" />
-        <circle cx="16" cy="16" r="1.5" fill="#7c3aed" stroke="none" />
-        {/* code lines below */}
-        <line x1="9" y1="25" x2="15" y2="25" strokeWidth="1.2" opacity="0.6" />
-        <line x1="17" y1="25" x2="23" y2="25" strokeWidth="1.2" opacity="0.6" />
+      <Defs id={id} from="#a855f7" to="#7c3aed" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#ede9fe"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M5.5 16 Q16 7.5 26.5 16 Q16 24.5 5.5 16 Z" />
+        <circle cx="16" cy="16" r="3.2" fill="#ede9fe" stroke="none" />
+        <circle cx="16" cy="16" r="1.6" fill="#7c3aed" stroke="none" />
+        <line x1="8" y1="24.5" x2="14" y2="24.5" strokeWidth="1.2" opacity="0.5" />
+        <line x1="18" y1="24.5" x2="24" y2="24.5" strokeWidth="1.2" opacity="0.5" />
+        <line x1="10" y1="26.5" x2="22" y2="26.5" strokeWidth="1.2" opacity="0.3" />
       </g>
     </>
   );
@@ -93,24 +129,21 @@ function CodeReviewer(id: string): React.ReactElement {
 function Architect(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#f59e0b" />
-          <stop offset="100%" stopColor="#d97706" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#fef3c7" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* pyramid / triangle */}
-        <polygon points="16,6 6,24 26,24" />
-        {/* inner grid lines */}
-        <line x1="11" y1="15" x2="21" y2="15" strokeWidth="1" opacity="0.5" />
-        <line x1="8.5" y1="20" x2="23.5" y2="20" strokeWidth="1" opacity="0.5" />
-        <line x1="16" y1="6" x2="16" y2="24" strokeWidth="1" opacity="0.5" />
+      <Defs id={id} from="#f59e0b" to="#d97706" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#fef3c7"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polygon points="16,5 5,25 27,25" />
+        <line x1="10.5" y1="15" x2="21.5" y2="15" strokeWidth="1" opacity="0.45" />
+        <line x1="7.8" y1="20" x2="24.2" y2="20" strokeWidth="1" opacity="0.45" />
+        <line x1="16" y1="5" x2="16" y2="25" strokeWidth="1" opacity="0.35" />
+        <circle cx="16" cy="17" r="1.2" fill="#fef3c7" stroke="none" opacity="0.7" />
       </g>
     </>
   );
@@ -119,24 +152,20 @@ function Architect(id: string): React.ReactElement {
 function SecurityReviewer(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#ef4444" />
-          <stop offset="100%" stopColor="#b91c1c" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#fee2e2" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* shield */}
-        <path d="M16 5 L24 9 L24 16 Q24 24 16 27 Q8 24 8 16 L8 9 Z" />
-        {/* lock */}
-        <rect x="13" y="16" width="6" height="5" rx="1" fill="#fee2e2" stroke="none" />
-        <path d="M14 16 L14 14 Q14 11 16 11 Q18 11 18 14 L18 16" strokeWidth="1.6" />
-        <circle cx="16" cy="18.5" r="0.8" fill="#b91c1c" stroke="none" />
+      <Defs id={id} from="#ef4444" to="#b91c1c" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#fecaca"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M16 4.5 L24.5 8.5 L24.5 15 Q24.5 23.5 16 27 Q7.5 23.5 7.5 15 L7.5 8.5 Z" />
+        <rect x="13" y="15.5" width="6" height="5" rx="1" fill="#fecaca" stroke="none" />
+        <path d="M14.2 15.5 L14.2 13.5 Q14.2 10.5 16 10.5 Q17.8 10.5 17.8 13.5 L17.8 15.5" strokeWidth="1.5" />
+        <circle cx="16" cy="18" r="0.8" fill="#b91c1c" stroke="none" />
       </g>
     </>
   );
@@ -145,27 +174,24 @@ function SecurityReviewer(id: string): React.ReactElement {
 function Researcher(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#6366f1" />
-          <stop offset="100%" stopColor="#4f46e5" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#e0e7ff" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* telescope */}
-        <circle cx="10" cy="10" r="4" />
-        <line x1="13" y1="13" x2="22" y2="22" strokeWidth="2" />
-        <line x1="22" y1="22" x2="24" y2="26" strokeWidth="1.5" />
-        <line x1="22" y1="22" x2="26" y2="24" strokeWidth="1.5" />
-        {/* stars */}
-        <circle cx="22" cy="8" r="1" fill="#e0e7ff" stroke="none" />
-        <circle cx="25" cy="12" r="0.7" fill="#c7d2fe" stroke="none" />
-        <circle cx="19" cy="6" r="0.5" fill="#c7d2fe" stroke="none" />
+      <Defs id={id} from="#818cf8" to="#4f46e5" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#e0e7ff"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="10" cy="10" r="4.5" />
+        <line x1="13.5" y1="13.5" x2="22" y2="22" strokeWidth="2.2" />
+        <line x1="22" y1="22" x2="24" y2="26.5" strokeWidth="1.4" />
+        <line x1="22" y1="22" x2="26.5" y2="24" strokeWidth="1.4" />
+        <circle cx="22" cy="7.5" r="1.2" fill="#c7d2fe" stroke="none" />
+        <circle cx="25.5" cy="11" r="0.8" fill="#a5b4fc" stroke="none" />
+        <circle cx="19" cy="5.5" r="0.6" fill="#a5b4fc" stroke="none" />
+        <path d="M21.2 7.5 L22.8 7.5 M22 6.7 L22 8.3" strokeWidth="0.8" stroke="#c7d2fe" />
       </g>
     </>
   );
@@ -174,26 +200,22 @@ function Researcher(id: string): React.ReactElement {
 function DevOps(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#f97316" />
-          <stop offset="100%" stopColor="#ea580c" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#ffedd5" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* gear */}
-        <circle cx="16" cy="16" r="4" />
-        <circle cx="16" cy="16" r="7" strokeDasharray="3 2.5" />
-        {/* circular arrows */}
-        <path d="M16 6 A10 10 0 0 1 26 16" />
-        <polyline points="25,13 26,16 23,16" strokeWidth="1.5" />
-        <path d="M16 26 A10 10 0 0 1 6 16" />
-        <polyline points="7,19 6,16 9,16" strokeWidth="1.5" />
+      <Defs id={id} from="#f97316" to="#ea580c" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#fed7aa"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="16" cy="16" r="3.8" />
+        <circle cx="16" cy="16" r="7" strokeDasharray="3.5 2" />
+        <path d="M16 5.5 A10.5 10.5 0 0 1 26.5 16" />
+        <polyline points="24.5,13 26.5,16 23.5,16" strokeWidth="1.4" />
+        <path d="M16 26.5 A10.5 10.5 0 0 1 5.5 16" />
+        <polyline points="7.5,19 5.5,16 8.5,16" strokeWidth="1.4" />
       </g>
     </>
   );
@@ -202,27 +224,23 @@ function DevOps(id: string): React.ReactElement {
 function Designer(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#ec4899" />
-          <stop offset="100%" stopColor="#db2777" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#fce7f3" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* pen nib */}
-        <path d="M10 24 L13 14 L19 14 L22 24 Z" />
-        <path d="M14.5 14 L16 8 L17.5 14" strokeWidth="1.5" />
-        <line x1="16" y1="14" x2="16" y2="20" strokeWidth="1" opacity="0.5" />
-        {/* color dots */}
-        <circle cx="8" cy="10" r="2" fill="#fbbf24" stroke="none" />
-        <circle cx="12" cy="7" r="1.8" fill="#60a5fa" stroke="none" />
-        <circle cx="20" cy="7" r="1.8" fill="#34d399" stroke="none" />
-        <circle cx="24" cy="10" r="2" fill="#f87171" stroke="none" />
+      <Defs id={id} from="#ec4899" to="#be185d" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#fce7f3"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M10 24.5 L13.5 13.5 L18.5 13.5 L22 24.5 Z" />
+        <path d="M14.8 13.5 L16 7.5 L17.2 13.5" strokeWidth="1.4" />
+        <line x1="16" y1="13.5" x2="16" y2="20" strokeWidth="0.8" opacity="0.4" />
+        <circle cx="8" cy="9.5" r="2.2" fill="#fbbf24" stroke="none" opacity="0.9" />
+        <circle cx="12.5" cy="6.5" r="2" fill="#60a5fa" stroke="none" opacity="0.9" />
+        <circle cx="19.5" cy="6.5" r="2" fill="#34d399" stroke="none" opacity="0.9" />
+        <circle cx="24" cy="9.5" r="2.2" fill="#fb7185" stroke="none" opacity="0.9" />
       </g>
     </>
   );
@@ -231,29 +249,21 @@ function Designer(id: string): React.ReactElement {
 function Planner(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#14b8a6" />
-          <stop offset="100%" stopColor="#0d9488" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#ccfbf1" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* map pin */}
-        <path d="M16 5 Q22 5 22 11 Q22 17 16 23 Q10 17 10 11 Q10 5 16 5 Z" />
-        <circle cx="16" cy="11" r="2.5" fill="#ccfbf1" stroke="none" />
-        {/* route dots */}
-        <circle cx="7" cy="20" r="1" fill="#ccfbf1" stroke="none" />
-        <circle cx="10" cy="25" r="0.8" fill="#99f6e4" stroke="none" />
-        <circle cx="22" cy="25" r="0.8" fill="#99f6e4" stroke="none" />
-        <circle cx="25" cy="20" r="1" fill="#ccfbf1" stroke="none" />
-        {/* route lines */}
-        <path d="M7 20 L10 25" strokeWidth="1" opacity="0.4" />
-        <path d="M22 25 L25 20" strokeWidth="1" opacity="0.4" />
+      <Defs id={id} from="#14b8a6" to="#0d9488" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#ccfbf1"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M16 4.5 Q22.5 4.5 22.5 11 Q22.5 17.5 16 23.5 Q9.5 17.5 9.5 11 Q9.5 4.5 16 4.5 Z" />
+        <circle cx="16" cy="11" r="2.8" fill="#ccfbf1" stroke="none" />
+        <path d="M8 22 Q12 28 16 25 Q20 28 24 22" strokeWidth="1.2" opacity="0.5" strokeDasharray="2 2" />
+        <circle cx="8" cy="22" r="1.2" fill="#99f6e4" stroke="none" />
+        <circle cx="24" cy="22" r="1.2" fill="#99f6e4" stroke="none" />
       </g>
     </>
   );
@@ -262,24 +272,20 @@ function Planner(id: string): React.ReactElement {
 function DefaultIcon(id: string): React.ReactElement {
   return (
     <>
-      <defs>
-        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#64748b" />
-          <stop offset="100%" stopColor="#475569" />
-        </linearGradient>
-        <filter id={`${id}-glow`}>
-          <feGaussianBlur stdDeviation="1.2" result="blur" />
-          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
-      <g filter={`url(#${id}-glow)`} stroke="#e2e8f0" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
-        {/* diamond / cube shape */}
-        <polygon points="16,5 27,16 16,27 5,16" />
-        <line x1="16" y1="5" x2="16" y2="27" strokeWidth="1" opacity="0.4" />
-        <line x1="5" y1="16" x2="27" y2="16" strokeWidth="1" opacity="0.4" />
-        {/* inner diamond */}
-        <polygon points="16,10 22,16 16,22 10,16" strokeWidth="1" opacity="0.5" />
+      <Defs id={id} from="#64748b" to="#475569" />
+      <Bg id={id} />
+      <g
+        filter={`url(#${id}-glow)`}
+        stroke="#e2e8f0"
+        strokeWidth="1.6"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polygon points="16,4.5 27.5,16 16,27.5 4.5,16" />
+        <polygon points="16,9.5 22.5,16 16,22.5 9.5,16" strokeWidth="1" opacity="0.45" />
+        <line x1="16" y1="4.5" x2="16" y2="27.5" strokeWidth="0.8" opacity="0.3" />
+        <line x1="4.5" y1="16" x2="27.5" y2="16" strokeWidth="0.8" opacity="0.3" />
       </g>
     </>
   );
@@ -299,9 +305,13 @@ const ROLE_RENDERERS: Record<string, RoleRenderer> = {
 
 let idCounter = 0;
 
-export function PixelAvatar({ role, size = 32, className = "" }: PixelAvatarProps) {
+export function PixelAvatar({
+  role,
+  size = 32,
+  className = "",
+}: PixelAvatarProps) {
   const renderer = (role && ROLE_RENDERERS[role]) || DefaultIcon;
-  const uniqueId = `avatar-${role || "default"}-${idCounter++}`;
+  const uniqueId = `av-${role || "d"}-${idCounter++}`;
 
   return (
     <svg
