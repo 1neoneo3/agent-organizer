@@ -1,8 +1,7 @@
 /**
- * 16×16 pixel-art SVG avatars for each agent role.
- * Mother 2 (EarthBound) field sprite style – big heads, small bodies.
- * Each design uses a simple grid of <rect> elements rendered at
- * image-rendering: pixelated so they stay crisp at any size.
+ * Modern SVG icon avatars for each agent role.
+ * Minimal, flat vector design with gradient/glow effects.
+ * Each icon uses abstract symbols to represent the role.
  */
 import React from "react";
 
@@ -12,291 +11,307 @@ interface PixelAvatarProps {
   className?: string;
 }
 
-type Pixel = [x: number, y: number, color: string];
+type RoleRenderer = (defsId: string) => React.ReactElement;
 
-// ---- palette shortcuts ----
-const B = "#1e293b"; // outline / dark
-const W = "#f8fafc"; // white highlight
-const S = "#94a3b8"; // neutral gray
-const SK = "#f8c8a0"; // Mother 2 skin (warm peach)
-const HR = "#5c3a1e"; // brown hair
-const DP = "#1e3a5f"; // dark pants
-
-// ---- per-role pixel maps (16×16 grid, Mother 2 / EarthBound style) ----
-
-// Lead Engineer: Ness-style cap boy (blue cap, striped shirt, red shoes)
-const LEAD_ENGINEER: Pixel[] = [
-  // cap button
-  [7,0,B],[8,0,B],
-  // cap dome (highlight at 7,1)
-  [5,1,B],[6,1,"#3b82f6"],[7,1,"#60a5fa"],[8,1,"#3b82f6"],[9,1,"#3b82f6"],[10,1,B],
-  [4,2,B],[5,2,"#3b82f6"],[6,2,"#3b82f6"],[7,2,"#3b82f6"],[8,2,"#3b82f6"],[9,2,"#3b82f6"],[10,2,"#3b82f6"],[11,2,B],
-  // cap brim
-  [3,3,B],[4,3,B],[5,3,B],[6,3,B],[7,3,B],[8,3,B],[9,3,B],[10,3,B],[11,3,B],[12,3,B],
-  // face
-  [4,4,B],[5,4,HR],[6,4,SK],[7,4,SK],[8,4,SK],[9,4,SK],[10,4,HR],[11,4,B],
-  [4,5,B],[5,5,SK],[6,5,B],[7,5,SK],[8,5,SK],[9,5,B],[10,5,SK],[11,5,B],
-  [4,6,B],[5,6,SK],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,SK],[11,6,B],
-  [5,7,B],[6,7,SK],[7,7,SK],[8,7,SK],[9,7,SK],[10,7,B],
-  // shirt (blue with yellow stripe)
-  [4,8,B],[5,8,"#3b82f6"],[6,8,"#3b82f6"],[7,8,"#fbbf24"],[8,8,"#fbbf24"],[9,8,"#3b82f6"],[10,8,"#3b82f6"],[11,8,B],
-  [3,9,B],[4,9,SK],[5,9,"#3b82f6"],[6,9,"#3b82f6"],[7,9,"#3b82f6"],[8,9,"#3b82f6"],[9,9,"#3b82f6"],[10,9,"#3b82f6"],[11,9,SK],[12,9,B],
-  [5,10,B],[6,10,"#3b82f6"],[7,10,"#3b82f6"],[8,10,"#3b82f6"],[9,10,"#3b82f6"],[10,10,B],
-  // legs
-  [5,11,B],[6,11,DP],[7,11,B],[8,11,B],[9,11,DP],[10,11,B],
-  // red shoes (Ness style)
-  [4,12,B],[5,12,"#dc2626"],[6,12,"#dc2626"],[9,12,"#dc2626"],[10,12,"#dc2626"],[11,12,B],
-];
-
-// Tester: Jeff-style glasses boy (blonde hair, big glasses, green coat)
-const TESTER: Pixel[] = [
-  // blonde spiky hair
-  [5,0,B],[6,0,"#d4a853"],[9,0,"#d4a853"],[10,0,B],
-  [4,1,B],[5,1,"#d4a853"],[6,1,"#d4a853"],[7,1,"#d4a853"],[8,1,"#d4a853"],[9,1,"#d4a853"],[10,1,"#d4a853"],[11,1,B],
-  [4,2,B],[5,2,"#d4a853"],[6,2,"#d4a853"],[7,2,"#d4a853"],[8,2,"#d4a853"],[9,2,"#d4a853"],[10,2,"#d4a853"],[11,2,B],
-  // forehead
-  [4,3,B],[5,3,SK],[6,3,SK],[7,3,SK],[8,3,SK],[9,3,SK],[10,3,SK],[11,3,B],
-  // glasses + eyes
-  [3,4,B],[4,4,B],[5,4,W],[6,4,B],[7,4,B],[8,4,B],[9,4,W],[10,4,B],[11,4,B],[12,4,B],
-  // face
-  [4,5,B],[5,5,SK],[6,5,SK],[7,5,SK],[8,5,SK],[9,5,SK],[10,5,SK],[11,5,B],
-  [5,6,B],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,B],
-  // green coat
-  [4,7,B],[5,7,"#22c55e"],[6,7,"#22c55e"],[7,7,"#22c55e"],[8,7,"#22c55e"],[9,7,"#22c55e"],[10,7,"#22c55e"],[11,7,B],
-  [3,8,B],[4,8,SK],[5,8,"#22c55e"],[6,8,"#22c55e"],[7,8,W],[8,8,"#22c55e"],[9,8,"#22c55e"],[10,8,"#22c55e"],[11,8,SK],[12,8,B],
-  [5,9,B],[6,9,"#22c55e"],[7,9,"#22c55e"],[8,9,"#22c55e"],[9,9,"#22c55e"],[10,9,B],
-  // magnifying glass (right hand)
-  [12,5,B],[13,5,B],[12,6,B],[13,6,B],[14,6,B],[13,7,B],
-  // legs
-  [5,10,B],[6,10,DP],[7,10,B],[8,10,B],[9,10,DP],[10,10,B],
-  [4,11,B],[5,11,B],[6,11,B],[9,11,B],[10,11,B],[11,11,B],
-];
-
-// Code Reviewer: Paula-style ribbon girl (purple bow, blonde hair, purple dress)
-const CODE_REVIEWER: Pixel[] = [
-  // ribbon/bow
-  [5,0,B],[6,0,"#a855f7"],[7,0,B],[8,0,B],[9,0,"#a855f7"],[10,0,B],
-  [6,1,B],[7,1,"#a855f7"],[8,1,"#a855f7"],[9,1,B],
-  // hair (blonde, long)
-  [4,2,B],[5,2,"#d4a853"],[6,2,"#d4a853"],[7,2,"#d4a853"],[8,2,"#d4a853"],[9,2,"#d4a853"],[10,2,"#d4a853"],[11,2,B],
-  [3,3,B],[4,3,"#d4a853"],[5,3,SK],[6,3,SK],[7,3,SK],[8,3,SK],[9,3,SK],[10,3,SK],[11,3,"#d4a853"],[12,3,B],
-  // face
-  [3,4,B],[4,4,"#d4a853"],[5,4,SK],[6,4,B],[7,4,SK],[8,4,SK],[9,4,B],[10,4,SK],[11,4,"#d4a853"],[12,4,B],
-  [3,5,B],[4,5,"#d4a853"],[5,5,SK],[6,5,SK],[7,5,SK],[8,5,SK],[9,5,SK],[10,5,SK],[11,5,"#d4a853"],[12,5,B],
-  [4,6,B],[5,6,SK],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,SK],[11,6,B],
-  [5,7,B],[6,7,SK],[7,7,SK],[8,7,SK],[9,7,SK],[10,7,B],
-  // purple dress
-  [4,8,B],[5,8,"#a855f7"],[6,8,"#a855f7"],[7,8,"#a855f7"],[8,8,"#a855f7"],[9,8,"#a855f7"],[10,8,"#a855f7"],[11,8,B],
-  [3,9,B],[4,9,SK],[5,9,"#a855f7"],[6,9,"#a855f7"],[7,9,"#a855f7"],[8,9,"#a855f7"],[9,9,"#a855f7"],[10,9,"#a855f7"],[11,9,SK],[12,9,B],
-  [4,10,B],[5,10,"#a855f7"],[6,10,"#a855f7"],[7,10,"#a855f7"],[8,10,"#a855f7"],[9,10,"#a855f7"],[10,10,"#a855f7"],[11,10,B],
-  // checklist (left hand) — green check marks over white
-  [1,8,B],[2,8,W],[3,8,B],[1,9,B],[2,9,W],[3,9,B],[2,10,B],
-  [2,8,"#22c55e"],[2,9,"#22c55e"],
-  // legs
-  [5,11,B],[6,11,SK],[7,11,B],[8,11,B],[9,11,SK],[10,11,B],
-  [4,12,B],[5,12,"#c084fc"],[6,12,"#c084fc"],[9,12,"#c084fc"],[10,12,"#c084fc"],[11,12,B],
-];
-
-// Architect: Poo-style martial arts boy (topknot, headband, white gi)
-const ARCHITECT: Pixel[] = [
-  // topknot
-  [7,0,B],[8,0,B],
-  [7,1,B],[8,1,"#2d2d2d"],
-  // black hair
-  [5,2,B],[6,2,"#2d2d2d"],[7,2,"#2d2d2d"],[8,2,"#2d2d2d"],[9,2,"#2d2d2d"],[10,2,B],
-  // headband (amber)
-  [4,3,B],[5,3,"#f59e0b"],[6,3,"#f59e0b"],[7,3,"#f59e0b"],[8,3,"#f59e0b"],[9,3,"#f59e0b"],[10,3,"#f59e0b"],[11,3,B],
-  // face
-  [4,4,B],[5,4,SK],[6,4,SK],[7,4,SK],[8,4,SK],[9,4,SK],[10,4,SK],[11,4,B],
-  [4,5,B],[5,5,SK],[6,5,B],[7,5,SK],[8,5,SK],[9,5,B],[10,5,SK],[11,5,B],
-  [4,6,B],[5,6,SK],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,SK],[11,6,B],
-  [5,7,B],[6,7,SK],[7,7,SK],[8,7,SK],[9,7,SK],[10,7,B],
-  // white gi with amber sash
-  [4,8,B],[5,8,W],[6,8,W],[7,8,"#f59e0b"],[8,8,W],[9,8,W],[10,8,W],[11,8,B],
-  [3,9,B],[4,9,SK],[5,9,W],[6,9,W],[7,9,W],[8,9,W],[9,9,W],[10,9,W],[11,9,SK],[12,9,B],
-  [5,10,B],[6,10,W],[7,10,W],[8,10,W],[9,10,W],[10,10,B],
-  // scroll (right hand)
-  [12,8,B],[13,8,"#f59e0b"],[12,9,B],[13,9,W],[12,10,B],[13,10,B],
-  // legs
-  [5,11,B],[6,11,DP],[7,11,B],[8,11,B],[9,11,DP],[10,11,B],
-  [4,12,B],[5,12,B],[6,12,B],[9,12,B],[10,12,B],[11,12,B],
-];
-
-// Security Reviewer: Red hood guard kid (red cloak, shield)
-const SECURITY_REVIEWER: Pixel[] = [
-  // red helmet/hood
-  [6,0,B],[7,0,B],[8,0,B],[9,0,B],
-  [5,1,B],[6,1,"#dc2626"],[7,1,"#dc2626"],[8,1,"#dc2626"],[9,1,"#dc2626"],[10,1,B],
-  [4,2,B],[5,2,"#dc2626"],[6,2,"#dc2626"],[7,2,"#dc2626"],[8,2,"#dc2626"],[9,2,"#dc2626"],[10,2,"#dc2626"],[11,2,B],
-  // face (red hood framing)
-  [4,3,B],[5,3,"#dc2626"],[6,3,SK],[7,3,SK],[8,3,SK],[9,3,SK],[10,3,"#dc2626"],[11,3,B],
-  [4,4,B],[5,4,"#dc2626"],[6,4,B],[7,4,SK],[8,4,SK],[9,4,B],[10,4,"#dc2626"],[11,4,B],
-  [4,5,B],[5,5,SK],[6,5,SK],[7,5,SK],[8,5,SK],[9,5,SK],[10,5,SK],[11,5,B],
-  [5,6,B],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,B],
-  // dark red cape + armor
-  [3,7,B],[4,7,"#dc2626"],[5,7,"#b91c1c"],[6,7,"#b91c1c"],[7,7,"#b91c1c"],[8,7,"#b91c1c"],[9,7,"#b91c1c"],[10,7,"#b91c1c"],[11,7,"#dc2626"],[12,7,B],
-  [3,8,B],[4,8,SK],[5,8,"#b91c1c"],[6,8,"#b91c1c"],[7,8,W],[8,8,W],[9,8,"#b91c1c"],[10,8,"#b91c1c"],[11,8,SK],[12,8,B],
-  [5,9,B],[6,9,"#b91c1c"],[7,9,"#b91c1c"],[8,9,"#b91c1c"],[9,9,"#b91c1c"],[10,9,B],
-  // shield (left hand)
-  [1,7,B],[2,7,B],[1,8,B],[2,8,W],[1,9,B],[2,9,"#dc2626"],[2,10,B],
-  // legs
-  [5,10,B],[6,10,DP],[7,10,B],[8,10,B],[9,10,DP],[10,10,B],
-  [4,11,B],[5,11,B],[6,11,B],[9,11,B],[10,11,B],[11,11,B],
-];
-
-// Researcher: Dr. Andonuts-style (messy indigo hair, glasses, white lab coat)
-const RESEARCHER: Pixel[] = [
-  // messy hair
-  [5,0,B],[6,0,"#6366f1"],[9,0,"#6366f1"],[10,0,B],
-  [4,1,B],[5,1,"#6366f1"],[6,1,"#6366f1"],[7,1,"#6366f1"],[8,1,"#6366f1"],[9,1,"#6366f1"],[10,1,"#6366f1"],[11,1,B],
-  [4,2,B],[5,2,"#6366f1"],[6,2,"#6366f1"],[7,2,"#6366f1"],[8,2,"#6366f1"],[9,2,"#6366f1"],[10,2,"#6366f1"],[11,2,B],
-  // forehead
-  [4,3,B],[5,3,SK],[6,3,SK],[7,3,SK],[8,3,SK],[9,3,SK],[10,3,SK],[11,3,B],
-  // glasses + eyes
-  [3,4,B],[4,4,B],[5,4,"#818cf8"],[6,4,W],[7,4,B],[8,4,B],[9,4,W],[10,4,"#818cf8"],[11,4,B],[12,4,B],
-  // face
-  [4,5,B],[5,5,SK],[6,5,SK],[7,5,SK],[8,5,SK],[9,5,SK],[10,5,SK],[11,5,B],
-  [5,6,B],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,B],
-  // white lab coat
-  [4,7,B],[5,7,W],[6,7,W],[7,7,W],[8,7,W],[9,7,W],[10,7,W],[11,7,B],
-  [3,8,B],[4,8,SK],[5,8,W],[6,8,W],[7,8,"#6366f1"],[8,8,W],[9,8,W],[10,8,W],[11,8,SK],[12,8,B],
-  [5,9,B],[6,9,W],[7,9,W],[8,9,W],[9,9,W],[10,9,B],
-  // book (left hand)
-  [1,8,B],[2,8,"#6366f1"],[3,8,B],[1,9,B],[2,9,"#6366f1"],[1,10,B],[2,10,B],
-  // legs
-  [5,10,B],[6,10,DP],[7,10,B],[8,10,B],[9,10,DP],[10,10,B],
-  [4,11,B],[5,11,B],[6,11,B],[9,11,B],[10,11,B],[11,11,B],
-];
-
-// DevOps: Mechanic boy (goggles, orange jumpsuit, wrench)
-const DEVOPS: Pixel[] = [
-  // hair
-  [5,0,B],[6,0,B],[7,0,B],[8,0,B],[9,0,B],[10,0,B],
-  [4,1,B],[5,1,"#f97316"],[6,1,"#f97316"],[7,1,"#f97316"],[8,1,"#f97316"],[9,1,"#f97316"],[10,1,"#f97316"],[11,1,B],
-  // goggles on forehead
-  [3,2,B],[4,2,"#f97316"],[5,2,"#60a5fa"],[6,2,B],[7,2,"#f97316"],[8,2,"#f97316"],[9,2,B],[10,2,"#60a5fa"],[11,2,"#f97316"],[12,2,B],
-  // face
-  [4,3,B],[5,3,SK],[6,3,SK],[7,3,SK],[8,3,SK],[9,3,SK],[10,3,SK],[11,3,B],
-  [4,4,B],[5,4,SK],[6,4,B],[7,4,SK],[8,4,SK],[9,4,B],[10,4,SK],[11,4,B],
-  [4,5,B],[5,5,SK],[6,5,SK],[7,5,SK],[8,5,SK],[9,5,SK],[10,5,SK],[11,5,B],
-  [5,6,B],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,B],
-  // orange jumpsuit
-  [4,7,B],[5,7,"#f97316"],[6,7,"#f97316"],[7,7,"#f97316"],[8,7,"#f97316"],[9,7,"#f97316"],[10,7,"#f97316"],[11,7,B],
-  [3,8,B],[4,8,SK],[5,8,"#f97316"],[6,8,"#f97316"],[7,8,"#f97316"],[8,8,"#f97316"],[9,8,"#f97316"],[10,8,"#f97316"],[11,8,SK],[12,8,B],
-  [5,9,B],[6,9,"#f97316"],[7,9,"#f97316"],[8,9,"#f97316"],[9,9,"#f97316"],[10,9,B],
-  // wrench (right hand)
-  [12,7,B],[13,7,B],[13,8,B],[14,8,S],[13,9,B],[14,9,B],
-  // legs
-  [5,10,B],[6,10,DP],[7,10,B],[8,10,B],[9,10,DP],[10,10,B],
-  [4,11,B],[5,11,B],[6,11,B],[9,11,B],[10,11,B],[11,11,B],
-];
-
-// Designer: Artist girl (pink beret, long hair, palette + paintbrush)
-const DESIGNER: Pixel[] = [
-  // beret
-  [5,0,B],[6,0,B],[7,0,B],[8,0,B],[9,0,B],
-  [4,1,B],[5,1,"#ec4899"],[6,1,"#ec4899"],[7,1,"#ec4899"],[8,1,"#ec4899"],[9,1,"#ec4899"],[10,1,B],[11,1,B],
-  // hair (long brown)
-  [3,2,B],[4,2,"#8b5e3c"],[5,2,"#8b5e3c"],[6,2,"#8b5e3c"],[7,2,"#8b5e3c"],[8,2,"#8b5e3c"],[9,2,"#8b5e3c"],[10,2,"#8b5e3c"],[11,2,"#8b5e3c"],[12,2,B],
-  // face (framed by long hair)
-  [3,3,B],[4,3,"#8b5e3c"],[5,3,SK],[6,3,SK],[7,3,SK],[8,3,SK],[9,3,SK],[10,3,SK],[11,3,"#8b5e3c"],[12,3,B],
-  [3,4,B],[4,4,"#8b5e3c"],[5,4,SK],[6,4,B],[7,4,SK],[8,4,SK],[9,4,B],[10,4,SK],[11,4,"#8b5e3c"],[12,4,B],
-  [3,5,B],[4,5,"#8b5e3c"],[5,5,SK],[6,5,SK],[7,5,SK],[8,5,SK],[9,5,SK],[10,5,SK],[11,5,"#8b5e3c"],[12,5,B],
-  [4,6,B],[5,6,SK],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,SK],[11,6,B],
-  [5,7,B],[6,7,SK],[7,7,SK],[8,7,SK],[9,7,SK],[10,7,B],
-  // pink outfit
-  [4,8,B],[5,8,"#ec4899"],[6,8,"#ec4899"],[7,8,"#ec4899"],[8,8,"#ec4899"],[9,8,"#ec4899"],[10,8,"#ec4899"],[11,8,B],
-  [3,9,B],[4,9,SK],[5,9,"#ec4899"],[6,9,"#ec4899"],[7,9,"#ec4899"],[8,9,"#ec4899"],[9,9,"#ec4899"],[10,9,"#ec4899"],[11,9,SK],[12,9,B],
-  [4,10,B],[5,10,"#ec4899"],[6,10,"#ec4899"],[7,10,"#ec4899"],[8,10,"#ec4899"],[9,10,"#ec4899"],[10,10,"#ec4899"],[11,10,B],
-  // palette (left hand)
-  [1,8,B],[2,8,"#fbbf24"],[3,8,B],[1,9,B],[2,9,"#ef4444"],[3,9,B],[2,10,B],
-  // paintbrush (right hand)
-  [12,7,B],[13,7,"#f97316"],[13,8,B],[13,9,B],
-  // legs
-  [5,11,B],[6,11,SK],[7,11,B],[8,11,B],[9,11,SK],[10,11,B],
-  [4,12,B],[5,12,"#ec4899"],[6,12,"#ec4899"],[9,12,"#ec4899"],[10,12,"#ec4899"],[11,12,B],
-];
-
-// Planner: Adventurer boy (teal bandana, explorer outfit, map + compass)
-const PLANNER: Pixel[] = [
-  // bandana
-  [6,0,B],[7,0,B],[8,0,B],[9,0,B],
-  [5,1,B],[6,1,"#14b8a6"],[7,1,"#14b8a6"],[8,1,"#14b8a6"],[9,1,"#14b8a6"],[10,1,B],
-  [4,2,B],[5,2,"#14b8a6"],[6,2,"#14b8a6"],[7,2,"#14b8a6"],[8,2,"#14b8a6"],[9,2,"#14b8a6"],[10,2,"#14b8a6"],[11,2,B],
-  // bandana edge
-  [4,3,B],[5,3,B],[6,3,B],[7,3,B],[8,3,B],[9,3,B],[10,3,B],[11,3,B],
-  // face
-  [4,4,B],[5,4,SK],[6,4,SK],[7,4,SK],[8,4,SK],[9,4,SK],[10,4,SK],[11,4,B],
-  [4,5,B],[5,5,SK],[6,5,B],[7,5,SK],[8,5,SK],[9,5,B],[10,5,SK],[11,5,B],
-  [4,6,B],[5,6,SK],[6,6,SK],[7,6,SK],[8,6,SK],[9,6,SK],[10,6,SK],[11,6,B],
-  [5,7,B],[6,7,SK],[7,7,SK],[8,7,SK],[9,7,SK],[10,7,B],
-  // teal outfit
-  [4,8,B],[5,8,"#14b8a6"],[6,8,"#14b8a6"],[7,8,"#14b8a6"],[8,8,"#14b8a6"],[9,8,"#14b8a6"],[10,8,"#14b8a6"],[11,8,B],
-  [3,9,B],[4,9,SK],[5,9,"#14b8a6"],[6,9,"#14b8a6"],[7,9,"#14b8a6"],[8,9,"#14b8a6"],[9,9,"#14b8a6"],[10,9,"#14b8a6"],[11,9,SK],[12,9,B],
-  [5,10,B],[6,10,"#14b8a6"],[7,10,"#14b8a6"],[8,10,"#14b8a6"],[9,10,"#14b8a6"],[10,10,B],
-  // map (left hand)
-  [1,8,B],[2,8,W],[3,8,B],[1,9,B],[2,9,W],[3,9,B],[2,10,B],
-  // compass (right hand)
-  [12,8,B],[13,8,"#fbbf24"],[12,9,B],[13,9,B],
-  // legs
-  [5,11,B],[6,11,DP],[7,11,B],[8,11,B],[9,11,DP],[10,11,B],
-  [4,12,B],[5,12,"#14b8a6"],[6,12,"#14b8a6"],[9,12,"#14b8a6"],[10,12,"#14b8a6"],[11,12,B],
-];
-
-// Default: Mr. Saturn (Dosei-san) style creature (round body, bow, whiskers)
-const DEFAULT_ROBOT: Pixel[] = [
-  // bow on top
-  [7,0,B],[8,0,B],
-  [6,1,B],[7,1,"#ec4899"],[8,1,"#ec4899"],[9,1,B],
-  // big round head
-  [4,2,B],[5,2,B],[6,2,B],[7,2,B],[8,2,B],[9,2,B],[10,2,B],[11,2,B],
-  [3,3,B],[4,3,S],[5,3,S],[6,3,S],[7,3,S],[8,3,S],[9,3,S],[10,3,S],[11,3,S],[12,3,B],
-  [3,4,B],[4,4,S],[5,4,S],[6,4,B],[7,4,S],[8,4,S],[9,4,B],[10,4,S],[11,4,S],[12,4,B],
-  [3,5,B],[4,5,S],[5,5,S],[6,5,S],[7,5,"#ec4899"],[8,5,S],[9,5,S],[10,5,S],[11,5,S],[12,5,B],
-  // whisker dots
-  [2,5,B],[13,5,B],
-  [3,6,B],[4,6,S],[5,6,S],[6,6,S],[7,6,S],[8,6,S],[9,6,S],[10,6,S],[11,6,S],[12,6,B],
-  [4,7,B],[5,7,B],[6,7,B],[7,7,B],[8,7,B],[9,7,B],[10,7,B],[11,7,B],
-  // small round body
-  [5,8,B],[6,8,S],[7,8,S],[8,8,S],[9,8,S],[10,8,B],
-  [5,9,B],[6,9,S],[7,9,"#22d3ee"],[8,9,"#22d3ee"],[9,9,S],[10,9,B],
-  [5,10,B],[6,10,B],[7,10,B],[8,10,B],[9,10,B],[10,10,B],
-  // tiny feet
-  [6,11,B],[7,11,S],[8,11,S],[9,11,B],
-  [6,12,B],[7,12,B],[8,12,B],[9,12,B],
-];
-
-const ROLE_PIXELS: Record<string, Pixel[]> = {
-  lead_engineer: LEAD_ENGINEER,
-  tester: TESTER,
-  code_reviewer: CODE_REVIEWER,
-  architect: ARCHITECT,
-  security_reviewer: SECURITY_REVIEWER,
-  researcher: RESEARCHER,
-  devops: DEVOPS,
-  designer: DESIGNER,
-  planner: PLANNER,
-};
-
-function renderPixels(pixels: Pixel[]): React.ReactElement[] {
-  return pixels.map(([x, y, color], i) => (
-    <rect key={i} x={x} y={y} width={1} height={1} fill={color} />
-  ));
+function LeadEngineer(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#3b82f6" />
+          <stop offset="100%" stopColor="#6366f1" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#e0e7ff" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* { } brackets */}
+        <path d="M10 10 L8 12 L8 14 L6 16 L8 18 L8 20 L10 22" />
+        <path d="M22 10 L24 12 L24 14 L26 16 L24 18 L24 20 L22 22" />
+        {/* lightning bolt */}
+        <path d="M15 11 L13 17 L16 16 L14 22" strokeWidth="2" stroke="#fbbf24" />
+      </g>
+    </>
+  );
 }
 
+function Tester(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#22c55e" />
+          <stop offset="100%" stopColor="#16a34a" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#dcfce7" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* magnifying glass */}
+        <circle cx="14" cy="14" r="5" />
+        <line x1="18" y1="18" x2="23" y2="23" strokeWidth="2.2" />
+        {/* checkmark inside */}
+        <polyline points="11.5,14 13.5,16 17,12" strokeWidth="1.6" stroke="#bbf7d0" />
+      </g>
+    </>
+  );
+}
+
+function CodeReviewer(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#a855f7" />
+          <stop offset="100%" stopColor="#7c3aed" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#ede9fe" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* eye */}
+        <path d="M6 16 Q16 8 26 16 Q16 24 6 16 Z" />
+        <circle cx="16" cy="16" r="3" fill="#ede9fe" stroke="none" />
+        <circle cx="16" cy="16" r="1.5" fill="#7c3aed" stroke="none" />
+        {/* code lines below */}
+        <line x1="9" y1="25" x2="15" y2="25" strokeWidth="1.2" opacity="0.6" />
+        <line x1="17" y1="25" x2="23" y2="25" strokeWidth="1.2" opacity="0.6" />
+      </g>
+    </>
+  );
+}
+
+function Architect(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#f59e0b" />
+          <stop offset="100%" stopColor="#d97706" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#fef3c7" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* pyramid / triangle */}
+        <polygon points="16,6 6,24 26,24" />
+        {/* inner grid lines */}
+        <line x1="11" y1="15" x2="21" y2="15" strokeWidth="1" opacity="0.5" />
+        <line x1="8.5" y1="20" x2="23.5" y2="20" strokeWidth="1" opacity="0.5" />
+        <line x1="16" y1="6" x2="16" y2="24" strokeWidth="1" opacity="0.5" />
+      </g>
+    </>
+  );
+}
+
+function SecurityReviewer(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#ef4444" />
+          <stop offset="100%" stopColor="#b91c1c" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#fee2e2" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* shield */}
+        <path d="M16 5 L24 9 L24 16 Q24 24 16 27 Q8 24 8 16 L8 9 Z" />
+        {/* lock */}
+        <rect x="13" y="16" width="6" height="5" rx="1" fill="#fee2e2" stroke="none" />
+        <path d="M14 16 L14 14 Q14 11 16 11 Q18 11 18 14 L18 16" strokeWidth="1.6" />
+        <circle cx="16" cy="18.5" r="0.8" fill="#b91c1c" stroke="none" />
+      </g>
+    </>
+  );
+}
+
+function Researcher(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#6366f1" />
+          <stop offset="100%" stopColor="#4f46e5" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#e0e7ff" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* telescope */}
+        <circle cx="10" cy="10" r="4" />
+        <line x1="13" y1="13" x2="22" y2="22" strokeWidth="2" />
+        <line x1="22" y1="22" x2="24" y2="26" strokeWidth="1.5" />
+        <line x1="22" y1="22" x2="26" y2="24" strokeWidth="1.5" />
+        {/* stars */}
+        <circle cx="22" cy="8" r="1" fill="#e0e7ff" stroke="none" />
+        <circle cx="25" cy="12" r="0.7" fill="#c7d2fe" stroke="none" />
+        <circle cx="19" cy="6" r="0.5" fill="#c7d2fe" stroke="none" />
+      </g>
+    </>
+  );
+}
+
+function DevOps(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#f97316" />
+          <stop offset="100%" stopColor="#ea580c" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#ffedd5" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* gear */}
+        <circle cx="16" cy="16" r="4" />
+        <circle cx="16" cy="16" r="7" strokeDasharray="3 2.5" />
+        {/* circular arrows */}
+        <path d="M16 6 A10 10 0 0 1 26 16" />
+        <polyline points="25,13 26,16 23,16" strokeWidth="1.5" />
+        <path d="M16 26 A10 10 0 0 1 6 16" />
+        <polyline points="7,19 6,16 9,16" strokeWidth="1.5" />
+      </g>
+    </>
+  );
+}
+
+function Designer(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#ec4899" />
+          <stop offset="100%" stopColor="#db2777" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#fce7f3" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* pen nib */}
+        <path d="M10 24 L13 14 L19 14 L22 24 Z" />
+        <path d="M14.5 14 L16 8 L17.5 14" strokeWidth="1.5" />
+        <line x1="16" y1="14" x2="16" y2="20" strokeWidth="1" opacity="0.5" />
+        {/* color dots */}
+        <circle cx="8" cy="10" r="2" fill="#fbbf24" stroke="none" />
+        <circle cx="12" cy="7" r="1.8" fill="#60a5fa" stroke="none" />
+        <circle cx="20" cy="7" r="1.8" fill="#34d399" stroke="none" />
+        <circle cx="24" cy="10" r="2" fill="#f87171" stroke="none" />
+      </g>
+    </>
+  );
+}
+
+function Planner(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#14b8a6" />
+          <stop offset="100%" stopColor="#0d9488" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#ccfbf1" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* map pin */}
+        <path d="M16 5 Q22 5 22 11 Q22 17 16 23 Q10 17 10 11 Q10 5 16 5 Z" />
+        <circle cx="16" cy="11" r="2.5" fill="#ccfbf1" stroke="none" />
+        {/* route dots */}
+        <circle cx="7" cy="20" r="1" fill="#ccfbf1" stroke="none" />
+        <circle cx="10" cy="25" r="0.8" fill="#99f6e4" stroke="none" />
+        <circle cx="22" cy="25" r="0.8" fill="#99f6e4" stroke="none" />
+        <circle cx="25" cy="20" r="1" fill="#ccfbf1" stroke="none" />
+        {/* route lines */}
+        <path d="M7 20 L10 25" strokeWidth="1" opacity="0.4" />
+        <path d="M22 25 L25 20" strokeWidth="1" opacity="0.4" />
+      </g>
+    </>
+  );
+}
+
+function DefaultIcon(id: string): React.ReactElement {
+  return (
+    <>
+      <defs>
+        <linearGradient id={`${id}-bg`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#64748b" />
+          <stop offset="100%" stopColor="#475569" />
+        </linearGradient>
+        <filter id={`${id}-glow`}>
+          <feGaussianBlur stdDeviation="1.2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <circle cx="16" cy="16" r="14" fill={`url(#${id}-bg)`} />
+      <g filter={`url(#${id}-glow)`} stroke="#e2e8f0" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {/* diamond / cube shape */}
+        <polygon points="16,5 27,16 16,27 5,16" />
+        <line x1="16" y1="5" x2="16" y2="27" strokeWidth="1" opacity="0.4" />
+        <line x1="5" y1="16" x2="27" y2="16" strokeWidth="1" opacity="0.4" />
+        {/* inner diamond */}
+        <polygon points="16,10 22,16 16,22 10,16" strokeWidth="1" opacity="0.5" />
+      </g>
+    </>
+  );
+}
+
+const ROLE_RENDERERS: Record<string, RoleRenderer> = {
+  lead_engineer: LeadEngineer,
+  tester: Tester,
+  code_reviewer: CodeReviewer,
+  architect: Architect,
+  security_reviewer: SecurityReviewer,
+  researcher: Researcher,
+  devops: DevOps,
+  designer: Designer,
+  planner: Planner,
+};
+
+let idCounter = 0;
+
 export function PixelAvatar({ role, size = 32, className = "" }: PixelAvatarProps) {
-  const pixels = (role && ROLE_PIXELS[role]) || DEFAULT_ROBOT;
+  const renderer = (role && ROLE_RENDERERS[role]) || DefaultIcon;
+  const uniqueId = `avatar-${role || "default"}-${idCounter++}`;
 
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 16 16"
+      viewBox="0 0 32 32"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
-      style={{ imageRendering: "pixelated" }}
     >
-      {renderPixels(pixels)}
+      {renderer(uniqueId)}
     </svg>
   );
 }
