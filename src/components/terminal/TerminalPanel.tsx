@@ -101,8 +101,9 @@ function LogEntry({ log }: { log: TaskLog }) {
     <div style={{
       background: style.bg,
       borderLeft: `2px solid ${style.border}`,
-      borderRadius: "4px",
+      borderRadius: "8px",
       marginBottom: "4px",
+      transition: "background 0.15s ease, transform 0.15s ease",
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 8px" }}>
         <span style={{ fontSize: "10px", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", flexShrink: 0, marginTop: "2px", width: "52px" }}>
@@ -222,16 +223,16 @@ function TerminalView({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        style={{ flex: 1, overflowY: "auto", background: "#0d0d0d" }}
+        style={{ flex: 1, overflowY: "auto", background: "rgba(13, 13, 13, 0.85)" }}
       >
         {text ? (
           <pre
             ref={preRef}
             style={{
               fontSize: "12px",
-              lineHeight: "1.6",
+              lineHeight: "1.7",
               color: "#e8e8e8",
-              padding: "12px",
+              padding: "14px",
               fontFamily: "var(--font-mono)",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
@@ -323,22 +324,25 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
 
   return (
     <div style={{
-      background: "#111111",
-      border: "1px solid var(--border-default)",
-      borderRadius: "8px",
+      background: "rgba(17, 17, 17, 0.88)",
+      backdropFilter: "blur(24px)",
+      WebkitBackdropFilter: "blur(24px)",
+      border: "1px solid rgba(255, 255, 255, 0.08)",
+      borderRadius: "16px",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
       height: "384px",
+      boxShadow: "0 16px 48px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04)",
     }}>
       {/* Header */}
       <div style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "6px 12px",
-        background: "#1a1a1a",
-        borderBottom: "1px solid var(--border-default)",
+        padding: "8px 14px",
+        background: "rgba(26, 26, 26, 0.9)",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
           {TABS.map((tab) => (
@@ -346,15 +350,16 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               style={{
-                padding: "4px 10px",
+                padding: "4px 12px",
                 fontSize: "11px",
-                fontWeight: 500,
-                borderRadius: "4px",
+                fontWeight: activeTab === tab.key ? 600 : 500,
+                borderRadius: "8px",
                 border: "none",
                 cursor: "pointer",
-                transition: "background 0.15s",
-                background: activeTab === tab.key ? "var(--bg-hover)" : "transparent",
-                color: activeTab === tab.key ? "#e8e8e8" : "#666",
+                transition: "all 0.2s ease",
+                background: activeTab === tab.key ? "rgba(139, 92, 246, 0.18)" : "transparent",
+                color: activeTab === tab.key ? "#c4b5fd" : "#666",
+                boxShadow: activeTab === tab.key ? "0 0 12px rgba(139, 92, 246, 0.15), inset 0 0 8px rgba(139, 92, 246, 0.05)" : "none",
               }}
             >
               {tab.icon} {tab.label}
@@ -396,7 +401,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
       {isTerminalTab ? (
         <TerminalView taskId={taskId} on={on} />
       ) : (
-        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "#0d0d0d" }}>
+        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "10px", background: "rgba(13, 13, 13, 0.85)" }}>
           {timeline.length === 0 && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666", fontSize: "12px" }}>
               No activity yet

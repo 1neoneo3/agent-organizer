@@ -29,34 +29,38 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
       className="flex flex-col h-full"
       style={{
         width: "220px",
-        background: "var(--bg-secondary)",
-        borderRight: "1px solid var(--border-default)",
+        background: "linear-gradient(180deg, color-mix(in srgb, var(--bg-secondary) 95%, var(--accent-primary)) 0%, var(--bg-secondary) 100%)",
+        borderRight: "1px solid color-mix(in srgb, var(--border-default) 50%, transparent)",
+        backdropFilter: "blur(12px)",
       }}
     >
       {/* Header */}
       <div style={{
-        padding: "16px 16px 12px",
+        padding: "20px 16px 14px",
         display: "flex",
         alignItems: "center",
-        gap: "8px",
+        gap: "10px",
       }}>
         <div style={{
-          width: "24px",
-          height: "24px",
-          borderRadius: "6px",
-          background: "var(--accent-primary)",
+          width: "28px",
+          height: "28px",
+          borderRadius: "8px",
+          background: "linear-gradient(135deg, var(--accent-primary), var(--accent-hover))",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          boxShadow: "0 2px 8px color-mix(in srgb, var(--accent-primary) 30%, transparent)",
         }}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2">
             <path d="M2 8l4 4 8-8" />
           </svg>
         </div>
         <span style={{
-          fontSize: "14px",
-          fontWeight: 600,
-          color: "var(--text-primary)",
+          fontSize: "15px",
+          fontWeight: 700,
+          background: "linear-gradient(135deg, var(--text-primary), var(--accent-primary))",
+          WebkitBackgroundClip: "text",
+          WebkitTextFillColor: "transparent",
           letterSpacing: "-0.02em",
         }}>
           Agent Organizer
@@ -65,23 +69,30 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
 
       {/* Connection status */}
       <div style={{
-        padding: "0 16px 12px",
+        padding: "0 16px 14px",
       }}>
         <span style={{
-          display: "flex",
+          display: "inline-flex",
           alignItems: "center",
           gap: "6px",
           fontSize: "11px",
           fontWeight: 500,
           color: "var(--text-tertiary)",
+          padding: "4px 10px",
+          borderRadius: "999px",
+          background: "color-mix(in srgb, var(--bg-tertiary) 60%, transparent)",
         }}>
-          <span style={{
-            display: "inline-block",
-            width: "6px",
-            height: "6px",
-            borderRadius: "50%",
-            background: connected ? "#22c55e" : "#ef4444",
-          }} />
+          <span
+            className={connected ? "pulse-online" : ""}
+            style={{
+              display: "inline-block",
+              width: "7px",
+              height: "7px",
+              borderRadius: "50%",
+              background: connected ? "#22c55e" : "#ef4444",
+              flexShrink: 0,
+            }}
+          />
           {connected ? "Connected" : "Disconnected"}
         </span>
       </div>
@@ -93,34 +104,9 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
             key={item.to}
             to={item.to}
             end={item.to === "/"}
-            style={({ isActive }) => ({
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              padding: "7px 8px",
-              fontSize: "13px",
-              fontWeight: isActive ? 500 : 400,
-              color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-              background: isActive ? "var(--bg-hover)" : "transparent",
-              textDecoration: "none",
-              borderRadius: "6px",
-              transition: "background 0.1s, color 0.1s",
-              cursor: "pointer",
-              marginBottom: "1px",
-            })}
-            onMouseEnter={(e) => {
-              const link = e.currentTarget;
-              if (!link.style.background || link.style.background === "transparent") {
-                link.style.background = "var(--bg-hover)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              const link = e.currentTarget;
-              // Check if it's the active link by looking at the font weight
-              if (link.style.fontWeight !== "500") {
-                link.style.background = "transparent";
-              }
-            }}
+            className={({ isActive }) =>
+              `sidebar-nav-item${isActive ? " sidebar-nav-item--active" : ""}`
+            }
           >
             <span style={{ width: "20px", display: "flex", justifyContent: "center", color: "var(--text-tertiary)" }}>{item.icon}</span>
             {item.label}
@@ -129,27 +115,10 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
       </nav>
 
       {/* Day/Night Toggle */}
-      <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--border-subtle)" }}>
+      <div style={{ padding: "12px 16px 16px", borderTop: "1px solid color-mix(in srgb, var(--border-subtle) 40%, transparent)" }}>
         <button
           onClick={toggleTimeOfDay}
-          style={{
-            width: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "6px",
-            padding: "6px 12px",
-            fontSize: "12px",
-            fontWeight: 500,
-            color: "var(--text-secondary)",
-            background: "var(--bg-tertiary)",
-            border: "1px solid var(--border-default)",
-            borderRadius: "6px",
-            cursor: "pointer",
-            transition: "background 0.15s ease",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-tertiary)"; }}
+          className="theme-toggle-btn"
         >
           {timeOfDay === "night" ? "Light Mode" : "Dark Mode"}
         </button>

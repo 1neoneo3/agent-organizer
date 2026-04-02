@@ -123,27 +123,16 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
   return (
     <div
+      className="glass-card card-enter"
       style={{
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border-default)",
-        borderRadius: "8px",
         cursor: "pointer",
-        transition: "border-color 0.15s ease, background 0.15s ease",
       }}
       onClick={() => { play("select"); onSelect?.(task.id); }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--text-tertiary)";
-        e.currentTarget.style.background = "var(--bg-hover)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-default)";
-        e.currentTarget.style.background = "var(--bg-secondary)";
-      }}
     >
       {/* Card header: title + status */}
       <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
+          <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--text-primary)", fontFamily: "var(--font-sans)", fontWeight: 500 }}>
             {task.task_number && (
               <span style={{ color: "var(--text-secondary)", marginRight: "4px", fontSize: "11px", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{task.task_number}</span>
             )}
@@ -152,27 +141,18 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
-            <span style={{
-              padding: "2px 6px",
-              background: "#f59e0b",
+            <span className="status-pill" style={{
+              background: "linear-gradient(135deg, #f59e0b, #f97316)",
               color: "#fff",
-              borderRadius: "4px",
-              fontSize: "10px",
-              fontWeight: 600,
+              boxShadow: "0 2px 6px rgba(245, 158, 11, 0.3)",
             }}>
               Input
             </span>
           )}
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            padding: "2px 6px",
-            borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 600,
+          <span className="status-pill" style={{
             color: statusColor,
-            background: "var(--bg-tertiary)",
+            background: "color-mix(in srgb, var(--bg-tertiary) 70%, transparent)",
+            backdropFilter: "blur(4px)",
           }}>
             <span style={{
               width: "6px",
@@ -180,6 +160,7 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
               borderRadius: "50%",
               background: statusColor,
               flexShrink: 0,
+              boxShadow: `0 0 6px ${statusColor}`,
             }} />
             {STATUS_DISPLAY[task.status] ?? task.status}
           </span>
@@ -192,9 +173,9 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           onClick={(e) => e.stopPropagation()}
           style={{
             padding: "8px 12px",
-            background: "var(--bg-tertiary)",
-            borderTop: "1px solid var(--border-default)",
-            borderBottom: "1px solid var(--border-default)",
+            background: "color-mix(in srgb, var(--bg-tertiary) 60%, transparent)",
+            borderTop: "1px solid color-mix(in srgb, var(--border-default) 50%, transparent)",
+            borderBottom: "1px solid color-mix(in srgb, var(--border-default) 50%, transparent)",
           }}
         >
           <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-progress)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
@@ -226,9 +207,9 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         <div
           style={{
             padding: "6px 12px",
-            background: "var(--bg-tertiary)",
-            borderTop: "1px solid var(--border-default)",
-            borderBottom: "1px solid var(--border-default)",
+            background: "color-mix(in srgb, var(--bg-tertiary) 60%, transparent)",
+            borderTop: "1px solid color-mix(in srgb, var(--border-default) 50%, transparent)",
+            borderBottom: "1px solid color-mix(in srgb, var(--border-default) 50%, transparent)",
             textAlign: "center",
           }}
         >
@@ -242,11 +223,12 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
       <div style={{ padding: "6px 12px 10px" }}>
         {/* Metadata row */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+          <span className={`priority-dot ${task.priority >= 8 ? "priority-dot--high" : task.priority >= 5 ? "priority-dot--medium" : "priority-dot--low"}`} title={`Priority ${task.priority}`} />
           <span style={{
-            padding: "1px 6px",
-            background: "var(--bg-tertiary)",
+            padding: "2px 8px",
+            background: "color-mix(in srgb, var(--bg-tertiary) 70%, transparent)",
             color: "var(--text-secondary)",
-            borderRadius: "4px",
+            borderRadius: "999px",
             fontSize: "10px",
             fontWeight: 600,
           }}>
@@ -254,10 +236,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           </span>
           {task.directive_id && (
             <span style={{
-              padding: "1px 6px",
-              background: "var(--accent-subtle)",
+              padding: "2px 8px",
+              background: "color-mix(in srgb, var(--accent-subtle) 60%, transparent)",
               color: "var(--accent-primary)",
-              borderRadius: "4px",
+              borderRadius: "999px",
               fontSize: "10px",
               fontWeight: 600,
             }}>
@@ -278,10 +260,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{agent.name}</span>
             {roleLabel && (
               <span style={{
-                padding: "1px 4px",
-                background: "var(--bg-tertiary)",
+                padding: "2px 6px",
+                background: "color-mix(in srgb, var(--bg-tertiary) 60%, transparent)",
                 color: "var(--text-tertiary)",
-                borderRadius: "3px",
+                borderRadius: "999px",
                 fontSize: "10px",
                 fontWeight: 500,
               }}>
