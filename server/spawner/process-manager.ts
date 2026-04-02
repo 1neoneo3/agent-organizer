@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOWED_TOOLS } from "./cli-tools.js";
+import { runExplorePhase } from "./explore-phase.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt } from "./prompt-builder.js";
@@ -155,13 +156,32 @@ export function spawnAgent(
     }
   }
 
+  // Run Explore phase before Implement (if enabled and applicable)
+  let exploreContext = "";
+  if (!isContinue && !isQaRun && !isReviewRun) {
+    // Check for existing explore result (from previous run)
+    const existingExplore = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[EXPLORE]%' ORDER BY created_at DESC LIMIT 1"
+    ).get(task.id) as { message: string } | undefined;
+
+    if (existingExplore) {
+      exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" +
+        existingExplore.message.replace("[EXPLORE] ", "");
+    } else {
+      const exploreResult = runExplorePhase(db, ws, agent, task);
+      if (exploreResult) {
+        exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" + exploreResult;
+      }
+    }
+  }
+
   const prompt = isContinue
     ? options!.continuePrompt!
     : (isQaRun
       ? buildQaPrompt(task) + handoffContext
       : (isReviewRun
         ? buildReviewPrompt(task) + handoffContext
-        : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy })));
+        : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy }) + exploreContext));
 
   // Log directory
   const logDir = join("data", "logs");
