@@ -3,7 +3,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback } from "./cli-tools.js";
+import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOWED_TOOLS } from "./cli-tools.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt } from "./prompt-builder.js";
@@ -118,14 +118,6 @@ export function spawnAgent(
   const projectPath = task.project_path ?? process.cwd();
   const workflow = loadProjectWorkflow(projectPath);
   const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
-  const args = buildAgentArgs(agent.cli_provider, {
-    model: agent.cli_model ?? undefined,
-    reasoningLevel: agent.cli_reasoning_level ?? undefined,
-    resumeSessionId,
-    codexSandboxMode: runtimePolicy.codexSandboxMode ?? undefined,
-    codexApprovalPolicy: runtimePolicy.codexApprovalPolicy ?? undefined,
-  });
-
   // Determine if self-review applies (skip for continue mode)
   const selfReviewThreshold = getSetting(db, "self_review_threshold") ?? "small";
   const selfReview = !isContinue && (
@@ -135,7 +127,22 @@ export function spawnAgent(
   );
 
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
+
   const isQaRun = task.status === "qa_testing";
+
+  // Restrict tools for review/QA phases (read-only)
+  const allowedTools = (isReviewRun || isQaRun)
+    ? REVIEW_ALLOWED_TOOLS
+    : undefined;
+
+  const args = buildAgentArgs(agent.cli_provider, {
+    model: agent.cli_model ?? undefined,
+    reasoningLevel: agent.cli_reasoning_level ?? undefined,
+    resumeSessionId,
+    codexSandboxMode: runtimePolicy.codexSandboxMode ?? undefined,
+    codexApprovalPolicy: runtimePolicy.codexApprovalPolicy ?? undefined,
+    allowedTools,
+  });
 
   // Extract handoff context for QA/review agents
   let handoffContext = "";
@@ -205,6 +212,20 @@ export function spawnAgent(
 
   // Dedup: track recent assistant messages to skip duplicates from multiple event formats
   const recentAssistantMessages = new Set<string>();
+
+  // Loop detection: track normalized stderr patterns
+  const LOOP_THRESHOLD = 3;
+  const stderrPatternCounts = new Map<string, number>();
+  let loopDetected = false;
+
+  function normalizeStderrForLoop(text: string): string {
+    return text
+      .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.\d]*/g, "TIMESTAMP")
+      .replace(/line \d+/gi, "line N")
+      .replace(/:\d+:\d+/g, ":N:N")
+      .replace(/0x[0-9a-fA-F]+/g, "0xADDR")
+      .trim();
+  }
 
   // Flag to stop processing stdout after an interactive prompt is detected and process killed
   let interactivePromptKilled = false;
@@ -386,6 +407,23 @@ export function spawnAgent(
     logStream.write(`[stderr] ${text}`);
     insertStderrStmt.run(task.id, text);
     ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
+
+    // Loop detection: normalize and count repeated error patterns
+    if (!loopDetected) {
+      const normalized = normalizeStderrForLoop(text);
+      if (normalized.length > 20) {
+        const count = (stderrPatternCounts.get(normalized) ?? 0) + 1;
+        stderrPatternCounts.set(normalized, count);
+        if (count >= LOOP_THRESHOLD) {
+          loopDetected = true;
+          const msg = `[Loop Detection] Same error repeated ${count} times, terminating process. Pattern: ${normalized.slice(0, 200)}`;
+          logStream.write(`${msg}\n`);
+          insertLogStmt.run(task.id, "system", msg);
+          ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: msg }], { taskId: task.id });
+          child.kill("SIGTERM");
+        }
+      }
+    }
   });
 
   child.on("error", (error) => {

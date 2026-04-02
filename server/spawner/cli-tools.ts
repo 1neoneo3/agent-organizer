@@ -27,6 +27,21 @@ export function withCliPathFallback(currentPath: string): string {
   return [homeBin, ...filtered].join(":");
 }
 
+/** Default allowed tools for implementation tasks */
+const DEFAULT_ALLOWED_TOOLS = [
+  "Read", "Write", "Edit", "Bash", "Grep", "Glob", "Agent",
+];
+
+/** Restricted tools for explore/read-only phases */
+export const EXPLORE_ALLOWED_TOOLS = [
+  "Read", "Bash", "Grep", "Glob", "Agent",
+];
+
+/** Tools for review phases */
+export const REVIEW_ALLOWED_TOOLS = [
+  "Read", "Bash", "Grep", "Glob",
+];
+
 export function buildAgentArgs(
   provider: string,
   opts?: {
@@ -36,6 +51,7 @@ export function buildAgentArgs(
     resumeSessionId?: string;
     codexSandboxMode?: CodexSandboxMode;
     codexApprovalPolicy?: CodexApprovalPolicy;
+    allowedTools?: string[];
   }
 ): string[] {
   const {
@@ -45,6 +61,7 @@ export function buildAgentArgs(
     resumeSessionId,
     codexSandboxMode = "workspace-write",
     codexApprovalPolicy = "on-request",
+    allowedTools,
   } = opts ?? {};
 
   switch (provider) {
@@ -60,6 +77,9 @@ export function buildAgentArgs(
       ];
       if (resumeSessionId) args.push("--resume", resumeSessionId);
       if (model) args.push("--model", model);
+      if (allowedTools && allowedTools.length > 0) {
+        args.push("--allowedTools", allowedTools.join(","));
+      }
       return args;
     }
     case "codex": {

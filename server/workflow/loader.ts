@@ -20,6 +20,7 @@ export interface ProjectWorkflow {
   branchPrefix: string;
   beforeRun: string[];
   afterRun: string[];
+  formatCommand?: string | null;
   includeTask: boolean;
   includeReview: boolean;
   includeDecompose: boolean;
@@ -36,6 +37,7 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   branchPrefix: "ao",
   beforeRun: [],
   afterRun: [],
+  formatCommand: null,
   includeTask: true,
   includeReview: true,
   includeDecompose: true,
@@ -133,6 +135,9 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
         break;
       case "after_run":
         workflow.afterRun = parseCommandList(value);
+        break;
+      case "format_command":
+        workflow.formatCommand = value || null;
         break;
       case "include_task": {
         const parsed = parseBoolean(value);

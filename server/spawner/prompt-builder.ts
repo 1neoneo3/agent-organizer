@@ -28,6 +28,55 @@ function loadRules(): RuleSnippet[] {
   }
 }
 
+/**
+ * Extract file paths mentioned in task description and search for
+ * recent merged PRs touching those paths to inject as context.
+ */
+function extractContextFromTask(task: Task): string {
+  if (!task.description || !task.project_path) return "";
+
+  // Extract file paths from description
+  const pathPattern = /(?:[\w./]+\/[\w.-]+\.(?:ts|tsx|js|jsx|py|sql|yml|yaml|json|md))/g;
+  const paths = [...new Set(task.description.match(pathPattern) ?? [])];
+  if (paths.length === 0) return "";
+
+  const parts: string[] = [];
+  parts.push("## Auto-Injected Context");
+  parts.push("");
+  parts.push("The following file paths were detected in the task description:");
+  for (const p of paths.slice(0, 10)) {
+    parts.push(`- \`${p}\``);
+  }
+  parts.push("");
+
+  // Try to find recent merged PRs touching these paths
+  try {
+    const { execFileSync } = require("node:child_process");
+    const pathArgs = paths.slice(0, 5).map(p => `-- ${p}`).join(" ");
+    const gitLog = execFileSync("git", [
+      "log", "--oneline", "--merges", "-10",
+      "--", ...paths.slice(0, 5),
+    ], {
+      cwd: task.project_path,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+    }).trim();
+
+    if (gitLog) {
+      parts.push("Recent merged commits touching these files:");
+      parts.push("```");
+      parts.push(gitLog);
+      parts.push("```");
+      parts.push("");
+    }
+  } catch {
+    // git not available or not a git repo — skip
+  }
+
+  return parts.join("\n");
+}
+
 /** Load `CLAUDE.md` from the project root if it exists. */
 function loadProjectInstructions(projectPath: string | null): string | null {
   if (!projectPath) return null;
@@ -205,6 +254,13 @@ export function buildTaskPrompt(
   // Inject CLAUDE.md + rules
   appendSharedContext(parts, task.project_path);
 
+  // Inject auto-detected context (file paths, recent PRs)
+  const autoContext = extractContextFromTask(task);
+  if (autoContext) {
+    parts.push(autoContext);
+    parts.push("");
+  }
+
   parts.push(`# Task: ${task.title}`);
   parts.push("");
   if (task.description) {
@@ -237,6 +293,16 @@ export function buildTaskPrompt(
   parts.push("This contract will be used by the QA agent to verify your work.");
   parts.push("After outputting the contract, proceed with implementation.");
   parts.push("");
+  // Inject format command if configured in WORKFLOW.md
+  if (opts?.workflow?.formatCommand) {
+    parts.push("## Auto-Format (MUST run after every file change)");
+    parts.push("");
+    parts.push(`After editing any file, run: \`${opts.workflow.formatCommand}\``);
+
+    parts.push("This ensures consistent formatting without manual effort.");
+    parts.push("");
+  }
+
   parts.push("## Mandatory Pre-Completion Checklist (MUST DO before finishing)");
   parts.push("");
   parts.push("Before you declare your work done, you MUST run ALL of the following and fix any issues:");
@@ -318,6 +384,69 @@ export function buildTaskPrompt(
  * Build a prompt that instructs the AI to decompose a directive into numbered tasks
  * with dependency tracking, plus a Markdown implementation plan.
  */
+/**
+ * Build a prompt for an Explore phase (read-only investigation).
+ * The agent investigates the codebase without making any changes,
+ * then outputs a structured implementation plan.
+ */
+export function buildExplorePrompt(task: Task): string {
+  const parts: string[] = [];
+
+  parts.push("## Language");
+  parts.push(
+    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
+  );
+  parts.push("");
+
+  appendSharedContext(parts, task.project_path);
+
+  parts.push("# Explore Phase: Investigation Only");
+  parts.push("");
+  parts.push("**CRITICAL CONSTRAINT: DO NOT modify any files. Read-only investigation only.**");
+  parts.push("");
+  parts.push(`## Task: ${task.title}`);
+  parts.push("");
+  if (task.description) {
+    parts.push(task.description);
+    parts.push("");
+  }
+  if (task.project_path) {
+    parts.push(`Project path: ${task.project_path}`);
+    parts.push("");
+  }
+
+  parts.push("## Your Mission");
+  parts.push("");
+  parts.push("1. Read and understand the relevant code, dependencies, and patterns");
+  parts.push("2. Identify all files that need to be created or modified");
+  parts.push("3. Check for existing patterns, conventions, and similar implementations");
+  parts.push("4. Identify potential risks and edge cases");
+  parts.push("");
+
+  parts.push("## Output Format");
+  parts.push("");
+  parts.push("Output your findings as a structured plan:");
+  parts.push("");
+  parts.push("---EXPLORE RESULT---");
+  parts.push("**Relevant Files:**");
+  parts.push("- path/to/file.ts (reason for relevance)");
+  parts.push("");
+  parts.push("**Existing Patterns:**");
+  parts.push("- Pattern description (file reference)");
+  parts.push("");
+  parts.push("**Implementation Plan:**");
+  parts.push("1. Step 1: what to do and where");
+  parts.push("2. Step 2: ...");
+  parts.push("");
+  parts.push("**Risks/Edge Cases:**");
+  parts.push("- Risk description");
+  parts.push("---END EXPLORE---");
+  parts.push("");
+  parts.push("IMPORTANT: Do NOT create, edit, or write any files. Only read and analyze.");
+
+  return parts.join("\n");
+}
+
 /**
  * Build a prompt for an automated code review run.
  * The reviewer agent checks the implementation and outputs a verdict marker.
