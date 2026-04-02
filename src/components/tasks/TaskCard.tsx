@@ -123,22 +123,9 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
   return (
     <div
-      style={{
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border-default)",
-        borderRadius: "8px",
-        cursor: "pointer",
-        transition: "border-color 0.15s ease, background 0.15s ease",
-      }}
+      className="glass-card"
+      style={{ cursor: "pointer" }}
       onClick={() => { play("select"); onSelect?.(task.id); }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--text-tertiary)";
-        e.currentTarget.style.background = "var(--bg-hover)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-default)";
-        e.currentTarget.style.background = "var(--bg-secondary)";
-      }}
     >
       {/* Card header: title + status */}
       <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
@@ -152,27 +139,16 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
-            <span style={{
-              padding: "2px 6px",
-              background: "#f59e0b",
-              color: "#fff",
-              borderRadius: "4px",
-              fontSize: "10px",
-              fontWeight: 600,
+            <span className="status-pill" style={{
+              background: "rgba(245, 158, 11, 0.15)",
+              color: "#f59e0b",
             }}>
               Input
             </span>
           )}
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            padding: "2px 6px",
-            borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 600,
+          <span className="status-pill" style={{
             color: statusColor,
-            background: "var(--bg-tertiary)",
+            background: `color-mix(in srgb, ${statusColor} 12%, transparent)`,
           }}>
             <span style={{
               width: "6px",
@@ -242,24 +218,18 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
       <div style={{ padding: "6px 12px 10px" }}>
         {/* Metadata row */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-          <span style={{
-            padding: "1px 6px",
+          <span className="status-pill" style={{
             background: "var(--bg-tertiary)",
             color: "var(--text-secondary)",
-            borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 600,
+            padding: "2px 8px",
           }}>
             {SIZE_LABEL[task.task_size] ?? "?"}
           </span>
           {task.directive_id && (
-            <span style={{
-              padding: "1px 6px",
+            <span className="status-pill" style={{
               background: "var(--accent-subtle)",
               color: "var(--accent-primary)",
-              borderRadius: "4px",
-              fontSize: "10px",
-              fontWeight: 600,
+              padding: "2px 8px",
             }}>
               Directive
             </span>

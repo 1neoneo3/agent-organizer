@@ -26,12 +26,8 @@ interface SidebarProps {
 export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps) {
   return (
     <aside
-      className="flex flex-col h-full"
-      style={{
-        width: "220px",
-        background: "var(--bg-secondary)",
-        borderRight: "1px solid var(--border-default)",
-      }}
+      className="flex flex-col h-full glass-sidebar"
+      style={{ width: "220px" }}
     >
       {/* Header */}
       <div style={{
@@ -40,23 +36,22 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
         alignItems: "center",
         gap: "8px",
       }}>
-        <div style={{
-          width: "24px",
-          height: "24px",
-          borderRadius: "6px",
-          background: "var(--accent-primary)",
+        <div className="gradient-accent" style={{
+          width: "26px",
+          height: "26px",
+          borderRadius: "8px",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          boxShadow: "0 2px 8px rgba(139, 92, 246, 0.3)",
         }}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2">
             <path d="M2 8l4 4 8-8" />
           </svg>
         </div>
-        <span style={{
-          fontSize: "14px",
-          fontWeight: 600,
-          color: "var(--text-primary)",
+        <span className="gradient-text" style={{
+          fontSize: "15px",
+          fontWeight: 700,
           letterSpacing: "-0.02em",
         }}>
           Agent Organizer
@@ -64,9 +59,7 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
       </div>
 
       {/* Connection status */}
-      <div style={{
-        padding: "0 16px 12px",
-      }}>
+      <div style={{ padding: "0 16px 12px" }}>
         <span style={{
           display: "flex",
           alignItems: "center",
@@ -75,10 +68,10 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
           fontWeight: 500,
           color: "var(--text-tertiary)",
         }}>
-          <span style={{
+          <span className={connected ? "pulse-working" : ""} style={{
             display: "inline-block",
-            width: "6px",
-            height: "6px",
+            width: "7px",
+            height: "7px",
             borderRadius: "50%",
             background: connected ? "#22c55e" : "#ef4444",
           }} />
@@ -93,31 +86,31 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
             key={item.to}
             to={item.to}
             end={item.to === "/"}
+            className={({ isActive }: { isActive: boolean }) => isActive ? "nav-active" : ""}
             style={({ isActive }) => ({
               display: "flex",
               alignItems: "center",
               gap: "10px",
-              padding: "7px 8px",
+              padding: "8px 10px",
               fontSize: "13px",
               fontWeight: isActive ? 500 : 400,
               color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
-              background: isActive ? "var(--bg-hover)" : "transparent",
+              background: isActive ? undefined : "transparent",
               textDecoration: "none",
-              borderRadius: "6px",
-              transition: "background 0.1s, color 0.1s",
+              borderRadius: "8px",
+              transition: "background 0.15s ease, color 0.15s ease",
               cursor: "pointer",
-              marginBottom: "1px",
+              marginBottom: "2px",
             })}
             onMouseEnter={(e) => {
               const link = e.currentTarget;
-              if (!link.style.background || link.style.background === "transparent") {
+              if (!link.classList.contains("nav-active")) {
                 link.style.background = "var(--bg-hover)";
               }
             }}
             onMouseLeave={(e) => {
               const link = e.currentTarget;
-              // Check if it's the active link by looking at the font weight
-              if (link.style.fontWeight !== "500") {
+              if (!link.classList.contains("nav-active")) {
                 link.style.background = "transparent";
               }
             }}
@@ -138,18 +131,18 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
             alignItems: "center",
             justifyContent: "center",
             gap: "6px",
-            padding: "6px 12px",
+            padding: "8px 12px",
             fontSize: "12px",
             fontWeight: 500,
             color: "var(--text-secondary)",
             background: "var(--bg-tertiary)",
             border: "1px solid var(--border-default)",
-            borderRadius: "6px",
+            borderRadius: "10px",
             cursor: "pointer",
-            transition: "background 0.15s ease",
+            transition: "background 0.2s ease, transform 0.15s ease",
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-tertiary)"; }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-tertiary)"; e.currentTarget.style.transform = "translateY(0)"; }}
         >
           {timeOfDay === "night" ? "Light Mode" : "Dark Mode"}
         </button>
