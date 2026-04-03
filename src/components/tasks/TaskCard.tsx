@@ -31,6 +31,24 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: "var(--status-cancelled)",
 };
 
+const STATUS_PILL_CLASSES: Record<string, string> = {
+  inbox: "status-pill-inbox",
+  in_progress: "status-pill-progress",
+  self_review: "status-pill-review",
+  qa_testing: "status-pill-qa",
+  pr_review: "status-pill-review",
+  done: "status-pill-done",
+  cancelled: "status-pill-cancelled",
+};
+
+const PRIORITY_COLORS: Record<number, string> = {
+  1: "#ef4444",
+  2: "#f59e0b",
+  3: "#3b82f6",
+  4: "#a0a0a0",
+  5: "#a0a0a0",
+};
+
 interface TaskCardProps {
   task: Task;
   assignedAgent?: Agent;
@@ -120,25 +138,14 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
   };
 
   const statusColor = STATUS_COLORS[task.status] ?? "var(--status-inbox)";
+  const statusPillClass = STATUS_PILL_CLASSES[task.status] ?? "status-pill-inbox";
+  const priorityColor = PRIORITY_COLORS[task.priority] ?? "#a0a0a0";
 
   return (
     <div
-      style={{
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border-default)",
-        borderRadius: "8px",
-        cursor: "pointer",
-        transition: "border-color 0.15s ease, background 0.15s ease",
-      }}
+      className={`glass-card card-enter${hasInteractivePrompt ? " attention-border" : ""}`}
+      style={{ cursor: "pointer" }}
       onClick={() => { play("select"); onSelect?.(task.id); }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--text-tertiary)";
-        e.currentTarget.style.background = "var(--bg-hover)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-default)";
-        e.currentTarget.style.background = "var(--bg-secondary)";
-      }}
     >
       {/* Card header: title + status */}
       <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
@@ -152,28 +159,11 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
-            <span style={{
-              padding: "2px 6px",
-              background: "#f59e0b",
-              color: "#fff",
-              borderRadius: "4px",
-              fontSize: "10px",
-              fontWeight: 600,
-            }}>
+            <span className="status-pill status-pill-input">
               Input
             </span>
           )}
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            padding: "2px 6px",
-            borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 600,
-            color: statusColor,
-            background: "var(--bg-tertiary)",
-          }}>
+          <span className={`status-pill ${statusPillClass}`}>
             <span style={{
               width: "6px",
               height: "6px",
@@ -242,24 +232,19 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
       <div style={{ padding: "6px 12px 10px" }}>
         {/* Metadata row */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-          <span style={{
-            padding: "1px 6px",
+          <span className="priority-dot" style={{ background: priorityColor }} title={`Priority ${task.priority}`} />
+          <span className="status-pill" style={{
             background: "var(--bg-tertiary)",
             color: "var(--text-secondary)",
-            borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 600,
+            padding: "2px 8px",
           }}>
             {SIZE_LABEL[task.task_size] ?? "?"}
           </span>
           {task.directive_id && (
-            <span style={{
-              padding: "1px 6px",
+            <span className="status-pill" style={{
               background: "var(--accent-subtle)",
               color: "var(--accent-primary)",
-              borderRadius: "4px",
-              fontSize: "10px",
-              fontWeight: 600,
+              padding: "2px 8px",
             }}>
               Directive
             </span>

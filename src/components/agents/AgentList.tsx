@@ -43,22 +43,16 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
-        <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Agents</h2>
+        <h2 className="page-title" style={{ margin: 0 }}>Agents</h2>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ display: "flex", gap: "6px" }}>
             {Object.entries(cliStatus).map(([cli, ok]) => (
               <span
                 key={cli}
+                className="status-pill"
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "4px",
-                  padding: "3px 8px",
-                  fontSize: "11px",
-                  fontWeight: 500,
-                  borderRadius: "4px",
                   color: ok ? "var(--status-done)" : "var(--text-tertiary)",
-                  background: "var(--bg-tertiary)",
+                  background: ok ? "rgba(34, 197, 94, 0.1)" : "var(--bg-tertiary)",
                 }}
               >
                 {cli} {ok ? "\u2713" : "\u2717"}
@@ -96,15 +90,13 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
           ) : (
             <div
               key={agent.id}
+              className={`glass-card card-enter${agent.status === "working" ? " agent-working-ring" : ""}`}
               style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "8px",
                 padding: "14px 16px",
                 display: "flex",
                 alignItems: "center",
                 gap: "14px",
-                transition: "border-color 0.15s ease",
+                position: "relative",
               }}
             >
               <PixelAvatar role={agent.role} size={36} />
@@ -112,20 +104,16 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{agent.name}</span>
                   {getRoleLabel(agent.role) && (
-                    <span style={{
-                      padding: "1px 6px",
-                      borderRadius: "4px",
-                      fontSize: "10px",
-                      fontWeight: 600,
+                    <span className="status-pill" style={{
                       color: "var(--accent-primary)",
                       background: "var(--accent-subtle)",
                     }}>
                       {getRoleLabel(agent.role)}
                     </span>
                   )}
-                  <span style={{
-                    width: "7px",
-                    height: "7px",
+                  <span className={agent.status === "working" ? "pulse-working" : ""} style={{
+                    width: "8px",
+                    height: "8px",
                     borderRadius: "50%",
                     background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
                     flexShrink: 0,
@@ -157,7 +145,7 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
         )}
 
         {agents.length === 0 && !showForm && (
-          <div style={{
+          <div className="glass-card" style={{
             textAlign: "center",
             padding: "48px",
             color: "var(--text-tertiary)",

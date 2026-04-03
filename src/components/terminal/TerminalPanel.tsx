@@ -101,7 +101,7 @@ function LogEntry({ log }: { log: TaskLog }) {
     <div style={{
       background: style.bg,
       borderLeft: `2px solid ${style.border}`,
-      borderRadius: "4px",
+      borderRadius: "6px",
       marginBottom: "4px",
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 8px" }}>
@@ -222,7 +222,7 @@ function TerminalView({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        style={{ flex: 1, overflowY: "auto", background: "#0d0d0d" }}
+        style={{ flex: 1, overflowY: "auto", background: "rgba(9, 9, 11, 0.9)" }}
       >
         {text ? (
           <pre
@@ -322,23 +322,22 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   const isTerminalTab = activeTab === "terminal";
 
   return (
-    <div style={{
-      background: "#111111",
-      border: "1px solid var(--border-default)",
-      borderRadius: "8px",
+    <div className="glass-terminal terminal-scanline" style={{
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
       height: "384px",
+      position: "relative",
     }}>
       {/* Header */}
       <div style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "6px 12px",
-        background: "#1a1a1a",
-        borderBottom: "1px solid var(--border-default)",
+        padding: "8px 14px",
+        background: "rgba(26, 26, 26, 0.8)",
+        backdropFilter: "blur(8px)",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
           {TABS.map((tab) => (
@@ -346,15 +345,15 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               style={{
-                padding: "4px 10px",
+                padding: "4px 12px",
                 fontSize: "11px",
                 fontWeight: 500,
-                borderRadius: "4px",
+                borderRadius: "8px",
                 border: "none",
                 cursor: "pointer",
-                transition: "background 0.15s",
-                background: activeTab === tab.key ? "var(--bg-hover)" : "transparent",
-                color: activeTab === tab.key ? "#e8e8e8" : "#666",
+                transition: "background 0.2s ease, color 0.2s ease",
+                background: activeTab === tab.key ? "rgba(139, 92, 246, 0.15)" : "transparent",
+                color: activeTab === tab.key ? "#c4b5fd" : "#666",
               }}
             >
               {tab.icon} {tab.label}
@@ -396,7 +395,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
       {isTerminalTab ? (
         <TerminalView taskId={taskId} on={on} />
       ) : (
-        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "#0d0d0d" }}>
+        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "rgba(9, 9, 11, 0.9)" }}>
           {timeline.length === 0 && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666", fontSize: "12px" }}>
               No activity yet
