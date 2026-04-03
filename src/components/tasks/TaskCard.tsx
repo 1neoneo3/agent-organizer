@@ -123,25 +123,15 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
   return (
     <div
+      className={`glass-card card-accent-stripe animate-fade-in-up${hasInteractivePrompt ? " interactive-prompt-card" : ""}`}
       style={{
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border-default)",
-        borderRadius: "8px",
+        "--stripe-color": statusColor,
         cursor: "pointer",
-        transition: "border-color 0.15s ease, background 0.15s ease",
-      }}
+      } as React.CSSProperties}
       onClick={() => { play("select"); onSelect?.(task.id); }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--text-tertiary)";
-        e.currentTarget.style.background = "var(--bg-hover)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-default)";
-        e.currentTarget.style.background = "var(--bg-secondary)";
-      }}
     >
       {/* Card header: title + status */}
-      <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
+      <div style={{ padding: "12px 14px 8px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
             {task.task_number && (
@@ -153,27 +143,18 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
             <span style={{
-              padding: "2px 6px",
-              background: "#f59e0b",
+              padding: "3px 8px",
+              background: "linear-gradient(135deg, #f59e0b, #d97706)",
               color: "#fff",
-              borderRadius: "4px",
+              borderRadius: "999px",
               fontSize: "10px",
               fontWeight: 600,
+              boxShadow: "0 0 8px rgba(245, 158, 11, 0.3)",
             }}>
               Input
             </span>
           )}
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            padding: "2px 6px",
-            borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 600,
-            color: statusColor,
-            background: "var(--bg-tertiary)",
-          }}>
+          <span className={`status-badge status-badge--${task.status}`}>
             <span style={{
               width: "6px",
               height: "6px",
@@ -191,10 +172,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         <div
           onClick={(e) => e.stopPropagation()}
           style={{
-            padding: "8px 12px",
-            background: "var(--bg-tertiary)",
-            borderTop: "1px solid var(--border-default)",
-            borderBottom: "1px solid var(--border-default)",
+            padding: "8px 14px",
+            background: "rgba(245, 158, 11, 0.06)",
+            borderTop: "1px solid var(--glass-border)",
+            borderBottom: "1px solid var(--glass-border)",
           }}
         >
           <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-progress)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
@@ -225,10 +206,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
       {(interactivePrompt?.promptType === "ask_user_question" || interactivePrompt?.promptType === "text_input_request") && (
         <div
           style={{
-            padding: "6px 12px",
-            background: "var(--bg-tertiary)",
-            borderTop: "1px solid var(--border-default)",
-            borderBottom: "1px solid var(--border-default)",
+            padding: "6px 14px",
+            background: "rgba(245, 158, 11, 0.06)",
+            borderTop: "1px solid var(--glass-border)",
+            borderBottom: "1px solid var(--glass-border)",
             textAlign: "center",
           }}
         >
@@ -239,14 +220,17 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
       )}
 
       {/* Card body */}
-      <div style={{ padding: "6px 12px 10px" }}>
+      <div style={{ padding: "6px 14px 12px" }}>
         {/* Metadata row */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+          {task.priority && (
+            <span className={`priority-dot priority-dot--${task.priority}`} />
+          )}
           <span style={{
-            padding: "1px 6px",
+            padding: "2px 8px",
             background: "var(--bg-tertiary)",
             color: "var(--text-secondary)",
-            borderRadius: "4px",
+            borderRadius: "999px",
             fontSize: "10px",
             fontWeight: 600,
           }}>
@@ -254,10 +238,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           </span>
           {task.directive_id && (
             <span style={{
-              padding: "1px 6px",
+              padding: "2px 8px",
               background: "var(--accent-subtle)",
               color: "var(--accent-primary)",
-              borderRadius: "4px",
+              borderRadius: "999px",
               fontSize: "10px",
               fontWeight: 600,
             }}>
@@ -278,10 +262,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{agent.name}</span>
             {roleLabel && (
               <span style={{
-                padding: "1px 4px",
+                padding: "1px 6px",
                 background: "var(--bg-tertiary)",
                 color: "var(--text-tertiary)",
-                borderRadius: "3px",
+                borderRadius: "999px",
                 fontSize: "10px",
                 fontWeight: 500,
               }}>
@@ -381,9 +365,9 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
               style={{
                 fontSize: "11px",
                 padding: "3px 8px",
-                background: showMessageForm ? "var(--accent-primary)" : undefined,
+                background: showMessageForm ? "linear-gradient(135deg, var(--accent-primary), var(--accent-hover))" : undefined,
                 color: showMessageForm ? "#fff" : undefined,
-                borderColor: showMessageForm ? "var(--accent-primary)" : undefined,
+                borderColor: showMessageForm ? "transparent" : undefined,
               }}
             >
               Msg

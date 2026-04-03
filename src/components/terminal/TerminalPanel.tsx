@@ -41,49 +41,49 @@ function LogEntry({ log }: { log: TaskLog }) {
 
   const kindStyles: Record<string, { bg: string; text: string; border: string; label: string; icon: string }> = {
     stdout: {
-      bg: "#0d1f0d",
+      bg: "rgba(34, 197, 94, 0.06)",
       text: "#86efac",
       border: "#22c55e",
       label: "stdout",
       icon: "\u25b8",
     },
     stderr: {
-      bg: "#1f0d0d",
+      bg: "rgba(239, 68, 68, 0.06)",
       text: "#fca5a5",
       border: "#ef4444",
       label: "stderr",
       icon: "\u2717",
     },
     system: {
-      bg: "#1f1a0d",
+      bg: "rgba(245, 158, 11, 0.06)",
       text: "#fde68a",
       border: "#f59e0b",
       label: "system",
       icon: "\u2699",
     },
     thinking: {
-      bg: "#170d1f",
+      bg: "rgba(139, 92, 246, 0.06)",
       text: "#c4b5fd",
       border: "#8b5cf6",
       label: "thinking",
       icon: "\ud83e\udde0",
     },
     assistant: {
-      bg: "#0d171f",
+      bg: "rgba(59, 130, 246, 0.06)",
       text: "#93c5fd",
       border: "#3b82f6",
       label: "assistant",
       icon: "\ud83d\udcac",
     },
     tool_call: {
-      bg: "#0d1a1f",
+      bg: "rgba(6, 182, 212, 0.06)",
       text: "#67e8f9",
       border: "#06b6d4",
       label: "tool",
       icon: "\ud83d\udd27",
     },
     tool_result: {
-      bg: "#0d1f1a",
+      bg: "rgba(20, 184, 166, 0.06)",
       text: "#5eead4",
       border: "#14b8a6",
       label: "result",
@@ -101,7 +101,7 @@ function LogEntry({ log }: { log: TaskLog }) {
     <div style={{
       background: style.bg,
       borderLeft: `2px solid ${style.border}`,
-      borderRadius: "4px",
+      borderRadius: "6px",
       marginBottom: "4px",
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 8px" }}>
@@ -222,7 +222,7 @@ function TerminalView({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        style={{ flex: 1, overflowY: "auto", background: "#0d0d0d" }}
+        style={{ flex: 1, overflowY: "auto", background: "rgba(6, 6, 12, 0.95)" }}
       >
         {text ? (
           <pre
@@ -230,7 +230,7 @@ function TerminalView({
             style={{
               fontSize: "12px",
               lineHeight: "1.6",
-              color: "#e8e8e8",
+              color: "#ececf4",
               padding: "12px",
               fontFamily: "var(--font-mono)",
               whiteSpace: "pre-wrap",
@@ -322,10 +322,12 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   const isTerminalTab = activeTab === "terminal";
 
   return (
-    <div style={{
-      background: "#111111",
-      border: "1px solid var(--border-default)",
-      borderRadius: "8px",
+    <div className="terminal-glow terminal-scanlines terminal-vignette" style={{
+      background: "rgba(10, 10, 16, 0.92)",
+      backdropFilter: "blur(24px)",
+      WebkitBackdropFilter: "blur(24px)",
+      border: "1px solid rgba(139, 92, 246, 0.15)",
+      borderRadius: "20px",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
@@ -336,25 +338,26 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "6px 12px",
-        background: "#1a1a1a",
-        borderBottom: "1px solid var(--border-default)",
+        padding: "8px 14px",
+        background: "linear-gradient(90deg, rgba(139, 92, 246, 0.08) 0%, rgba(59, 130, 246, 0.05) 100%)",
+        borderBottom: "1px solid rgba(139, 92, 246, 0.1)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
+              className={activeTab === tab.key ? "terminal-tab-active" : ""}
               style={{
-                padding: "4px 10px",
+                padding: "5px 12px",
                 fontSize: "11px",
                 fontWeight: 500,
-                borderRadius: "4px",
+                borderRadius: "6px",
                 border: "none",
                 cursor: "pointer",
-                transition: "background 0.15s",
-                background: activeTab === tab.key ? "var(--bg-hover)" : "transparent",
-                color: activeTab === tab.key ? "#e8e8e8" : "#666",
+                transition: "all 0.2s ease",
+                background: activeTab === tab.key ? undefined : "transparent",
+                color: activeTab === tab.key ? undefined : "#4e4e66",
               }}
             >
               {tab.icon} {tab.label}
@@ -367,7 +370,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
           ))}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "10px", color: "#666", fontFamily: "var(--font-mono)" }}>
+          <span style={{ fontSize: "10px", color: "#4e4e66", fontFamily: "var(--font-mono)" }}>
             {taskId.slice(0, 8)}
           </span>
           {!isTerminalTab && !autoScroll && (
@@ -376,16 +379,16 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
                 setAutoScroll(true);
                 scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
               }}
-              style={{ fontSize: "10px", color: "#666", background: "none", border: "none", cursor: "pointer" }}
+              style={{ fontSize: "10px", color: "#4e4e66", background: "none", border: "none", cursor: "pointer" }}
             >
               \u2193 Bottom
             </button>
           )}
           <button
             onClick={onClose}
-            style={{ color: "#666", background: "none", border: "none", cursor: "pointer", fontSize: "14px" }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "#e8e8e8"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "#666"; }}
+            style={{ color: "#4e4e66", background: "none", border: "none", cursor: "pointer", fontSize: "14px", transition: "color 0.2s ease" }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "#ececf4"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "#4e4e66"; }}
           >
             \u2715
           </button>
@@ -396,9 +399,9 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
       {isTerminalTab ? (
         <TerminalView taskId={taskId} on={on} />
       ) : (
-        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "#0d0d0d" }}>
+        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "rgba(6, 6, 12, 0.95)" }}>
           {timeline.length === 0 && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666", fontSize: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#4e4e66", fontSize: "12px" }}>
               No activity yet
             </div>
           )}

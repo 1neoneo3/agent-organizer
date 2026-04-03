@@ -58,9 +58,7 @@ const TaskColumn = memo(function TaskColumn({
   return (
     <div style={{ flex: 1, minWidth: "240px", maxWidth: "340px" }}>
       {/* Column header */}
-      <div style={{
-        padding: "8px 12px",
-        marginBottom: "8px",
+      <div className="column-header-pill" style={{
         display: "flex",
         alignItems: "center",
         gap: "8px",
@@ -71,6 +69,7 @@ const TaskColumn = memo(function TaskColumn({
           borderRadius: "50%",
           background: accentColor,
           flexShrink: 0,
+          boxShadow: `0 0 8px ${accentColor}40`,
         }} />
         <span style={{
           fontSize: "13px",
@@ -78,12 +77,16 @@ const TaskColumn = memo(function TaskColumn({
           color: "var(--text-primary)",
         }}>{town}</span>
         <span style={{
-          fontSize: "12px",
-          fontWeight: 500,
+          fontSize: "11px",
+          fontWeight: 600,
           color: "var(--text-tertiary)",
+          background: "rgba(139, 92, 246, 0.1)",
+          padding: "1px 8px",
+          borderRadius: "999px",
+          boxShadow: "0 0 6px rgba(139, 92, 246, 0.1)",
         }}>{tasks.length}</span>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         {tasks.map((task) => (
           <TaskCard
             key={task.id}
@@ -186,7 +189,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
       {/* Header bar */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Tasks</h2>
+          <h2 className="page-title-gradient" style={{ fontSize: "20px", fontWeight: 700, margin: 0 }}>Tasks</h2>
           {agents.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               {agents.map((a) => {
@@ -194,6 +197,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
                 return (
                   <span
                     key={a.id}
+                    className={`glass-card-static${isWorking ? " agent-card-working" : ""}`}
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -201,9 +205,6 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
                       padding: "4px 10px",
                       fontSize: "12px",
                       fontWeight: 500,
-                      background: "var(--bg-secondary)",
-                      border: "1px solid var(--border-default)",
-                      borderRadius: "6px",
                       color: "var(--text-secondary)",
                     }}
                     title={`${a.name} (${a.status})`}
@@ -213,12 +214,13 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
                     {agentView.roleLabelById.get(a.id) && (
                       <span style={{ fontSize: "10px", color: "var(--text-tertiary)" }}>{agentView.roleLabelById.get(a.id)}</span>
                     )}
-                    <span style={{
+                    <span className={isWorking ? "status-dot-pulse" : ""} style={{
                       width: "6px",
                       height: "6px",
                       borderRadius: "50%",
                       background: isWorking ? "#22c55e" : "#a0a0a0",
                       flexShrink: 0,
+                      boxShadow: isWorking ? "0 0 8px rgba(34, 197, 94, 0.4)" : "none",
                     }} />
                   </span>
                 );
@@ -244,12 +246,9 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
 
       {/* Empty state */}
       {agents.length === 0 && tasks.length === 0 && !showAddAgent && (
-        <div style={{
+        <div className="glass-card empty-state-shimmer" style={{
           padding: "48px",
           textAlign: "center",
-          background: "var(--bg-secondary)",
-          border: "1px solid var(--border-default)",
-          borderRadius: "8px",
         }}>
           <p style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "8px" }}>No agents yet</p>
           <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "20px" }}>Create an agent to start running tasks</p>

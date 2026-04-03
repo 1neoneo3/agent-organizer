@@ -26,7 +26,13 @@ export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, ti
         toggleTimeOfDay={toggleTimeOfDay}
         flavors={flavors}
       />
-      <main className="flex-1 min-h-0 overflow-y-auto" style={{ padding: "24px 32px" }}>
+      <main
+        className="animated-mesh-bg flex-1 min-h-0 overflow-y-auto"
+        style={{
+          padding: "24px 32px",
+          backgroundImage: "linear-gradient(135deg, rgba(139, 92, 246, 0.02) 0%, transparent 50%, rgba(59, 130, 246, 0.02) 100%)",
+        }}
+      >
         <Outlet />
       </main>
     </div>
