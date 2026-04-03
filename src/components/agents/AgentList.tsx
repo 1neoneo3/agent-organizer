@@ -43,7 +43,7 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "20px" }}>
-        <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Agents</h2>
+        <h2 className="page-title-gradient" style={{ fontSize: "22px", fontWeight: 700, margin: 0, letterSpacing: "-0.03em" }}>Agents</h2>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ display: "flex", gap: "6px" }}>
             {Object.entries(cliStatus).map(([cli, ok]) => (
@@ -53,10 +53,10 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "4px",
-                  padding: "3px 8px",
+                  padding: "3px 10px",
                   fontSize: "11px",
                   fontWeight: 500,
-                  borderRadius: "4px",
+                  borderRadius: "999px",
                   color: ok ? "var(--status-done)" : "var(--text-tertiary)",
                   background: "var(--bg-tertiary)",
                 }}
@@ -96,25 +96,38 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
           ) : (
             <div
               key={agent.id}
+              className={`glass-card animate-fade-in-up ${agent.status === "working" ? "agent-card-working agent-card-working-border" : agent.status === "idle" ? "agent-card-idle" : ""}`}
               style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "8px",
-                padding: "14px 16px",
+                padding: "18px 20px",
                 display: "flex",
                 alignItems: "center",
-                gap: "14px",
-                transition: "border-color 0.15s ease",
+                gap: "16px",
               }}
             >
-              <PixelAvatar role={agent.role} size={36} />
+              <div style={{ position: "relative" }}>
+                <PixelAvatar role={agent.role} size={40} />
+                <span
+                  className={agent.status === "working" ? "status-dot-pulse" : ""}
+                  style={{
+                    position: "absolute",
+                    bottom: "-1px",
+                    right: "-1px",
+                    width: "10px",
+                    height: "10px",
+                    borderRadius: "50%",
+                    background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
+                    border: "2px solid var(--bg-primary)",
+                    boxShadow: agent.status === "working" ? `0 0 8px ${STATUS_COLORS[agent.status]}` : "none",
+                  }}
+                />
+              </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{agent.name}</span>
+                  <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>{agent.name}</span>
                   {getRoleLabel(agent.role) && (
                     <span style={{
-                      padding: "1px 6px",
-                      borderRadius: "4px",
+                      padding: "2px 10px",
+                      borderRadius: "999px",
                       fontSize: "10px",
                       fontWeight: 600,
                       color: "var(--accent-primary)",
@@ -124,19 +137,36 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                     </span>
                   )}
                   <span style={{
-                    width: "7px",
-                    height: "7px",
-                    borderRadius: "50%",
-                    background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
-                    flexShrink: 0,
-                  }} />
-                  <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>{agent.status}</span>
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "2px 10px",
+                    borderRadius: "999px",
+                    fontSize: "10px",
+                    fontWeight: 600,
+                    background: `${STATUS_COLORS[agent.status] ?? "#a0a0a0"}15`,
+                    color: STATUS_COLORS[agent.status] ?? "#a0a0a0",
+                  }}>
+                    <span
+                      className={agent.status === "working" ? "status-dot-pulse" : ""}
+                      style={{
+                        width: "6px",
+                        height: "6px",
+                        borderRadius: "50%",
+                        background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
+                        flexShrink: 0,
+                      }}
+                    />
+                    {agent.status}
+                  </span>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
-                  {agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} \u2014 {agent.stats_tasks_done} tasks done
+                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "5px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px" }}>{agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""}</span>
+                  <span style={{ width: "3px", height: "3px", borderRadius: "50%", background: "var(--text-tertiary)", opacity: 0.5, flexShrink: 0 }} />
+                  <span>{agent.stats_tasks_done} tasks done</span>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: "4px" }}>
+              <div style={{ display: "flex", gap: "6px" }}>
                 <button
                   onClick={() => setEditingId(agent.id)}
                   className="eb-btn"
@@ -157,7 +187,7 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
         )}
 
         {agents.length === 0 && !showForm && (
-          <div style={{
+          <div className="glass-card" style={{
             textAlign: "center",
             padding: "48px",
             color: "var(--text-tertiary)",

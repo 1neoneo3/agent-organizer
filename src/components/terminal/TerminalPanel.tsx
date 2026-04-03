@@ -41,49 +41,49 @@ function LogEntry({ log }: { log: TaskLog }) {
 
   const kindStyles: Record<string, { bg: string; text: string; border: string; label: string; icon: string }> = {
     stdout: {
-      bg: "#0d1f0d",
+      bg: "rgba(13, 31, 13, 0.8)",
       text: "#86efac",
       border: "#22c55e",
       label: "stdout",
       icon: "\u25b8",
     },
     stderr: {
-      bg: "#1f0d0d",
+      bg: "rgba(31, 13, 13, 0.8)",
       text: "#fca5a5",
       border: "#ef4444",
       label: "stderr",
       icon: "\u2717",
     },
     system: {
-      bg: "#1f1a0d",
+      bg: "rgba(31, 26, 13, 0.8)",
       text: "#fde68a",
       border: "#f59e0b",
       label: "system",
       icon: "\u2699",
     },
     thinking: {
-      bg: "#170d1f",
+      bg: "rgba(23, 13, 31, 0.8)",
       text: "#c4b5fd",
       border: "#8b5cf6",
       label: "thinking",
       icon: "\ud83e\udde0",
     },
     assistant: {
-      bg: "#0d171f",
+      bg: "rgba(13, 23, 31, 0.8)",
       text: "#93c5fd",
       border: "#3b82f6",
       label: "assistant",
       icon: "\ud83d\udcac",
     },
     tool_call: {
-      bg: "#0d1a1f",
+      bg: "rgba(13, 26, 31, 0.8)",
       text: "#67e8f9",
       border: "#06b6d4",
       label: "tool",
       icon: "\ud83d\udd27",
     },
     tool_result: {
-      bg: "#0d1f1a",
+      bg: "rgba(13, 31, 26, 0.8)",
       text: "#5eead4",
       border: "#14b8a6",
       label: "result",
@@ -101,8 +101,9 @@ function LogEntry({ log }: { log: TaskLog }) {
     <div style={{
       background: style.bg,
       borderLeft: `2px solid ${style.border}`,
-      borderRadius: "4px",
+      borderRadius: "8px",
       marginBottom: "4px",
+      transition: "background 0.15s ease",
     }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 8px" }}>
         <span style={{ fontSize: "10px", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", flexShrink: 0, marginTop: "2px", width: "52px" }}>
@@ -222,15 +223,15 @@ function TerminalView({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        style={{ flex: 1, overflowY: "auto", background: "#0d0d0d" }}
+        style={{ flex: 1, overflowY: "auto", background: "rgba(6, 6, 12, 0.95)" }}
       >
         {text ? (
           <pre
             ref={preRef}
             style={{
               fontSize: "12px",
-              lineHeight: "1.6",
-              color: "#e8e8e8",
+              lineHeight: "1.65",
+              color: "#e8e8ec",
               padding: "12px",
               fontFamily: "var(--font-mono)",
               whiteSpace: "pre-wrap",
@@ -322,39 +323,44 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   const isTerminalTab = activeTab === "terminal";
 
   return (
-    <div style={{
-      background: "#111111",
-      border: "1px solid var(--border-default)",
-      borderRadius: "8px",
+    <div className="terminal-glow terminal-scanlines terminal-vignette" style={{
+      background: "rgba(10, 10, 16, 0.92)",
+      backdropFilter: "blur(24px)",
+      WebkitBackdropFilter: "blur(24px)",
+      border: "1px solid rgba(139, 92, 246, 0.15)",
+      borderRadius: "20px",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
-      height: "384px",
+      height: "420px",
     }}>
       {/* Header */}
       <div style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "6px 12px",
-        background: "#1a1a1a",
-        borderBottom: "1px solid var(--border-default)",
+        padding: "8px 14px",
+        background: "linear-gradient(180deg, rgba(32, 32, 46, 0.92) 0%, rgba(20, 20, 30, 0.88) 100%)",
+        borderBottom: "1px solid rgba(139, 92, 246, 0.12)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
+              className={activeTab === tab.key ? "terminal-tab-active" : ""}
               style={{
-                padding: "4px 10px",
+                padding: "5px 14px",
                 fontSize: "11px",
-                fontWeight: 500,
-                borderRadius: "4px",
-                border: "none",
+                fontWeight: activeTab === tab.key ? 600 : 500,
+                borderRadius: "8px",
+                border: activeTab === tab.key ? "1px solid rgba(139, 92, 246, 0.2)" : "1px solid transparent",
                 cursor: "pointer",
-                transition: "background 0.15s",
-                background: activeTab === tab.key ? "var(--bg-hover)" : "transparent",
-                color: activeTab === tab.key ? "#e8e8e8" : "#666",
+                transition: "all 0.2s ease",
+                background: activeTab === tab.key ? "rgba(139, 92, 246, 0.12)" : "transparent",
+                color: activeTab === tab.key ? "#c4b5fd" : "#666",
+                boxShadow: activeTab === tab.key ? "0 0 8px rgba(139, 92, 246, 0.1)" : "none",
+                position: "relative",
               }}
             >
               {tab.icon} {tab.label}
@@ -383,7 +389,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
           )}
           <button
             onClick={onClose}
-            style={{ color: "#666", background: "none", border: "none", cursor: "pointer", fontSize: "14px" }}
+            style={{ color: "#666", background: "none", border: "none", cursor: "pointer", fontSize: "14px", transition: "color 0.2s ease" }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "#e8e8e8"; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = "#666"; }}
           >
@@ -396,7 +402,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
       {isTerminalTab ? (
         <TerminalView taskId={taskId} on={on} />
       ) : (
-        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "#0d0d0d" }}>
+        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "rgba(6, 6, 12, 0.95)" }}>
           {timeline.length === 0 && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666", fontSize: "12px" }}>
               No activity yet
