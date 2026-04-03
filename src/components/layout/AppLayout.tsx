@@ -29,8 +29,8 @@ export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, ti
       <main
         className="animated-mesh-bg flex-1 min-h-0 overflow-y-auto"
         style={{
-          padding: "24px 32px",
-          backgroundImage: "linear-gradient(135deg, rgba(139, 92, 246, 0.02) 0%, transparent 50%, rgba(59, 130, 246, 0.02) 100%)",
+          padding: "28px 36px",
+          backgroundImage: "linear-gradient(160deg, rgba(139, 92, 246, 0.025) 0%, transparent 40%, rgba(59, 130, 246, 0.02) 80%, rgba(168, 85, 247, 0.015) 100%)",
         }}
       >
         <Outlet />

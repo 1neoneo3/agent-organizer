@@ -323,15 +323,15 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
 
   return (
     <div className="terminal-glow terminal-scanlines terminal-vignette" style={{
-      background: "rgba(10, 10, 16, 0.92)",
-      backdropFilter: "blur(24px)",
-      WebkitBackdropFilter: "blur(24px)",
-      border: "1px solid rgba(139, 92, 246, 0.15)",
+      background: "rgba(8, 8, 14, 0.94)",
+      backdropFilter: "blur(28px)",
+      WebkitBackdropFilter: "blur(28px)",
+      border: "1px solid rgba(139, 92, 246, 0.12)",
       borderRadius: "20px",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
-      height: "384px",
+      height: "400px",
     }}>
       {/* Header */}
       <div style={{
@@ -339,8 +339,8 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
         alignItems: "center",
         justifyContent: "space-between",
         padding: "8px 14px",
-        background: "linear-gradient(90deg, rgba(139, 92, 246, 0.08) 0%, rgba(59, 130, 246, 0.05) 100%)",
-        borderBottom: "1px solid rgba(139, 92, 246, 0.1)",
+        background: "linear-gradient(90deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.06) 50%, rgba(168, 85, 247, 0.04) 100%)",
+        borderBottom: "1px solid rgba(139, 92, 246, 0.12)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
           {TABS.map((tab) => (

@@ -41,14 +41,14 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
         gap: "10px",
       }}>
         <div className="logo-float" style={{
-          width: "28px",
-          height: "28px",
+          width: "30px",
+          height: "30px",
           borderRadius: "10px",
-          background: "linear-gradient(135deg, #8b5cf6, #6d28d9)",
+          background: "linear-gradient(135deg, #8b5cf6 0%, #6d28d9 50%, #7c3aed 100%)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          boxShadow: "0 0 16px rgba(139, 92, 246, 0.4)",
+          boxShadow: "0 0 20px rgba(139, 92, 246, 0.5), 0 0 40px rgba(139, 92, 246, 0.15)",
         }}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2">
             <path d="M2 8l4 4 8-8" />
@@ -101,36 +101,21 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
             key={item.to}
             to={item.to}
             end={item.to === "/"}
-            className={({ isActive }) => isActive ? "nav-active-glow" : ""}
+            className={({ isActive }) => `nav-item${isActive ? " nav-active-glow" : ""}`}
             style={({ isActive }) => ({
               display: "flex",
               alignItems: "center",
               gap: "10px",
-              padding: "8px 10px",
+              padding: "8px 12px",
               fontSize: "13px",
               fontWeight: isActive ? 500 : 400,
               color: isActive ? "#ececf4" : "var(--text-secondary)",
               textDecoration: "none",
-              borderRadius: "8px",
+              borderRadius: "10px",
               borderLeft: isActive ? undefined : "2px solid transparent",
-              transition: "all 0.2s ease",
               cursor: "pointer",
               marginBottom: "2px",
             })}
-            onMouseEnter={(e) => {
-              const link = e.currentTarget;
-              if (!link.classList.contains("nav-active-glow")) {
-                link.style.background = "rgba(255, 255, 255, 0.04)";
-                link.style.color = "var(--text-primary)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              const link = e.currentTarget;
-              if (!link.classList.contains("nav-active-glow")) {
-                link.style.background = "transparent";
-                link.style.color = "var(--text-secondary)";
-              }
-            }}
           >
             <span className="nav-icon">{item.icon}</span>
             {item.label}
@@ -142,6 +127,7 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
       <div style={{ padding: "12px 16px 16px", borderTop: "1px solid rgba(255, 255, 255, 0.04)" }}>
         <button
           onClick={toggleTimeOfDay}
+          className="eb-btn"
           style={{
             width: "100%",
             display: "flex",
@@ -151,28 +137,6 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
             padding: "8px 12px",
             fontSize: "12px",
             fontWeight: 500,
-            color: "var(--text-secondary)",
-            background: "var(--glass-bg)",
-            backdropFilter: "blur(8px)",
-            WebkitBackdropFilter: "blur(8px)",
-            border: "1px solid var(--glass-border)",
-            borderRadius: "10px",
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(139, 92, 246, 0.1)";
-            e.currentTarget.style.borderColor = "rgba(139, 92, 246, 0.3)";
-            e.currentTarget.style.boxShadow = "0 0 12px rgba(139, 92, 246, 0.1)";
-            e.currentTarget.style.transform = "translateY(-1px)";
-            e.currentTarget.style.color = "var(--text-primary)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "var(--glass-bg)";
-            e.currentTarget.style.borderColor = "var(--glass-border)";
-            e.currentTarget.style.boxShadow = "none";
-            e.currentTarget.style.transform = "translateY(0)";
-            e.currentTarget.style.color = "var(--text-secondary)";
           }}
         >
           {timeOfDay === "night" ? "Light Mode" : "Dark Mode"}
