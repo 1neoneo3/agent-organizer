@@ -124,20 +124,25 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
   return (
     <div
       style={{
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border-default)",
-        borderRadius: "8px",
+        background: "var(--glass-bg)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        border: "1px solid var(--glass-border)",
+        borderRadius: "14px",
         cursor: "pointer",
-        transition: "border-color 0.15s ease, background 0.15s ease",
+        boxShadow: "var(--glass-shadow)",
+        transition: "all 0.25s ease",
       }}
       onClick={() => { play("select"); onSelect?.(task.id); }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--text-tertiary)";
-        e.currentTarget.style.background = "var(--bg-hover)";
+        e.currentTarget.style.borderColor = "var(--border-default)";
+        e.currentTarget.style.boxShadow = "var(--glass-shadow-hover)";
+        e.currentTarget.style.transform = "translateY(-2px)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-default)";
-        e.currentTarget.style.background = "var(--bg-secondary)";
+        e.currentTarget.style.borderColor = "var(--glass-border)";
+        e.currentTarget.style.boxShadow = "var(--glass-shadow)";
+        e.currentTarget.style.transform = "translateY(0)";
       }}
     >
       {/* Card header: title + status */}
@@ -153,12 +158,13 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
             <span style={{
-              padding: "2px 6px",
-              background: "#f59e0b",
+              padding: "2px 8px",
+              background: "linear-gradient(135deg, #f59e0b, #fbbf24)",
               color: "#fff",
-              borderRadius: "4px",
+              borderRadius: "12px",
               fontSize: "10px",
               fontWeight: 600,
+              boxShadow: "0 1px 4px rgba(245, 158, 11, 0.3)",
             }}>
               Input
             </span>
@@ -166,21 +172,24 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           <span style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: "4px",
-            padding: "2px 6px",
-            borderRadius: "4px",
+            gap: "5px",
+            padding: "3px 10px",
+            borderRadius: "12px",
             fontSize: "10px",
             fontWeight: 600,
             color: statusColor,
             background: "var(--bg-tertiary)",
           }}>
-            <span style={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: statusColor,
-              flexShrink: 0,
-            }} />
+            <span
+              className={task.status === "in_progress" ? "status-dot-working" : ""}
+              style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: statusColor,
+                flexShrink: 0,
+              }}
+            />
             {STATUS_DISPLAY[task.status] ?? task.status}
           </span>
         </div>
@@ -193,8 +202,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           style={{
             padding: "8px 12px",
             background: "var(--bg-tertiary)",
-            borderTop: "1px solid var(--border-default)",
-            borderBottom: "1px solid var(--border-default)",
+            borderTop: "1px solid var(--glass-border)",
+            borderBottom: "1px solid var(--glass-border)",
           }}
         >
           <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-progress)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
@@ -227,8 +236,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           style={{
             padding: "6px 12px",
             background: "var(--bg-tertiary)",
-            borderTop: "1px solid var(--border-default)",
-            borderBottom: "1px solid var(--border-default)",
+            borderTop: "1px solid var(--glass-border)",
+            borderBottom: "1px solid var(--glass-border)",
             textAlign: "center",
           }}
         >
@@ -243,10 +252,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         {/* Metadata row */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
           <span style={{
-            padding: "1px 6px",
+            padding: "2px 8px",
             background: "var(--bg-tertiary)",
             color: "var(--text-secondary)",
-            borderRadius: "4px",
+            borderRadius: "10px",
             fontSize: "10px",
             fontWeight: 600,
           }}>
@@ -254,10 +263,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           </span>
           {task.directive_id && (
             <span style={{
-              padding: "1px 6px",
+              padding: "2px 8px",
               background: "var(--accent-subtle)",
               color: "var(--accent-primary)",
-              borderRadius: "4px",
+              borderRadius: "10px",
               fontSize: "10px",
               fontWeight: 600,
             }}>
@@ -278,10 +287,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{agent.name}</span>
             {roleLabel && (
               <span style={{
-                padding: "1px 4px",
+                padding: "2px 6px",
                 background: "var(--bg-tertiary)",
                 color: "var(--text-tertiary)",
-                borderRadius: "3px",
+                borderRadius: "8px",
                 fontSize: "10px",
                 fontWeight: 500,
               }}>

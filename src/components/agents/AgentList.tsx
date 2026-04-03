@@ -53,10 +53,10 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "4px",
-                  padding: "3px 8px",
+                  padding: "3px 10px",
                   fontSize: "11px",
                   fontWeight: 500,
-                  borderRadius: "4px",
+                  borderRadius: "12px",
                   color: ok ? "var(--status-done)" : "var(--text-tertiary)",
                   background: "var(--bg-tertiary)",
                 }}
@@ -97,24 +97,37 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
             <div
               key={agent.id}
               style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "8px",
-                padding: "14px 16px",
+                background: "var(--glass-bg)",
+                backdropFilter: "blur(12px)",
+                WebkitBackdropFilter: "blur(12px)",
+                border: "1px solid var(--glass-border)",
+                borderRadius: "14px",
+                padding: "16px 18px",
                 display: "flex",
                 alignItems: "center",
                 gap: "14px",
-                transition: "border-color 0.15s ease",
+                boxShadow: "var(--glass-shadow)",
+                transition: "all 0.25s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.boxShadow = "var(--glass-shadow-hover)";
+                e.currentTarget.style.transform = "translateY(-2px)";
+                e.currentTarget.style.borderColor = "var(--border-default)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = "var(--glass-shadow)";
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.borderColor = "var(--glass-border)";
               }}
             >
               <PixelAvatar role={agent.role} size={36} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{agent.name}</span>
+                  <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>{agent.name}</span>
                   {getRoleLabel(agent.role) && (
                     <span style={{
-                      padding: "1px 6px",
-                      borderRadius: "4px",
+                      padding: "2px 8px",
+                      borderRadius: "10px",
                       fontSize: "10px",
                       fontWeight: 600,
                       color: "var(--accent-primary)",
@@ -123,31 +136,34 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                       {getRoleLabel(agent.role)}
                     </span>
                   )}
-                  <span style={{
-                    width: "7px",
-                    height: "7px",
-                    borderRadius: "50%",
-                    background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
-                    flexShrink: 0,
-                  }} />
-                  <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>{agent.status}</span>
+                  <span
+                    className={agent.status === "working" ? "status-dot-working" : ""}
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ fontSize: "11px", color: "var(--text-tertiary)", fontWeight: 500 }}>{agent.status}</span>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "3px" }}>
                   {agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} \u2014 {agent.stats_tasks_done} tasks done
                 </div>
               </div>
-              <div style={{ display: "flex", gap: "4px" }}>
+              <div style={{ display: "flex", gap: "6px" }}>
                 <button
                   onClick={() => setEditingId(agent.id)}
                   className="eb-btn"
-                  style={{ fontSize: "11px", padding: "4px 10px" }}
+                  style={{ fontSize: "11px", padding: "5px 12px" }}
                 >
                   Edit
                 </button>
                 <button
                   onClick={() => handleDelete(agent.id)}
                   className="eb-btn eb-btn--danger"
-                  style={{ fontSize: "11px", padding: "4px 10px" }}
+                  style={{ fontSize: "11px", padding: "5px 12px" }}
                 >
                   Delete
                 </button>
@@ -162,6 +178,11 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
             padding: "48px",
             color: "var(--text-tertiary)",
             fontSize: "14px",
+            background: "var(--glass-bg)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            borderRadius: "16px",
+            border: "1px solid var(--glass-border)",
           }}>
             No agents yet. Create one to get started.
           </div>

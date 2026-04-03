@@ -29,35 +29,38 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
       className="flex flex-col h-full"
       style={{
         width: "220px",
-        background: "var(--bg-secondary)",
-        borderRight: "1px solid var(--border-default)",
+        background: "var(--sidebar-bg)",
+        borderRight: "1px solid var(--glass-border)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
       }}
     >
       {/* Header */}
       <div style={{
-        padding: "16px 16px 12px",
+        padding: "20px 16px 14px",
         display: "flex",
         alignItems: "center",
-        gap: "8px",
+        gap: "10px",
       }}>
         <div style={{
-          width: "24px",
-          height: "24px",
-          borderRadius: "6px",
-          background: "var(--accent-primary)",
+          width: "28px",
+          height: "28px",
+          borderRadius: "8px",
+          background: "var(--sidebar-logo-bg)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          boxShadow: "0 2px 8px rgba(139, 92, 246, 0.3)",
         }}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2">
             <path d="M2 8l4 4 8-8" />
           </svg>
         </div>
         <span style={{
-          fontSize: "14px",
-          fontWeight: 600,
+          fontSize: "15px",
+          fontWeight: 700,
           color: "var(--text-primary)",
-          letterSpacing: "-0.02em",
+          letterSpacing: "-0.03em",
         }}>
           Agent Organizer
         </span>
@@ -65,23 +68,29 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
 
       {/* Connection status */}
       <div style={{
-        padding: "0 16px 12px",
+        padding: "0 16px 14px",
       }}>
         <span style={{
-          display: "flex",
+          display: "inline-flex",
           alignItems: "center",
           gap: "6px",
           fontSize: "11px",
           fontWeight: 500,
           color: "var(--text-tertiary)",
+          padding: "3px 10px",
+          borderRadius: "12px",
+          background: "var(--bg-tertiary)",
         }}>
-          <span style={{
-            display: "inline-block",
-            width: "6px",
-            height: "6px",
-            borderRadius: "50%",
-            background: connected ? "#22c55e" : "#ef4444",
-          }} />
+          <span
+            className={connected ? "status-dot-working" : ""}
+            style={{
+              display: "inline-block",
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: connected ? "#22c55e" : "#ef4444",
+            }}
+          />
           {connected ? "Connected" : "Disconnected"}
         </span>
       </div>
@@ -97,16 +106,17 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
               display: "flex",
               alignItems: "center",
               gap: "10px",
-              padding: "7px 8px",
+              padding: "8px 10px",
               fontSize: "13px",
-              fontWeight: isActive ? 500 : 400,
+              fontWeight: isActive ? 600 : 400,
               color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
               background: isActive ? "var(--bg-hover)" : "transparent",
               textDecoration: "none",
-              borderRadius: "6px",
-              transition: "background 0.1s, color 0.1s",
+              borderRadius: "10px",
+              borderLeft: isActive ? "3px solid var(--accent-primary)" : "3px solid transparent",
+              transition: "all 0.2s ease",
               cursor: "pointer",
-              marginBottom: "1px",
+              marginBottom: "2px",
             })}
             onMouseEnter={(e) => {
               const link = e.currentTarget;
@@ -116,8 +126,7 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
             }}
             onMouseLeave={(e) => {
               const link = e.currentTarget;
-              // Check if it's the active link by looking at the font weight
-              if (link.style.fontWeight !== "500") {
+              if (link.style.fontWeight !== "600") {
                 link.style.background = "transparent";
               }
             }}
@@ -129,7 +138,7 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
       </nav>
 
       {/* Day/Night Toggle */}
-      <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--border-subtle)" }}>
+      <div style={{ padding: "12px 16px 16px", borderTop: "1px solid var(--glass-border)" }}>
         <button
           onClick={toggleTimeOfDay}
           style={{
@@ -138,18 +147,24 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
             alignItems: "center",
             justifyContent: "center",
             gap: "6px",
-            padding: "6px 12px",
+            padding: "8px 12px",
             fontSize: "12px",
             fontWeight: 500,
             color: "var(--text-secondary)",
             background: "var(--bg-tertiary)",
-            border: "1px solid var(--border-default)",
-            borderRadius: "6px",
+            border: "1px solid var(--glass-border)",
+            borderRadius: "10px",
             cursor: "pointer",
-            transition: "background 0.15s ease",
+            transition: "all 0.2s ease",
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-tertiary)"; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--bg-hover)";
+            e.currentTarget.style.transform = "translateY(-1px)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "var(--bg-tertiary)";
+            e.currentTarget.style.transform = "translateY(0)";
+          }}
         >
           {timeOfDay === "night" ? "Light Mode" : "Dark Mode"}
         </button>

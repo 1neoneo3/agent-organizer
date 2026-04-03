@@ -3,7 +3,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ========================================
-   Linear-style Design System
+   Modern Glassmorphism Design System
    ======================================== */
 
 /* --- Color Palette (dark-first) --- */
@@ -33,6 +33,16 @@
 
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Glassmorphism */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.3);
+  --glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  --glass-shadow-hover: 0 8px 32px rgba(0, 0, 0, 0.12);
+
+  /* Sidebar */
+  --sidebar-bg: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(245,245,255,0.9) 100%);
+  --sidebar-logo-bg: linear-gradient(135deg, #8b5cf6 0%, #6366f1 50%, #a78bfa 100%);
 
   /* Flavor accents (keep data-flavor system working) */
   --flavor-accent: #8b5cf6;
@@ -67,19 +77,27 @@
 
 /* --- Dark mode --- */
 .dark {
-  --bg-primary: #0d0d0d;
-  --bg-secondary: #1a1a1a;
-  --bg-tertiary: #242424;
-  --bg-hover: #2a2a2a;
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-tertiary: #1a1a25;
+  --bg-hover: #22222e;
 
-  --border-default: #333333;
-  --border-subtle: #2a2a2a;
+  --border-default: #2a2a3a;
+  --border-subtle: #1e1e2e;
 
-  --text-primary: #e8e8e8;
-  --text-secondary: #a0a0a0;
-  --text-tertiary: #666666;
+  --text-primary: #e8e8f0;
+  --text-secondary: #a0a0b8;
+  --text-tertiary: #55556a;
 
   --accent-subtle: #2e1065;
+
+  --glass-bg: rgba(18, 18, 26, 0.75);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  --glass-shadow-hover: 0 8px 32px rgba(0, 0, 0, 0.45);
+
+  --sidebar-bg: linear-gradient(180deg, rgba(18,18,26,0.98) 0%, rgba(14,14,22,0.95) 100%);
+  --sidebar-logo-bg: linear-gradient(135deg, #8b5cf6 0%, #6366f1 50%, #a78bfa 100%);
 }
 
 .dark[data-flavor="mint"] {
@@ -164,20 +182,24 @@ html, body, #root {
 }
 
 /* ========================================
-   Card / Window Frame (Linear-style)
+   Card / Window Frame (Glassmorphism)
    ======================================== */
 
 .eb-window {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  box-shadow: none;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow);
   overflow: hidden;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
 }
 
 .eb-window:hover {
   border-color: var(--border-default);
+  box-shadow: var(--glass-shadow-hover);
+  transform: translateY(-1px);
 }
 
 .eb-window-header {
@@ -185,19 +207,19 @@ html, body, #root {
   font-size: 12px;
   font-weight: 600;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--glass-border);
   color: var(--text-primary);
   letter-spacing: -0.01em;
   text-transform: none;
 }
 
 .eb-window-body {
-  background: var(--bg-secondary);
+  background: transparent;
   padding: 10px 14px;
 }
 
 /* ========================================
-   Buttons (Linear-style)
+   Buttons (Modern)
    ======================================== */
 
 .eb-btn {
@@ -206,56 +228,62 @@ html, body, #root {
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
-  padding: 6px 12px;
-  border: 1px solid var(--border-default);
-  border-radius: 6px;
-  background: var(--bg-secondary);
+  padding: 6px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: var(--text-primary);
   cursor: pointer;
-  box-shadow: none;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
   white-space: nowrap;
 }
 
 .eb-btn:hover {
   background: var(--bg-hover);
   border-color: var(--border-default);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
 }
 
 .eb-btn:active {
-  transform: none;
-  box-shadow: none;
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   background: var(--bg-tertiary);
 }
 
 .eb-btn--primary {
-  background: var(--accent-primary);
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-hover));
   color: #ffffff;
-  border-color: var(--accent-primary);
-  box-shadow: none;
+  border-color: transparent;
+  box-shadow: 0 2px 12px rgba(139, 92, 246, 0.3);
 }
 
 .eb-btn--primary:hover {
-  background: var(--accent-hover);
+  background: linear-gradient(135deg, var(--accent-hover), #6d28d9);
   color: #ffffff;
-  border-color: var(--accent-hover);
+  border-color: transparent;
+  box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
 }
 
 .eb-btn--danger {
-  background: #dc2626;
+  background: linear-gradient(135deg, #ef4444, #dc2626);
   color: #ffffff;
-  border-color: #dc2626;
-  box-shadow: none;
+  border-color: transparent;
+  box-shadow: 0 2px 12px rgba(239, 68, 68, 0.3);
 }
 
 .eb-btn--danger:hover {
-  background: #b91c1c;
-  border-color: #b91c1c;
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  border-color: transparent;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
 }
 
 .eb-btn--danger:active {
-  transform: none;
-  box-shadow: none;
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(239, 68, 68, 0.2);
 }
 
 /* ========================================
@@ -274,15 +302,15 @@ html, body, #root {
   height: 100%;
   border-radius: 2px;
   transition: width 0.4s ease;
-  background: var(--status-done);
+  background: linear-gradient(90deg, #22c55e, #4ade80);
 }
 
 .eb-hp-fill--warning {
-  background: var(--status-progress);
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
 }
 
 .eb-hp-fill--danger {
-  background: var(--status-cancelled);
+  background: linear-gradient(90deg, #ef4444, #f87171);
 }
 
 /* ========================================
@@ -324,7 +352,7 @@ html, body, #root {
 }
 
 /* ========================================
-   Form Elements (Linear-style)
+   Form Elements (Modern)
    ======================================== */
 
 .eb-select,
@@ -332,20 +360,22 @@ html, body, #root {
 .eb-textarea {
   font-family: var(--font-sans);
   font-size: 13px;
-  padding: 6px 10px;
-  background: var(--bg-tertiary);
+  padding: 7px 12px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: var(--text-primary);
-  border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .eb-select:focus,
 .eb-input:focus,
 .eb-textarea:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px var(--accent-subtle);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15);
 }
 
 /* ========================================
@@ -438,7 +468,37 @@ html, body, #root {
 }
 
 /* ========================================
-   Scrollbar (Linear-style thin)
+   Status Pulse Animation
+   ======================================== */
+
+@keyframes status-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(34, 197, 94, 0);
+  }
+}
+
+.status-dot-working {
+  animation: status-pulse 2s ease-in-out infinite;
+}
+
+@keyframes status-pulse-amber {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
+  }
+}
+
+.status-dot-progress {
+  animation: status-pulse-amber 2s ease-in-out infinite;
+}
+
+/* ========================================
+   Scrollbar (Modern thin)
    ======================================== */
 
 ::-webkit-scrollbar {
