@@ -26,7 +26,7 @@ export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, ti
         toggleTimeOfDay={toggleTimeOfDay}
         flavors={flavors}
       />
-      <main className="flex-1 min-h-0 overflow-y-auto" style={{ padding: "24px 32px" }}>
+      <main className="flex-1 min-h-0 overflow-y-auto" style={{ padding: "28px 36px" }}>
         <Outlet />
       </main>
     </div>
