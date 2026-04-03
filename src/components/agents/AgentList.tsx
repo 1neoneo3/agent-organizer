@@ -53,10 +53,10 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "4px",
-                  padding: "3px 8px",
+                  padding: "3px 10px",
                   fontSize: "11px",
                   fontWeight: 500,
-                  borderRadius: "4px",
+                  borderRadius: "999px",
                   color: ok ? "var(--status-done)" : "var(--text-tertiary)",
                   background: "var(--bg-tertiary)",
                 }}
@@ -96,25 +96,22 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
           ) : (
             <div
               key={agent.id}
+              className="glass-card"
               style={{
-                background: "var(--bg-secondary)",
-                border: "1px solid var(--border-default)",
-                borderRadius: "8px",
-                padding: "14px 16px",
+                padding: "16px 18px",
                 display: "flex",
                 alignItems: "center",
                 gap: "14px",
-                transition: "border-color 0.15s ease",
               }}
             >
               <PixelAvatar role={agent.role} size={36} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span style={{ fontSize: "14px", fontWeight: 500, color: "var(--text-primary)" }}>{agent.name}</span>
+                  <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>{agent.name}</span>
                   {getRoleLabel(agent.role) && (
                     <span style={{
-                      padding: "1px 6px",
-                      borderRadius: "4px",
+                      padding: "2px 10px",
+                      borderRadius: "999px",
                       fontSize: "10px",
                       fontWeight: 600,
                       color: "var(--accent-primary)",
@@ -123,20 +120,23 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                       {getRoleLabel(agent.role)}
                     </span>
                   )}
-                  <span style={{
-                    width: "7px",
-                    height: "7px",
-                    borderRadius: "50%",
-                    background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
-                    flexShrink: 0,
-                  }} />
-                  <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>{agent.status}</span>
+                  <span
+                    className={agent.status === "working" ? "status-dot-pulse" : ""}
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "50%",
+                      background: STATUS_COLORS[agent.status] ?? "#a0a0a0",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ fontSize: "11px", color: "var(--text-tertiary)", fontWeight: 500 }}>{agent.status}</span>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                   {agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} \u2014 {agent.stats_tasks_done} tasks done
                 </div>
               </div>
-              <div style={{ display: "flex", gap: "4px" }}>
+              <div style={{ display: "flex", gap: "6px" }}>
                 <button
                   onClick={() => setEditingId(agent.id)}
                   className="eb-btn"
@@ -157,7 +157,7 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
         )}
 
         {agents.length === 0 && !showForm && (
-          <div style={{
+          <div className="glass-card" style={{
             textAlign: "center",
             padding: "48px",
             color: "var(--text-tertiary)",

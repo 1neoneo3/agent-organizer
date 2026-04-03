@@ -123,21 +123,16 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
   return (
     <div
+      className="glass-card"
       style={{
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border-default)",
-        borderRadius: "8px",
         cursor: "pointer",
-        transition: "border-color 0.15s ease, background 0.15s ease",
       }}
       onClick={() => { play("select"); onSelect?.(task.id); }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--text-tertiary)";
-        e.currentTarget.style.background = "var(--bg-hover)";
+        e.currentTarget.style.borderColor = "rgba(139, 92, 246, 0.3)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-default)";
-        e.currentTarget.style.background = "var(--bg-secondary)";
+        e.currentTarget.style.borderColor = "var(--glass-border)";
       }}
     >
       {/* Card header: title + status */}
@@ -153,27 +148,18 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
             <span style={{
-              padding: "2px 6px",
-              background: "#f59e0b",
+              padding: "3px 10px",
+              background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
               color: "#fff",
-              borderRadius: "4px",
+              borderRadius: "999px",
               fontSize: "10px",
               fontWeight: 600,
+              boxShadow: "0 1px 4px rgba(245, 158, 11, 0.3)",
             }}>
               Input
             </span>
           )}
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            padding: "2px 6px",
-            borderRadius: "4px",
-            fontSize: "10px",
-            fontWeight: 600,
-            color: statusColor,
-            background: "var(--bg-tertiary)",
-          }}>
+          <span className={`status-badge status-badge--${task.status}`}>
             <span style={{
               width: "6px",
               height: "6px",
@@ -243,10 +229,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         {/* Metadata row */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
           <span style={{
-            padding: "1px 6px",
+            padding: "2px 8px",
             background: "var(--bg-tertiary)",
             color: "var(--text-secondary)",
-            borderRadius: "4px",
+            borderRadius: "999px",
             fontSize: "10px",
             fontWeight: 600,
           }}>
@@ -254,10 +240,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           </span>
           {task.directive_id && (
             <span style={{
-              padding: "1px 6px",
+              padding: "2px 8px",
               background: "var(--accent-subtle)",
               color: "var(--accent-primary)",
-              borderRadius: "4px",
+              borderRadius: "999px",
               fontSize: "10px",
               fontWeight: 600,
             }}>
@@ -278,10 +264,10 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{agent.name}</span>
             {roleLabel && (
               <span style={{
-                padding: "1px 4px",
+                padding: "2px 8px",
                 background: "var(--bg-tertiary)",
                 color: "var(--text-tertiary)",
-                borderRadius: "3px",
+                borderRadius: "999px",
                 fontSize: "10px",
                 fontWeight: 500,
               }}>
