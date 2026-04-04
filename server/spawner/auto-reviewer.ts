@@ -31,13 +31,12 @@ export async function triggerAutoReview(
     return;
   }
 
-  // Loop prevention: stop auto-review if review_count reaches the configured max
+  // Loop prevention: stop auto-review if review_count reaches the configured max.
+  // The task stays in pr_review (not inbox) so that periodic dispatch does not
+  // re-pick it and create an infinite notification loop.
   const maxReviewCount = Number(getSetting(db, "review_count") ?? "3");
   if (currentTask.review_count >= maxReviewCount) {
-    const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto review stopped: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Returning to inbox for manual review — acceptance criteria not met after ${maxReviewCount} attempts.`);
-    ws.broadcast("task_status", { id: currentTask.id, status: "inbox" });
+    logSystem(db, currentTask.id, `Auto review stopped: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Task remains in pr_review for manual action.`);
     return;
   }
 

@@ -193,4 +193,43 @@ describe("autoDispatchTask", () => {
 
     assert.equal(spawnCalls, 0);
   });
+
+  it("skips inbox tasks that have reached the review_count max", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgent(db);
+    // review_count=3, default max is 3
+    insertTask(db, { assigned_agent_id: "agent-1", review_count: 3 });
+    let spawnCalls = 0;
+
+    autoDispatchTask(db, ws as never, "task-1", {
+      autoAssign: false,
+      autoRun: true,
+      spawnAgent: () => {
+        spawnCalls += 1;
+        return { pid: 123 };
+      },
+    });
+
+    assert.equal(spawnCalls, 0, "should not spawn agent for review-maxed inbox task");
+  });
+
+  it("dispatches inbox tasks with review_count below max", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgent(db);
+    insertTask(db, { assigned_agent_id: "agent-1", review_count: 1 });
+    let spawnCalls = 0;
+
+    autoDispatchTask(db, ws as never, "task-1", {
+      autoAssign: false,
+      autoRun: true,
+      spawnAgent: () => {
+        spawnCalls += 1;
+        return { pid: 123 };
+      },
+    });
+
+    assert.equal(spawnCalls, 1, "should spawn agent when review_count < max");
+  });
 });

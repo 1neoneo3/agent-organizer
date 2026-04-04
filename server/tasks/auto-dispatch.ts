@@ -30,6 +30,18 @@ export function autoDispatchTask(
   let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
   if (!task) return undefined;
 
+  // Skip tasks that were returned to inbox after hitting review_count max.
+  // Without this guard, periodic dispatch re-picks them and creates an infinite
+  // pr_review → inbox → dispatch → pr_review loop with repeated Telegram notifications.
+  if (task.status === "inbox" && task.review_count > 0) {
+    const maxReviewCount = Number(
+      (db.prepare("SELECT value FROM settings WHERE key = 'review_count'").get() as { value: string } | undefined)?.value ?? "3",
+    );
+    if (task.review_count >= maxReviewCount) {
+      return task;
+    }
+  }
+
   if (!task.assigned_agent_id && options.autoAssign) {
     const idleAgent = pickIdleAgent(db);
     if (idleAgent) {
