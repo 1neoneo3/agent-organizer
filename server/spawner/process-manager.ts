@@ -183,9 +183,9 @@ export function spawnAgent(
   const prompt = isContinue
     ? options!.continuePrompt!
     : (isTestGenRun
-      ? buildTestGenerationPrompt(task) + handoffContext
+      ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic") + handoffContext
       : (isQaRun
-        ? buildQaPrompt(task) + handoffContext
+        ? buildQaPrompt(task, workflow?.projectType ?? "generic") + handoffContext
         : (isPreDeployRun
           ? buildPreDeployPrompt(task) + handoffContext
           : (isReviewRun

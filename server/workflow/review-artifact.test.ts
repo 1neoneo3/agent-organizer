@@ -31,6 +31,7 @@ describe("promoteTaskReviewArtifact", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
       },
       { cwd: "/tmp/shared", branchName: null, rootPath: "/tmp/shared" },
     );
@@ -83,6 +84,7 @@ describe("promoteTaskReviewArtifact", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
       },
       {
         cwd: "/tmp/worktree",

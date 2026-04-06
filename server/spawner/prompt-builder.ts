@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { Task, Directive } from "../types/runtime.js";
-import type { ProjectWorkflow } from "../workflow/loader.js";
+import type { ProjectWorkflow, ProjectType } from "../workflow/loader.js";
 import type { AgentRuntimePolicy } from "../workflow/runtime-policy.js";
 
 // ---------------------------------------------------------------------------
@@ -554,7 +554,7 @@ export function buildReviewPrompt(task: Task): string {
  * Build a prompt for an automated QA testing run.
  * The QA agent verifies the implementation and outputs a verdict marker.
  */
-export function buildQaPrompt(task: Task): string {
+export function buildQaPrompt(task: Task, projectType: ProjectType = "generic"): string {
   const parts: string[] = [];
 
   parts.push("## Language");
@@ -574,6 +574,7 @@ export function buildQaPrompt(task: Task): string {
   parts.push(`**Title**: ${task.title}`);
   parts.push(`**Description**: ${task.description ?? "No description"}`);
   parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
+  parts.push(`**Project Type**: ${projectType}`);
   parts.push("");
 
   parts.push("## Sprint Contract");
@@ -582,17 +583,58 @@ export function buildQaPrompt(task: Task): string {
   parts.push("If not found, derive your own criteria from the task description.");
   parts.push("");
 
+  if (projectType === "dbt") {
+    appendDbtQaProcess(parts);
+  } else {
+    appendGenericQaProcess(parts);
+  }
+
+  parts.push("### Verdict");
+  parts.push("- If ALL criteria pass: output `[QA:PASS]`");
+  parts.push("- If ANY criterion fails: output `[QA:FAIL:<brief summary of failures>]`");
+  parts.push("");
+
+  return parts.join("\n");
+}
+
+function appendDbtQaProcess(parts: string[]): void {
+  parts.push("## dbt QA Process");
+  parts.push("");
+  parts.push("### Step 1: Mandatory Gates");
+  parts.push("Run these FIRST — ANY failure = automatic [QA:FAIL]:");
+  parts.push("1. `uv run dbt compile --select <changed_model>+` — コンパイルエラーがないこと");
+  parts.push("2. `uv run dbt test --select <changed_model>+` — 全テスト通過");
+  parts.push("3. `uv run dbt build --select <changed_model>+` — ビルド＋テスト通過");
+  parts.push("");
+  parts.push("### Step 2: Schema Validation");
+  parts.push("変更されたモデルの schema YAML を確認:");
+  parts.push("- 必須カラムに `not_null` テストがあるか");
+  parts.push("- 主キーに `unique` テストがあるか");
+  parts.push("- 外部キーに `relationships` テストがあるか");
+  parts.push("");
+  parts.push("### Step 3: Data Quality Check");
+  parts.push("BigQueryで実データを確認（サンプルクエリ実行）:");
+  parts.push("- 変更後のモデルの出力行数が妥当か（0行やNULLのみでないか）");
+  parts.push("- 集計値が期待範囲内か（既知のKPI値があれば比較）");
+  parts.push("- JOINの結合漏れがないか（LEFT JOINの場合NULL率を確認）");
+  parts.push("");
+  parts.push("### Step 4: Report");
+  parts.push("```");
+  parts.push("CRITERIA RESULTS:");
+  parts.push("[PASS/FAIL] dbt compile — Evidence: ...");
+  parts.push("[PASS/FAIL] dbt test — Evidence: ...");
+  parts.push("[PASS/FAIL] Schema tests exist — Evidence: ...");
+  parts.push("[PASS/FAIL] Data quality — Evidence: ...");
+  parts.push("OVERALL: X/Y criteria passed");
+  parts.push("```");
+  parts.push("");
+}
+
+function appendGenericQaProcess(parts: string[]): void {
   parts.push("## Your Process");
   parts.push("");
   parts.push("### Step 1: Extract Acceptance Criteria");
   parts.push("From the task description (or the Sprint Contract if available), derive 3-7 concrete, testable acceptance criteria. Each criterion should be binary (pass/fail).");
-  parts.push("");
-  parts.push("Example criteria format:");
-  parts.push("- [ ] File exists at the specified path");
-  parts.push("- [ ] Code runs without errors (exit code 0)");
-  parts.push("- [ ] Output matches expected format");
-  parts.push("- [ ] All required features are implemented (list each)");
-  parts.push("- [ ] No hardcoded test data or placeholder implementations");
   parts.push("");
 
   parts.push("### Step 2: Mandatory Build/Lint Gate (ALWAYS check these FIRST)");
@@ -601,14 +643,13 @@ export function buildQaPrompt(task: Task): string {
   parts.push("2. `npm run build` (or project build command) — ANY error = automatic [QA:FAIL]");
   parts.push("3. `npx tsc --noEmit` if TypeScript — ANY type error = automatic [QA:FAIL]");
   parts.push("4. Run the app/code and check for runtime errors — ANY crash/exception = automatic [QA:FAIL]");
-  parts.push("5. If web app: check for console errors (hydration, deprecation warnings, etc.) — report all");
   parts.push("");
   parts.push("If ANY of the above fails, immediately output [QA:FAIL:<reason>] without further testing.");
-  parts.push("Do NOT proceed to acceptance criteria if the build is broken.");
   parts.push("");
+
   parts.push("### Step 3: Active Verification of Acceptance Criteria");
   parts.push("For EACH criterion:");
-  parts.push("1. **Execute** the relevant command (run the code, check file existence, verify output)");
+  parts.push("1. **Execute** the relevant command");
   parts.push("2. **Record** the actual result");
   parts.push("3. **Grade** as PASS or FAIL with evidence");
   parts.push("");
@@ -616,42 +657,16 @@ export function buildQaPrompt(task: Task): string {
   parts.push("");
 
   parts.push("### Step 4: Report");
-  parts.push("Summarize results in this format:");
-  parts.push("");
   parts.push("```");
   parts.push("CRITERIA RESULTS:");
   parts.push("[PASS] Criterion 1 - Evidence: <what you observed>");
   parts.push("[FAIL] Criterion 2 - Evidence: <what went wrong>");
-  parts.push("...");
   parts.push("OVERALL: X/Y criteria passed");
   parts.push("```");
   parts.push("");
-
-  parts.push("### Step 5: Verdict");
-  parts.push("- If ALL criteria pass: output `[QA:PASS]`");
-  parts.push("- If ANY criterion fails: output `[QA:FAIL:<brief summary of failures>]`");
-  parts.push("");
-
-  parts.push("## Example QA Report (for calibration)");
-  parts.push("");
-  parts.push('Task: "Create a Python sorting algorithm comparison script"');
-  parts.push("");
-  parts.push("CRITERIA RESULTS:");
-  parts.push("[PASS] File exists at /home/mk/python_samples/sort_compare.py - Evidence: ls confirms file, 85 lines");
-  parts.push("[PASS] Code runs without errors - Evidence: python3 sort_compare.py exits with code 0");
-  parts.push("[PASS] Implements bubble sort - Evidence: function bubble_sort() found at line 5");
-  parts.push("[PASS] Implements quick sort - Evidence: function quick_sort() found at line 18");
-  parts.push("[FAIL] Includes timing comparison - Evidence: no timing/benchmark code found, only sort implementations");
-  parts.push("[PASS] Results are printed - Evidence: stdout shows sorted arrays for both algorithms");
-  parts.push("OVERALL: 5/6 criteria passed");
-  parts.push("");
-  parts.push("[QA:FAIL:Missing timing/benchmark comparison between algorithms]");
-  parts.push("");
-
-  return parts.join("\n");
 }
 
-export function buildTestGenerationPrompt(task: Task): string {
+export function buildTestGenerationPrompt(task: Task, projectType: ProjectType = "generic"): string {
   const parts: string[] = [];
 
   parts.push("## Language");
@@ -670,8 +685,100 @@ export function buildTestGenerationPrompt(task: Task): string {
   parts.push(`**Title**: ${task.title}`);
   parts.push(`**Description**: ${task.description ?? "No description"}`);
   parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
+  parts.push(`**Project Type**: ${projectType}`);
   parts.push("");
 
+  if (projectType === "dbt") {
+    appendDbtTestGeneration(parts);
+  } else if (projectType === "python") {
+    appendPythonTestGeneration(parts);
+  } else if (projectType === "typescript") {
+    appendTypescriptTestGeneration(parts);
+  } else {
+    appendGenericTestGeneration(parts);
+  }
+
+  return parts.join("\n");
+}
+
+function appendDbtTestGeneration(parts: string[]): void {
+  parts.push("## dbt テスト生成ガイド");
+  parts.push("");
+  parts.push("### Step 1: 変更内容の確認");
+  parts.push("git diff または変更されたモデルファイルを読み、変更内容を把握する。");
+  parts.push("");
+  parts.push("### Step 2: Schema Tests（YAML定義）");
+  parts.push("変更されたモデルの schema YAML に以下を追加:");
+  parts.push("- `not_null`: 必須カラムにNULLがないこと");
+  parts.push("- `unique`: ユニークキーの重複がないこと");
+  parts.push("- `accepted_values`: ENUMカラムの値が想定内");
+  parts.push("- `relationships`: 外部キーの参照整合性");
+  parts.push("");
+  parts.push("### Step 3: Unit Tests（dbt 1.8+ YAML定義）");
+  parts.push("変更されたモデルのロジック検証用 unit test を追加:");
+  parts.push("- 固定の入力データ（given）→ 期待される出力（expect）");
+  parts.push("- JOINの結合漏れ、フィルタ条件、集計ロジックの検証");
+  parts.push("- UNION ALL + NOT EXISTS の重複排除が正しいことの検証");
+  parts.push("- 境界値（NULL、空文字、0値）の取り扱い");
+  parts.push("");
+  parts.push("### Step 4: Data Tests（SQLファイル）");
+  parts.push("ビジネスロジックの検証用 data test を `tests/` に作成:");
+  parts.push("- `assert_*` 命名規則（例: `assert_delivery_coins_positive.sql`）");
+  parts.push("- 「結果が0行なら成功」のパターンで記述");
+  parts.push("");
+  parts.push("### Step 5: 実行と確認");
+  parts.push("```bash");
+  parts.push("uv run dbt test --select <changed_model>+");
+  parts.push("```");
+  parts.push("");
+  parts.push("## Output");
+  parts.push("- schema YAML にテスト定義を追加");
+  parts.push("- 必要に応じて unit test / data test ファイルを作成");
+  parts.push("- `dbt test` を実行して全テスト通過を確認");
+  parts.push("");
+}
+
+function appendPythonTestGeneration(parts: string[]): void {
+  parts.push("## Python テスト生成ガイド");
+  parts.push("");
+  parts.push("### Your Process");
+  parts.push("1. 変更されたファイルを読み、テスト対象の関数/クラスを特定");
+  parts.push("2. `tests/` ディレクトリに pytest テストを作成");
+  parts.push("3. テストカバレッジ:");
+  parts.push("   - Happy path（正常系）");
+  parts.push("   - Edge cases（境界値、空入力、None）");
+  parts.push("   - Error cases（例外、バリデーションエラー）");
+  parts.push("4. `pytest` を実行して全テスト通過を確認");
+  parts.push("5. 80%+ カバレッジを目指す");
+  parts.push("");
+  parts.push("### 実行コマンド");
+  parts.push("```bash");
+  parts.push("python -m pytest --cov=src");
+  parts.push("```");
+  parts.push("");
+}
+
+function appendTypescriptTestGeneration(parts: string[]): void {
+  parts.push("## TypeScript テスト生成ガイド");
+  parts.push("");
+  parts.push("### Your Process");
+  parts.push("1. 変更されたファイルを読み、テスト対象を特定");
+  parts.push("2. プロジェクトのテストフレームワーク（vitest/jest）に合わせてテストを作成");
+  parts.push("3. テストカバレッジ:");
+  parts.push("   - Happy path（正常系）");
+  parts.push("   - Edge cases（境界値、undefined、null）");
+  parts.push("   - Error cases（throw、reject）");
+  parts.push("4. テストを実行して全テスト通過を確認");
+  parts.push("5. 80%+ カバレッジを目指す");
+  parts.push("");
+  parts.push("### 実行コマンド");
+  parts.push("```bash");
+  parts.push("npm run test");
+  parts.push("```");
+  parts.push("");
+}
+
+function appendGenericTestGeneration(parts: string[]): void {
   parts.push("## Your Process");
   parts.push("");
   parts.push("1. Read the implementation changes (use git diff or read modified files)");
@@ -683,14 +790,11 @@ export function buildTestGenerationPrompt(task: Task): string {
   parts.push("4. Run the tests to verify they pass");
   parts.push("5. Aim for 80%+ coverage on changed code");
   parts.push("");
-
   parts.push("## Output");
   parts.push("- Create test files following the project's testing conventions");
   parts.push("- Run all tests and report results");
   parts.push("- If tests fail, fix the tests (not the implementation)");
   parts.push("");
-
-  return parts.join("\n");
 }
 
 export function buildPreDeployPrompt(task: Task): string {
