@@ -9,7 +9,7 @@ import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
 import { triggerAutoPreDeploy } from "../spawner/auto-pre-deploy.js";
 import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
-import { resolveActiveStages, nextStage, recordFailedStage } from "../workflow/stage-pipeline.js";
+import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransition } from "../workflow/stage-pipeline.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
@@ -183,6 +183,17 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     const updates = parsed.data;
+
+    // Validate pipeline order for status changes
+    if (updates.status) {
+      const existingTask = existing as unknown as Task;
+      const workflow = loadProjectWorkflow(existingTask.project_path);
+      const validationError = validateStatusTransition(db, existingTask.status, updates.status, workflow);
+      if (validationError) {
+        return res.status(400).json({ error: "invalid_status_transition", message: validationError });
+      }
+    }
+
     const now = Date.now();
     const fields: string[] = [];
     const values: unknown[] = [];
