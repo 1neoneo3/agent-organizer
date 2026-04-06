@@ -24,6 +24,9 @@ export interface ProjectWorkflow {
   includeTask: boolean;
   includeReview: boolean;
   includeDecompose: boolean;
+  enableTestGeneration: boolean;
+  enableHumanReview: boolean;
+  enablePreDeploy: boolean;
 }
 
 const DEFAULT_WORKFLOW: ProjectWorkflow = {
@@ -41,6 +44,9 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   includeTask: true,
   includeReview: true,
   includeDecompose: true,
+  enableTestGeneration: false,
+  enableHumanReview: false,
+  enablePreDeploy: false,
 };
 
 function stripQuotes(value: string): string {
@@ -157,6 +163,27 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
         const parsed = parseBoolean(value);
         if (parsed !== null) {
           workflow.includeDecompose = parsed;
+        }
+        break;
+      }
+      case "enable_test_generation": {
+        const parsed = parseBoolean(value);
+        if (parsed !== null) {
+          workflow.enableTestGeneration = parsed;
+        }
+        break;
+      }
+      case "enable_human_review": {
+        const parsed = parseBoolean(value);
+        if (parsed !== null) {
+          workflow.enableHumanReview = parsed;
+        }
+        break;
+      }
+      case "enable_pre_deploy": {
+        const parsed = parseBoolean(value);
+        if (parsed !== null) {
+          workflow.enablePreDeploy = parsed;
         }
         break;
       }

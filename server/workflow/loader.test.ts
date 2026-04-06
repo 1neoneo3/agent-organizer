@@ -81,6 +81,9 @@ describe("shouldIncludeWorkflow", () => {
       includeTask: true,
       includeReview: false,
       includeDecompose: false,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
     };
 
     assert.equal(shouldIncludeWorkflow(workflow, "task"), true);
