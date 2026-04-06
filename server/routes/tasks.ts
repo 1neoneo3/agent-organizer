@@ -7,6 +7,10 @@ import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
+import { triggerAutoPreDeploy } from "../spawner/auto-pre-deploy.js";
+import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
+import { resolveActiveStages, nextStage } from "../workflow/stage-pipeline.js";
+import { loadProjectWorkflow } from "../workflow/loader.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/runtime.js";
@@ -268,6 +272,58 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     await cache.del("agents:all");
     ws.broadcast("task_update", { id: req.params.id, status: "cancelled" });
     res.json({ stopped: true });
+  });
+
+  // Approve a task in human_review — advance to next stage
+  router.post("/tasks/:id/approve", async (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (task.status !== "human_review") {
+      return res.status(400).json({ error: "not_in_human_review", current_status: task.status });
+    }
+
+    const workflow = loadProjectWorkflow(task.project_path);
+    const activeStages = resolveActiveStages(db, workflow);
+    const next = nextStage("human_review", activeStages);
+    const now = Date.now();
+
+    db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(next, now, task.id);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    ).run(task.id, `Human review approved. Advancing to ${next}.`);
+
+    await invalidateTaskCaches();
+    const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    ws.broadcast("task_update", updatedTask);
+
+    // Trigger next stage's auto-agent if applicable
+    if (next === "pre_deploy") {
+      setTimeout(() => triggerAutoPreDeploy(db, ws, updatedTask, cache), 500);
+    }
+
+    res.json({ approved: true, next_status: next });
+  });
+
+  // Reject a task in human_review — send back to inbox
+  router.post("/tasks/:id/reject", async (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (task.status !== "human_review") {
+      return res.status(400).json({ error: "not_in_human_review", current_status: task.status });
+    }
+
+    const reason = (req.body as { reason?: string }).reason ?? "Rejected by human reviewer";
+    const now = Date.now();
+
+    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    ).run(task.id, `Human review rejected: ${reason}. Returning to inbox.`);
+
+    await invalidateTaskCaches();
+    ws.broadcast("task_update", { id: task.id, status: "inbox" });
+
+    res.json({ rejected: true, reason });
   });
 
   // Get task logs

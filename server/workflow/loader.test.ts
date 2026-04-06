@@ -81,10 +81,60 @@ describe("shouldIncludeWorkflow", () => {
       includeTask: true,
       includeReview: false,
       includeDecompose: false,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
     };
 
     assert.equal(shouldIncludeWorkflow(workflow, "task"), true);
     assert.equal(shouldIncludeWorkflow(workflow, "review"), false);
     assert.equal(shouldIncludeWorkflow(workflow, "decompose"), false);
+  });
+});
+
+describe("loadProjectWorkflow — enable_* fields", () => {
+  it("parses enable_test_generation, enable_human_review, enable_pre_deploy from frontmatter", () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ao-test-"));
+    fs.writeFileSync(path.join(tmpDir, "WORKFLOW.md"), `---
+enable_test_generation: true
+enable_human_review: true
+enable_pre_deploy: false
+---
+Custom workflow body
+`);
+
+    const result = loadProjectWorkflow(tmpDir);
+    assert.ok(result);
+    assert.equal(result.enableTestGeneration, true);
+    assert.equal(result.enableHumanReview, true);
+    assert.equal(result.enablePreDeploy, false);
+    assert.equal(result.body, "Custom workflow body");
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it("defaults enable_* to false when not specified", () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ao-test-"));
+    fs.writeFileSync(path.join(tmpDir, "WORKFLOW.md"), `---
+git_workflow: none
+---
+Body
+`);
+
+    const result = loadProjectWorkflow(tmpDir);
+    assert.ok(result);
+    assert.equal(result.enableTestGeneration, false);
+    assert.equal(result.enableHumanReview, false);
+    assert.equal(result.enablePreDeploy, false);
+
+    fs.rmSync(tmpDir, { recursive: true });
   });
 });

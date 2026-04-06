@@ -45,6 +45,9 @@ describe("prepareTaskWorkspace", () => {
         includeTask: true,
         includeReview: true,
         includeDecompose: true,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
       },
     );
 
@@ -68,6 +71,9 @@ describe("prepareTaskWorkspace", () => {
       includeTask: true,
       includeReview: true,
       includeDecompose: true,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
     };
 
     const workspace = prepareTaskWorkspace(
