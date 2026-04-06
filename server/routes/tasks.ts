@@ -26,7 +26,7 @@ const UpdateTaskSchema = z.object({
   description: z.string().nullish(),
   assigned_agent_id: z.string().nullish(),
   project_path: z.string().nullish(),
-  status: z.enum(["inbox", "in_progress", "self_review", "qa_testing", "pr_review", "done", "cancelled"]).optional(),
+  status: z.enum(["inbox", "in_progress", "self_review", "test_generation", "qa_testing", "pr_review", "human_review", "pre_deploy", "done", "cancelled"]).optional(),
   priority: z.number().int().min(0).max(10).optional(),
   task_size: z.enum(["small", "medium", "large"]).optional(),
   result: z.string().nullish(),
@@ -138,7 +138,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
-      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'in_progress', 'self_review', 'qa_testing', 'pr_review') LIMIT 1"
+      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review', 'pre_deploy') LIMIT 1"
     ).get(title) as { id: string; task_number: string; status: string } | undefined;
     if (duplicate) {
       return res.status(409).json({

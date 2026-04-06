@@ -25,8 +25,11 @@ const STATUS_COLORS: Record<string, string> = {
   inbox: "var(--status-inbox)",
   in_progress: "var(--status-progress)",
   self_review: "var(--status-review)",
+  test_generation: "var(--status-test-gen)",
   qa_testing: "var(--status-qa)",
   pr_review: "var(--status-review)",
+  human_review: "var(--status-human-review)",
+  pre_deploy: "var(--status-pre-deploy)",
   done: "var(--status-done)",
   cancelled: "var(--status-cancelled)",
 };
