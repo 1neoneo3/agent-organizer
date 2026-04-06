@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   description TEXT,
   assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
   project_path TEXT,
-  status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','in_progress','self_review','qa_testing','pr_review','done','cancelled')),
+  status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','in_progress','self_review','test_generation','qa_testing','pr_review','human_review','pre_deploy','done','cancelled')),
   priority INTEGER NOT NULL DEFAULT 0,
   task_size TEXT NOT NULL DEFAULT 'small' CHECK(task_size IN ('small','medium','large')),
   task_number TEXT,

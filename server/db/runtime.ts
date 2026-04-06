@@ -27,6 +27,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddExternalTaskRef(db);
   migrateAddReviewArtifactFields(db);
   migrateAddQaTestingStatus(db);
+  migrateAddWorkflowStages(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -108,6 +109,44 @@ function migrateAddReviewArtifactFields(db: DatabaseSync): void {
 function migrateAddQaTestingStatus(_db: DatabaseSync): void {
   // Migration already applied — CHECK constraint includes qa_testing.
   // No-op to avoid repeated table rebuild attempts.
+}
+
+function migrateAddWorkflowStages(db: DatabaseSync): void {
+  // Add test_generation, human_review, pre_deploy to the status CHECK constraint.
+  // SQLite doesn't support ALTER CHECK, so we rebuild the table.
+  const checkInfo = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
+  ).get() as { sql: string } | undefined;
+  if (!checkInfo) return;
+
+  // Skip if already migrated
+  if (checkInfo.sql.includes("test_generation")) return;
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.exec("ALTER TABLE tasks RENAME TO tasks_old");
+    db.exec(SCHEMA_SQL.split("CREATE TABLE IF NOT EXISTS tasks")[0]); // tables before tasks are already created
+    // Recreate tasks table with new CHECK constraint (from SCHEMA_SQL)
+    const tasksSchema = SCHEMA_SQL.match(/CREATE TABLE IF NOT EXISTS tasks \([\s\S]*?\);/);
+    if (tasksSchema) {
+      db.exec(tasksSchema[0]);
+    }
+    // Copy data
+    const cols = (db.prepare("PRAGMA table_info(tasks_old)").all() as Array<{ name: string }>)
+      .map(c => c.name);
+    const newCols = (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>)
+      .map(c => c.name);
+    const commonCols = cols.filter(c => newCols.includes(c));
+    const colList = commonCols.join(", ");
+    db.exec(`INSERT INTO tasks (${colList}) SELECT ${colList} FROM tasks_old`);
+    db.exec("DROP TABLE tasks_old");
+    // Recreate indexes
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id)");
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
 }
 
 function backfillTaskNumbers(db: DatabaseSync): void {
