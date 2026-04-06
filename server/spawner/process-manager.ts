@@ -224,7 +224,7 @@ export function spawnAgent(
   // Update task and agent status (skip for continue — already in_progress)
   if (!isContinue) {
     const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?").run(now, now, task.id);
+    db.prepare("UPDATE tasks SET status = 'in_progress', assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
     db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
 
     invalidateCaches(cache);
