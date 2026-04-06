@@ -651,6 +651,99 @@ export function buildQaPrompt(task: Task): string {
   return parts.join("\n");
 }
 
+export function buildTestGenerationPrompt(task: Task): string {
+  const parts: string[] = [];
+
+  parts.push("## Language");
+  parts.push(
+    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
+  );
+  parts.push("");
+
+  appendSharedContext(parts, task.project_path);
+
+  parts.push("# Test Generation Task");
+  parts.push("");
+  parts.push("You are a test engineer. Generate tests for the implementation of this task.");
+  parts.push("");
+  parts.push("## Task Under Test");
+  parts.push(`**Title**: ${task.title}`);
+  parts.push(`**Description**: ${task.description ?? "No description"}`);
+  parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
+  parts.push("");
+
+  parts.push("## Your Process");
+  parts.push("");
+  parts.push("1. Read the implementation changes (use git diff or read modified files)");
+  parts.push("2. Identify testable behaviors and edge cases");
+  parts.push("3. Write unit tests covering:");
+  parts.push("   - Happy path (normal operation)");
+  parts.push("   - Edge cases (boundary values, empty inputs, etc.)");
+  parts.push("   - Error cases (invalid inputs, failures)");
+  parts.push("4. Run the tests to verify they pass");
+  parts.push("5. Aim for 80%+ coverage on changed code");
+  parts.push("");
+
+  parts.push("## Output");
+  parts.push("- Create test files following the project's testing conventions");
+  parts.push("- Run all tests and report results");
+  parts.push("- If tests fail, fix the tests (not the implementation)");
+  parts.push("");
+
+  return parts.join("\n");
+}
+
+export function buildPreDeployPrompt(task: Task): string {
+  const parts: string[] = [];
+
+  parts.push("## Language");
+  parts.push(
+    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
+  );
+  parts.push("");
+
+  appendSharedContext(parts, task.project_path);
+
+  parts.push("# Pre-Deploy Verification Task");
+  parts.push("");
+  parts.push("You are a DevOps engineer performing pre-deploy verification.");
+  parts.push("");
+  parts.push("## Task Under Test");
+  parts.push(`**Title**: ${task.title}`);
+  parts.push(`**Description**: ${task.description ?? "No description"}`);
+  parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
+  parts.push("");
+
+  parts.push("## Verification Checklist");
+  parts.push("");
+  parts.push("### Step 1: Build Verification");
+  parts.push("1. Run `npm run build` (or project build command) — must succeed");
+  parts.push("2. Run `npx tsc --noEmit` if TypeScript — must have zero errors");
+  parts.push("3. Run `npm run lint` — must pass");
+  parts.push("");
+  parts.push("### Step 2: Test Verification");
+  parts.push("1. Run all tests — must pass");
+  parts.push("2. Check test coverage is adequate (80%+ on changed files)");
+  parts.push("");
+  parts.push("### Step 3: Security Check");
+  parts.push("1. No hardcoded secrets (API keys, passwords, tokens)");
+  parts.push("2. No console.log statements in production code");
+  parts.push("3. Dependencies are up to date (no critical vulnerabilities)");
+  parts.push("");
+  parts.push("### Step 4: Deployment Readiness");
+  parts.push("1. All changes are committed");
+  parts.push("2. Branch is up to date with main");
+  parts.push("3. PR is created and reviewable");
+  parts.push("");
+
+  parts.push("## Verdict");
+  parts.push("- If ALL checks pass: output `[PRE_DEPLOY:PASS]`");
+  parts.push("- If ANY check fails: output `[PRE_DEPLOY:FAIL:<brief summary>]`");
+  parts.push("");
+
+  return parts.join("\n");
+}
+
 export function buildDecomposePrompt(directive: Directive): string {
   const parts: string[] = [];
 

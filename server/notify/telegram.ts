@@ -25,15 +25,21 @@ export async function sendTelegramMessage(text: string): Promise<void> {
 }
 
 const STATUS_EMOJI: Record<string, string> = {
+  test_generation: "\u{1F9EA}",
   qa_testing: "\u{1F9EA}",
   pr_review: "\u{1F50D}",
+  human_review: "\u{1F9D1}",
+  pre_deploy: "\u{1F680}",
   done: "\u2705",
   cancelled: "\u274C",
 };
 
 const STATUS_LABEL: Record<string, string> = {
+  test_generation: "Test Generation",
   qa_testing: "QA Testing",
   pr_review: "PR Review",
+  human_review: "Human Review",
+  pre_deploy: "Pre Deploy",
   done: "Complete",
   cancelled: "Cancelled",
 };
