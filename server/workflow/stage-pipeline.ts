@@ -69,6 +69,55 @@ export function resolveActiveStages(
 }
 
 /**
+ * Find the last failed stage for a task by scanning task_logs for [FAIL_AT:*] markers.
+ * Returns the stage name if found, or null if no failure marker exists.
+ */
+export function findLastFailedStage(
+  db: DatabaseSync,
+  taskId: string,
+): WorkflowStage | null {
+  const row = db
+    .prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[FAIL_AT:%' ORDER BY created_at DESC LIMIT 1",
+    )
+    .get(taskId) as { message: string } | undefined;
+
+  if (!row) return null;
+
+  const match = row.message.match(/\[FAIL_AT:(\w+)\]/);
+  if (!match) return null;
+
+  const stage = match[1] as WorkflowStage;
+  if (WORKFLOW_STAGES.includes(stage)) return stage;
+  return null;
+}
+
+/**
+ * Record a failure marker in task_logs so the task can resume from this stage.
+ */
+export function recordFailedStage(
+  db: DatabaseSync,
+  taskId: string,
+  stage: WorkflowStage,
+): void {
+  db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+  ).run(taskId, `[FAIL_AT:${stage}] Stage failed. Task will resume from this stage after rework.`);
+}
+
+/**
+ * Clear the failure marker when a task successfully passes the previously failed stage.
+ */
+export function clearFailedStage(
+  db: DatabaseSync,
+  taskId: string,
+): void {
+  db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+  ).run(taskId, "[FAIL_AT:CLEARED] Previous failure marker cleared. Resuming normal pipeline.");
+}
+
+/**
  * Determine the next stage after the current one completes successfully.
  * If the current stage is not in the active pipeline, falls back to "done".
  */
@@ -117,12 +166,17 @@ export function determineNextStage(
       .all(task.id, runStartedAt) as Array<{ message: string }>;
 
     const qaFailed = logs.some((l) => l.message.includes("[QA:FAIL"));
-    if (qaFailed) return "inbox"; // Send back for rework
+    if (qaFailed) {
+      recordFailedStage(db, task.id, "qa_testing");
+      return "inbox";
+    }
+    clearFailedStage(db, task.id);
     return nextStage("qa_testing", activeStages);
   }
 
   // test_generation completed — move to next stage
   if (task.status === "test_generation") {
+    clearFailedStage(db, task.id);
     return nextStage("test_generation", activeStages);
   }
 
@@ -135,7 +189,11 @@ export function determineNextStage(
       .all(task.id, runStartedAt) as Array<{ message: string }>;
 
     const failed = logs.some((l) => l.message.includes("[PRE_DEPLOY:FAIL"));
-    if (failed) return "inbox"; // Send back for rework
+    if (failed) {
+      recordFailedStage(db, task.id, "pre_deploy");
+      return "inbox";
+    }
+    clearFailedStage(db, task.id);
     return "done";
   }
 
@@ -150,15 +208,17 @@ export function determineNextStage(
     const needsChanges = logs.some((l) =>
       l.message.includes("[REVIEW:NEEDS_CHANGES]"),
     );
-    if (needsChanges) return "inbox"; // Send back for rework
+    if (needsChanges) {
+      recordFailedStage(db, task.id, "pr_review");
+      return "inbox";
+    }
 
     const passed = logs.some((l) => l.message.includes("[REVIEW:PASS]"));
     const autoDone = getSetting(db, "auto_done") ?? "true";
     if (autoDone !== "true") {
-      // When auto_done is disabled, only advance if explicit PASS marker found
       if (!passed) return "pr_review";
     }
-    // Review passed — advance to next stage after pr_review
+    clearFailedStage(db, task.id);
     return nextStage("pr_review", activeStages);
   }
 
@@ -173,10 +233,16 @@ export function determineNextStage(
     const passed = logs.some((l) =>
       l.message.includes("[SELF_REVIEW:PASS]"),
     );
-    if (passed) return nextStage("pr_review", activeStages); // Skip PR review
-    return nextStage("in_progress", activeStages); // Proceed to next stage
+    if (passed) return nextStage("pr_review", activeStages);
+    return nextStage("in_progress", activeStages);
   }
 
-  // Implementation completed — move to next stage after in_progress
+  // Implementation completed — check if resuming from a failed stage
+  const failedStage = findLastFailedStage(db, task.id);
+  if (failedStage && activeStages.includes(failedStage)) {
+    // Resume from the previously failed stage instead of starting over
+    return failedStage;
+  }
+
   return nextStage("in_progress", activeStages);
 }

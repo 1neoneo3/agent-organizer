@@ -9,7 +9,7 @@ import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
 import { triggerAutoPreDeploy } from "../spawner/auto-pre-deploy.js";
 import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
-import { resolveActiveStages, nextStage } from "../workflow/stage-pipeline.js";
+import { resolveActiveStages, nextStage, recordFailedStage } from "../workflow/stage-pipeline.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
@@ -316,9 +316,10 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const now = Date.now();
 
     db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+    recordFailedStage(db, task.id, "human_review");
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, `Human review rejected: ${reason}. Returning to inbox.`);
+    ).run(task.id, `Human review rejected: ${reason}. Returning to inbox. Will resume from human_review after rework.`);
 
     await invalidateTaskCaches();
     ws.broadcast("task_update", { id: task.id, status: "inbox" });

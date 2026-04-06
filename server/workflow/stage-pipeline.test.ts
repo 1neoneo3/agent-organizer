@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveActiveStages, nextStage } from "./stage-pipeline.js";
+import { resolveActiveStages, nextStage, findLastFailedStage, recordFailedStage, clearFailedStage } from "./stage-pipeline.js";
 import type { ProjectWorkflow } from "./loader.js";
 
 // Minimal mock DB that returns settings
@@ -127,5 +127,51 @@ describe("nextStage", () => {
     assert.strictEqual(nextStage("in_progress", stages), "pr_review");
     assert.strictEqual(nextStage("pr_review", stages), "human_review");
     assert.strictEqual(nextStage("human_review", stages), "done");
+  });
+});
+
+describe("findLastFailedStage / recordFailedStage / clearFailedStage", () => {
+  function createMockDbWithLogs(logs: Array<{ message: string }>) {
+    return {
+      prepare: (sql: string) => ({
+        get: () => {
+          if (sql.includes("FAIL_AT")) {
+            // Return last FAIL_AT log that isn't CLEARED
+            const failLogs = logs.filter(l => l.message.includes("[FAIL_AT:") && !l.message.includes("CLEARED"));
+            return failLogs.length > 0 ? failLogs[failLogs.length - 1] : undefined;
+          }
+          return undefined;
+        },
+        all: () => [],
+        run: (...args: any[]) => { logs.push({ message: args[1] }); },
+      }),
+      exec: () => {},
+    } as any;
+  }
+
+  it("returns null when no failure marker exists", () => {
+    const db = createMockDbWithLogs([]);
+    assert.strictEqual(findLastFailedStage(db, "task-1"), null);
+  });
+
+  it("returns the failed stage from marker", () => {
+    const db = createMockDbWithLogs([
+      { message: "[FAIL_AT:qa_testing] Stage failed. Task will resume from this stage after rework." },
+    ]);
+    assert.strictEqual(findLastFailedStage(db, "task-1"), "qa_testing");
+  });
+
+  it("records a failure marker", () => {
+    const logs: Array<{ message: string }> = [];
+    const db = createMockDbWithLogs(logs);
+    recordFailedStage(db, "task-1", "pr_review");
+    assert.ok(logs.some(l => l.message.includes("[FAIL_AT:pr_review]")));
+  });
+
+  it("clears a failure marker", () => {
+    const logs: Array<{ message: string }> = [];
+    const db = createMockDbWithLogs(logs);
+    clearFailedStage(db, "task-1");
+    assert.ok(logs.some(l => l.message.includes("[FAIL_AT:CLEARED]")));
   });
 });
