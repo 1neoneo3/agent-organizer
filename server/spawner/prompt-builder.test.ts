@@ -39,6 +39,7 @@ describe("buildTaskPrompt", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
         },
       },
     );

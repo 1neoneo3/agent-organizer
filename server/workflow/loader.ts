@@ -8,6 +8,7 @@ export type CodexSandboxMode =
 export type CodexApprovalPolicy = "untrusted" | "on-request" | "never";
 export type E2EExecutionMode = "agent" | "host" | "ci";
 export type WorkflowPromptKind = "task" | "review" | "decompose";
+export type ProjectType = "typescript" | "python" | "dbt" | "generic";
 
 export interface ProjectWorkflow {
   body: string;
@@ -27,6 +28,7 @@ export interface ProjectWorkflow {
   enableTestGeneration: boolean;
   enableHumanReview: boolean;
   enablePreDeploy: boolean;
+  projectType: ProjectType;
 }
 
 const DEFAULT_WORKFLOW: ProjectWorkflow = {
@@ -47,6 +49,7 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   enableTestGeneration: false,
   enableHumanReview: false,
   enablePreDeploy: false,
+  projectType: "generic",
 };
 
 function stripQuotes(value: string): string {
@@ -187,6 +190,11 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
         }
         break;
       }
+      case "project_type":
+        if (value === "typescript" || value === "python" || value === "dbt" || value === "generic") {
+          workflow.projectType = value;
+        }
+        break;
       default:
         break;
     }

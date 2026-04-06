@@ -23,6 +23,7 @@ describe("resolveAgentRuntimePolicy", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
       },
     );
 
@@ -52,6 +53,7 @@ describe("resolveAgentRuntimePolicy", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
       },
     );
 

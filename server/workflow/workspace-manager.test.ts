@@ -48,6 +48,7 @@ describe("prepareTaskWorkspace", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
       },
     );
 
@@ -74,6 +75,7 @@ describe("prepareTaskWorkspace", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
     };
 
     const workspace = prepareTaskWorkspace(

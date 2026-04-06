@@ -84,6 +84,7 @@ describe("shouldIncludeWorkflow", () => {
           enableTestGeneration: false,
           enableHumanReview: false,
           enablePreDeploy: false,
+          projectType: "generic" as const,
     };
 
     assert.equal(shouldIncludeWorkflow(workflow, "task"), true);

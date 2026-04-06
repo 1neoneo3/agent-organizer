@@ -38,6 +38,7 @@ const baseWorkflow: ProjectWorkflow = {
   enableTestGeneration: false,
   enableHumanReview: false,
   enablePreDeploy: false,
+          projectType: "generic" as const,
 };
 
 describe("resolveActiveStages", () => {
@@ -86,6 +87,7 @@ describe("resolveActiveStages", () => {
       enableTestGeneration: false,
       enableHumanReview: true,
       enablePreDeploy: false,
+          projectType: "generic" as const,
     };
     const stages = resolveActiveStages(db, workflow);
     assert.deepStrictEqual(stages, [
