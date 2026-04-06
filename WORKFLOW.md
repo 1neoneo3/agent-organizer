@@ -12,6 +12,7 @@ include_decompose: true
 enable_test_generation: true
 enable_human_review: true
 enable_pre_deploy: false
+project_type: typescript
 ---
 
 # Agent Organizer Workflow
