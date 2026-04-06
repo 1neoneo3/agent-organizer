@@ -7,9 +7,11 @@ import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOW
 import { runExplorePhase } from "./explore-phase.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
-import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt } from "./prompt-builder.js";
+import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt, buildTestGenerationPrompt, buildPreDeployPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { triggerAutoQa } from "./auto-qa.js";
+import { triggerAutoTestGen } from "./auto-test-gen.js";
+import { triggerAutoPreDeploy } from "./auto-pre-deploy.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
 import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
 import { determineNextStage } from "../workflow/stage-pipeline.js";
@@ -131,9 +133,11 @@ export function spawnAgent(
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
 
   const isQaRun = task.status === "qa_testing";
+  const isTestGenRun = task.status === "test_generation";
+  const isPreDeployRun = task.status === "pre_deploy";
 
-  // Restrict tools for review/QA phases (read-only)
-  const allowedTools = (isReviewRun || isQaRun)
+  // Restrict tools for review/QA/pre-deploy phases (read-only)
+  const allowedTools = (isReviewRun || isQaRun || isPreDeployRun)
     ? REVIEW_ALLOWED_TOOLS
     : undefined;
 
@@ -148,7 +152,7 @@ export function spawnAgent(
 
   // Extract handoff context for QA/review agents
   let handoffContext = "";
-  if ((isQaRun || isReviewRun) && !isContinue) {
+  if ((isQaRun || isReviewRun || isTestGenRun || isPreDeployRun) && !isContinue) {
     const handoffs = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[HANDOFF]%' ORDER BY created_at DESC LIMIT 3"
     ).all(task.id) as Array<{ message: string }>;
@@ -159,7 +163,7 @@ export function spawnAgent(
 
   // Run Explore phase before Implement (if enabled and applicable)
   let exploreContext = "";
-  if (!isContinue && !isQaRun && !isReviewRun) {
+  if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isPreDeployRun) {
     // Check for existing explore result (from previous run)
     const existingExplore = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[EXPLORE]%' ORDER BY created_at DESC LIMIT 1"
@@ -178,11 +182,15 @@ export function spawnAgent(
 
   const prompt = isContinue
     ? options!.continuePrompt!
-    : (isQaRun
-      ? buildQaPrompt(task) + handoffContext
-      : (isReviewRun
-        ? buildReviewPrompt(task) + handoffContext
-        : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy }) + exploreContext));
+    : (isTestGenRun
+      ? buildTestGenerationPrompt(task) + handoffContext
+      : (isQaRun
+        ? buildQaPrompt(task) + handoffContext
+        : (isPreDeployRun
+          ? buildPreDeployPrompt(task) + handoffContext
+          : (isReviewRun
+            ? buildReviewPrompt(task) + handoffContext
+            : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy }) + exploreContext))));
 
   // Log directory
   const logDir = join("data", "logs");
@@ -693,6 +701,12 @@ export function spawnAgent(
       });
     }
 
+    // Trigger auto-test-generation if task landed in test_generation
+    if (finalStatus === "test_generation") {
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+      setTimeout(() => triggerAutoTestGen(db, ws, freshTask, cache), 500);
+    }
+
     // Trigger auto-QA if task landed in qa_testing
     if (finalStatus === "qa_testing") {
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
@@ -703,6 +717,14 @@ export function spawnAgent(
     if (finalStatus === "pr_review") {
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
       setTimeout(() => triggerAutoReview(db, ws, freshTask, cache), 500);
+    }
+
+    // human_review: no agent trigger — waits for human approval via API
+
+    // Trigger auto-pre-deploy if task landed in pre_deploy
+    if (finalStatus === "pre_deploy") {
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+      setTimeout(() => triggerAutoPreDeploy(db, ws, freshTask, cache), 500);
     }
   });
 
