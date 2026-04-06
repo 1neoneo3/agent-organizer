@@ -18,6 +18,61 @@ const WORKFLOW_STAGES = [
 
 export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
 
+/**
+ * Validate whether a manual status transition is allowed.
+ *
+ * Allowed transitions:
+ *  - Any status → "inbox" (reset)
+ *  - Any status → "cancelled" (cancel)
+ *  - Forward-only within the active pipeline (no skipping stages)
+ *  - "inbox" → "in_progress" (start/restart)
+ *
+ * Returns null if valid, or an error message string if invalid.
+ */
+export function validateStatusTransition(
+  db: DatabaseSync,
+  currentStatus: string,
+  newStatus: string,
+  workflow: ProjectWorkflow | null,
+): string | null {
+  // Always allow reset to inbox or cancel
+  if (newStatus === "inbox" || newStatus === "cancelled") return null;
+
+  // Allow inbox → in_progress (start task)
+  if (currentStatus === "inbox" && newStatus === "in_progress") return null;
+
+  // Allow cancelled → inbox (reopen)
+  if (currentStatus === "cancelled" && newStatus === "inbox") return null;
+
+  const activeStages = resolveActiveStages(db, workflow);
+
+  const currentIndex = activeStages.indexOf(currentStatus as WorkflowStage);
+  const newIndex = activeStages.indexOf(newStatus as WorkflowStage);
+
+  // If new status is not in the pipeline, reject
+  if (newIndex === -1) {
+    return `Status "${newStatus}" is not an active stage in the current workflow pipeline.`;
+  }
+
+  // If current status is not in the pipeline (e.g. self_review), allow forward transitions
+  if (currentIndex === -1) return null;
+
+  // Only allow moving to the immediate next stage (no skipping)
+  if (newIndex === currentIndex + 1) return null;
+
+  // Allow staying at the same stage (no-op)
+  if (newIndex === currentIndex) return null;
+
+  // Backward transitions are not allowed (use inbox reset instead)
+  if (newIndex < currentIndex) {
+    return `Cannot move backward from "${currentStatus}" to "${newStatus}". Reset to inbox first.`;
+  }
+
+  // Skipping stages is not allowed
+  const skippedStages = activeStages.slice(currentIndex + 1, newIndex);
+  return `Cannot skip stages. Must pass through: ${skippedStages.join(" → ")} before reaching "${newStatus}".`;
+}
+
 function getSetting(db: DatabaseSync, key: string): string | undefined {
   const row = db
     .prepare("SELECT value FROM settings WHERE key = ?")

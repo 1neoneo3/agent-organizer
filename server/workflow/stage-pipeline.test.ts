@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveActiveStages, nextStage, findLastFailedStage, recordFailedStage, clearFailedStage } from "./stage-pipeline.js";
+import { resolveActiveStages, nextStage, findLastFailedStage, recordFailedStage, clearFailedStage, validateStatusTransition } from "./stage-pipeline.js";
 import type { ProjectWorkflow } from "./loader.js";
 
 // Minimal mock DB that returns settings
@@ -173,5 +173,48 @@ describe("findLastFailedStage / recordFailedStage / clearFailedStage", () => {
     const db = createMockDbWithLogs(logs);
     clearFailedStage(db, "task-1");
     assert.ok(logs.some(l => l.message.includes("[FAIL_AT:CLEARED]")));
+  });
+});
+
+describe("validateStatusTransition", () => {
+  it("allows inbox → in_progress", () => {
+    const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
+    assert.strictEqual(validateStatusTransition(db, "inbox", "in_progress", baseWorkflow), null);
+  });
+
+  it("allows any → inbox (reset)", () => {
+    const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
+    assert.strictEqual(validateStatusTransition(db, "pr_review", "inbox", baseWorkflow), null);
+  });
+
+  it("allows any → cancelled", () => {
+    const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
+    assert.strictEqual(validateStatusTransition(db, "in_progress", "cancelled", baseWorkflow), null);
+  });
+
+  it("allows forward to immediate next stage", () => {
+    const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
+    assert.strictEqual(validateStatusTransition(db, "in_progress", "qa_testing", baseWorkflow), null);
+  });
+
+  it("rejects skipping stages", () => {
+    const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
+    const result = validateStatusTransition(db, "in_progress", "pr_review", baseWorkflow);
+    assert.ok(result);
+    assert.ok(result.includes("Cannot skip"));
+  });
+
+  it("rejects backward transitions", () => {
+    const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
+    const result = validateStatusTransition(db, "pr_review", "in_progress", baseWorkflow);
+    assert.ok(result);
+    assert.ok(result.includes("Cannot move backward"));
+  });
+
+  it("rejects jumping to done directly", () => {
+    const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
+    const result = validateStatusTransition(db, "in_progress", "done", baseWorkflow);
+    assert.ok(result);
+    assert.ok(result.includes("Cannot skip"));
   });
 });
