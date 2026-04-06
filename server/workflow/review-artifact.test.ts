@@ -28,6 +28,9 @@ describe("promoteTaskReviewArtifact", () => {
         includeTask: true,
         includeReview: true,
         includeDecompose: true,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
       },
       { cwd: "/tmp/shared", branchName: null, rootPath: "/tmp/shared" },
     );
@@ -77,6 +80,9 @@ describe("promoteTaskReviewArtifact", () => {
         includeTask: true,
         includeReview: true,
         includeDecompose: true,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
       },
       {
         cwd: "/tmp/worktree",

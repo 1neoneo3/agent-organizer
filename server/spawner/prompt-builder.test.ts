@@ -36,6 +36,9 @@ describe("buildTaskPrompt", () => {
           includeTask: true,
           includeReview: true,
           includeDecompose: true,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
         },
       },
     );

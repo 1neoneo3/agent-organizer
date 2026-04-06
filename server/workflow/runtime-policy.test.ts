@@ -20,6 +20,9 @@ describe("resolveAgentRuntimePolicy", () => {
         includeTask: true,
         includeReview: true,
         includeDecompose: true,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
       },
     );
 
@@ -46,6 +49,9 @@ describe("resolveAgentRuntimePolicy", () => {
         includeTask: true,
         includeReview: true,
         includeDecompose: true,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          enablePreDeploy: false,
       },
     );
 

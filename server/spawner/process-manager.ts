@@ -10,8 +10,9 @@ import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, typ
 import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { triggerAutoQa } from "./auto-qa.js";
-import { loadProjectWorkflow } from "../workflow/loader.js";
+import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
 import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
+import { determineNextStage } from "../workflow/stage-pipeline.js";
 import { notifyTaskStatus } from "../notify/telegram.js";
 import type { TaskLogKind } from "../types/runtime.js";
 import {
@@ -623,10 +624,10 @@ export function spawnAgent(
 
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
-    const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun) : "cancelled";
+    const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
 
     // Artifact-based handoff: log structured context for the next phase agent
-    if (finalStatus === "qa_testing" || finalStatus === "pr_review") {
+    if (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy") {
       const handoff = {
         phase: completionTask.status,
         nextPhase: finalStatus,
@@ -648,7 +649,7 @@ export function spawnAgent(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
 
-    if (code === 0 && (finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "done")) {
+    if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy" || finalStatus === "done")) {
       const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace);
       db.prepare(
         `UPDATE tasks
@@ -684,7 +685,7 @@ export function spawnAgent(
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
     // Telegram notification for review/done/cancelled
-    if (finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "done" || finalStatus === "cancelled") {
+    if (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy" || finalStatus === "done" || finalStatus === "cancelled") {
       notifyTaskStatus(task.title, finalStatus, {
         taskNumber: task.task_number ?? undefined,
         prUrl: (finishedTask as Task | undefined)?.pr_url ?? undefined,
@@ -713,54 +714,9 @@ export function determineCompletionStatus(
   task: Task,
   selfReview: boolean,
   reviewRun = task.review_count > 0,
+  workflow: ProjectWorkflow | null = null,
 ): string {
-  const runStartedAt = task.started_at ?? 0;
-
-  // QA run completed — check QA verdict
-  if (task.status === "qa_testing") {
-    const logs = db.prepare(
-      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
-    ).all(task.id, runStartedAt) as Array<{ message: string }>;
-
-    const qaFailed = logs.some((l) => l.message.includes("[QA:FAIL"));
-    if (qaFailed) return "inbox"; // Send back for rework
-    return "pr_review"; // QA passed → move to PR review
-  }
-
-  if (reviewRun) {
-    const logs = db.prepare(
-      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
-    ).all(task.id, runStartedAt) as Array<{ message: string }>;
-
-    const needsChanges = logs.some((l) => l.message.includes("[REVIEW:NEEDS_CHANGES]"));
-    if (needsChanges) return "inbox"; // Send back for rework
-
-    const passed = logs.some((l) => l.message.includes("[REVIEW:PASS]"));
-    const autoDone = getSetting(db, "auto_done") ?? "true";
-    if (autoDone !== "true") {
-      // When auto_done is disabled, only move to done if explicit PASS marker found
-      return passed ? "done" : "pr_review";
-    }
-    return "done"; // Review passed (or no explicit marker = pass when auto_done is enabled)
-  }
-
-  if (!selfReview) {
-    // Check qa_mode setting — if enabled, route to qa_testing instead of pr_review
-    const qaMode = getSetting(db, "qa_mode") ?? "disabled";
-    const reviewMode = getSetting(db, "review_mode") ?? "pr_only";
-    if (reviewMode === "none" && qaMode !== "enabled") return "done";
-    if (qaMode === "enabled") return "qa_testing";
-    if (reviewMode === "pr_only") return "pr_review";
-    return "pr_review";
-  }
-  // Self-review: check if review passed
-  const logs = db.prepare(
-    "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50"
-  ).all(task.id, runStartedAt) as Array<{ message: string }>;
-
-  const passed = logs.some((l) => l.message.includes("[SELF_REVIEW:PASS]"));
-  if (passed) return "done"; // Auto-approved via self-review
-  return "pr_review"; // Fallback to PR review
+  return determineNextStage(db, task, selfReview, reviewRun, workflow);
 }
 
 function getReviewArtifactCompletionBlockReason(
