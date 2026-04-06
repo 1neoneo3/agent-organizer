@@ -1,7 +1,7 @@
 import { memo, useState, useRef, useEffect } from "react";
 import { getRoleColorClass } from "../../components/agents/roles.js";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
-import { sendTaskFeedback, sendInteractiveResponse } from "../../api/endpoints.js";
+import { sendTaskFeedback, sendInteractiveResponse, approveTask, rejectTask } from "../../api/endpoints.js";
 import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 
@@ -15,8 +15,11 @@ const STATUS_DISPLAY: Record<string, string> = {
   inbox: "Inbox",
   in_progress: "In Progress",
   self_review: "Review",
+  test_generation: "Test Gen",
   qa_testing: "QA Testing",
   pr_review: "PR Review",
+  human_review: "Human Review",
+  pre_deploy: "Pre Deploy",
   done: "Done",
   cancelled: "Cancelled",
 };
@@ -219,6 +222,39 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
               style={{ flex: 1, fontSize: "11px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
             >
               {sendingPromptResponse ? "..." : "Reject"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Human Review Approval */}
+      {task.status === "human_review" && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            padding: "8px 12px",
+            background: "var(--bg-tertiary)",
+            borderTop: "1px solid var(--border-default)",
+            borderBottom: "1px solid var(--border-default)",
+          }}
+        >
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-human-review)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+            Human Review Required
+          </div>
+          <div style={{ display: "flex", gap: "6px" }}>
+            <button
+              onClick={async () => { play("confirm"); await approveTask(task.id); }}
+              className="eb-btn eb-btn--primary"
+              style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
+            >
+              Approve
+            </button>
+            <button
+              onClick={async () => { play("select"); await rejectTask(task.id); }}
+              className="eb-btn eb-btn--danger"
+              style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
+            >
+              Reject
             </button>
           </div>
         </div>

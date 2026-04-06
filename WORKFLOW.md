@@ -9,6 +9,9 @@ after_run: ["git status --short"]
 include_task: true
 include_review: true
 include_decompose: true
+enable_test_generation: true
+enable_human_review: true
+enable_pre_deploy: false
 ---
 
 # Agent Organizer Workflow
