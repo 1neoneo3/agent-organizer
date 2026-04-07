@@ -36,9 +36,9 @@ export async function triggerAutoQa(
   const maxQaCount = Number(getSetting(db, "qa_count") ?? "2");
   if (qaCount >= maxQaCount) {
     const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto QA stopped: qa iterations (${qaCount}) reached max (${maxQaCount}). Returning to inbox for manual review — acceptance criteria not met after ${maxQaCount} attempts.`);
-    ws.broadcast("task_update", { id: currentTask.id, status: "inbox" });
+    db.prepare("UPDATE tasks SET status = 'human_review', updated_at = ? WHERE id = ?").run(now, currentTask.id);
+    logSystem(db, currentTask.id, `Auto QA stopped: qa iterations (${qaCount}) reached max (${maxQaCount}). Moving to human_review — acceptance criteria not met after ${maxQaCount} attempts.`);
+    ws.broadcast("task_update", { id: currentTask.id, status: "human_review" });
     return;
   }
 
