@@ -68,25 +68,37 @@ function sanitizeSegment(value: string): string {
 }
 
 function buildCommitMessage(task: Task): string {
-  const suffix = task.task_number
-    ? task.task_number.replace(/^#/, "task-")
-    : sanitizeSegment(task.id);
-  return `feat: finalize ${suffix}`;
+  return `feat: ${task.title}`;
 }
 
 function buildPrTitle(task: Task): string {
-  return `feat: ${task.task_number ?? "タスク"} のレビュー成果物を固定`;
+  return `feat: ${task.title}`;
 }
 
 function buildPrBody(task: Task, branchName: string, commitSha: string): string {
+  const taskRef = task.task_number ? ` (${task.task_number})` : "";
+  const description = task.description ?? task.title;
   const lines = [
-    "## 概要",
-    "- task worktree の成果物を正式な review artifact として固定",
-    `- 対象タスク: ${task.title}`,
+    "## 背景",
+    "",
+    `${description}${taskRef}`,
+    "",
+    "## 行った変更",
+    "",
+    `- ${task.title}`,
     `- review branch: ${branchName}`,
     `- review commit: ${commitSha}`,
     "",
-    "## テスト",
+    "## 影響範囲",
+    "",
+    "- Agent Organizer による自動生成PR",
+    "",
+    "## 動作確認項目",
+    "",
+    "- [ ] CI passed",
+    "",
+    "## その他",
+    "",
     "- Agent Organizer による自動昇格フローで生成",
   ];
   return lines.join("\n");
@@ -107,7 +119,7 @@ function detectBaseBranch(cwd: string, exec: CommandExecutor): string {
 }
 
 function lookupExistingPrUrl(cwd: string, branchName: string, exec: CommandExecutor): string | null {
-  const raw = runCommand("gh", ["pr", "list", "--head", branchName, "--json", "url", "--limit", "1"], cwd, exec);
+  const raw = runCommand("gh", ["pr", "list", "--head", branchName, "--state", "all", "--json", "url", "--limit", "1"], cwd, exec);
   if (!raw) {
     return null;
   }

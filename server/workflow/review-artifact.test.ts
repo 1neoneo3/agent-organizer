@@ -47,9 +47,9 @@ describe("promoteTaskReviewArtifact", () => {
       ["git status --short", " M changed.ts"],
       ["git rev-parse HEAD", "abc123"],
       ["git symbolic-ref refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
-      ["gh pr list --head issue/t12-review-artifact-promotion --json url --limit 1", "[]"],
+      ["gh pr list --head issue/t12-review-artifact-promotion --state all --json url --limit 1", "[]"],
       [
-        "gh pr create --base main --head issue/t12-review-artifact-promotion --title feat: #12 のレビュー成果物を固定 --body ## 概要\n- task worktree の成果物を正式な review artifact として固定\n- 対象タスク: Review artifact promotion\n- review branch: issue/t12-review-artifact-promotion\n- review commit: abc123\n\n## テスト\n- Agent Organizer による自動昇格フローで生成",
+        `gh pr create --base main --head issue/t12-review-artifact-promotion --title feat: Review artifact promotion --body ## 背景\n\nReview artifact promotion (#12)\n\n## 行った変更\n\n- Review artifact promotion\n- review branch: issue/t12-review-artifact-promotion\n- review commit: abc123\n\n## 影響範囲\n\n- Agent Organizer による自動生成PR\n\n## 動作確認項目\n\n- [ ] CI passed\n\n## その他\n\n- Agent Organizer による自動昇格フローで生成`,
         "https://github.com/example/repo/pull/1",
       ],
     ]);
@@ -59,7 +59,7 @@ describe("promoteTaskReviewArtifact", () => {
       if (outputs.has(key)) {
         return outputs.get(key)!;
       }
-      if (key === "git add -A" || key === "git commit -m feat: finalize task-12" || key === "git push -u origin issue/t12-review-artifact-promotion") {
+      if (key === "git add -A" || key === "git commit -m feat: Review artifact promotion" || key === "git push -u origin issue/t12-review-artifact-promotion") {
         return "";
       }
       throw new Error(`unexpected command: ${key}`);
