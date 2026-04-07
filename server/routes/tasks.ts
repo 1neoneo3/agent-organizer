@@ -188,7 +188,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (updates.status) {
       const existingTask = existing as unknown as Task;
       const workflow = loadProjectWorkflow(existingTask.project_path);
-      const validationError = validateStatusTransition(db, existingTask.status, updates.status, workflow);
+      const validationError = validateStatusTransition(db, existingTask.status, updates.status, workflow, existingTask.task_size);
       if (validationError) {
         return res.status(400).json({ error: "invalid_status_transition", message: validationError });
       }
@@ -294,7 +294,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     }
 
     const workflow = loadProjectWorkflow(task.project_path);
-    const activeStages = resolveActiveStages(db, workflow);
+    const activeStages = resolveActiveStages(db, workflow, task.task_size);
     const next = nextStage("human_review", activeStages);
     const now = Date.now();
 

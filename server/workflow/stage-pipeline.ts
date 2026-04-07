@@ -34,6 +34,7 @@ export function validateStatusTransition(
   currentStatus: string,
   newStatus: string,
   workflow: ProjectWorkflow | null,
+  taskSize?: "small" | "medium" | "large",
 ): string | null {
   // Always allow reset to inbox or cancel
   if (newStatus === "inbox" || newStatus === "cancelled") return null;
@@ -44,7 +45,7 @@ export function validateStatusTransition(
   // Allow cancelled → inbox (reopen)
   if (currentStatus === "cancelled" && newStatus === "inbox") return null;
 
-  const activeStages = resolveActiveStages(db, workflow);
+  const activeStages = resolveActiveStages(db, workflow, taskSize);
 
   const currentIndex = activeStages.indexOf(currentStatus as WorkflowStage);
   const newIndex = activeStages.indexOf(newStatus as WorkflowStage);
@@ -87,14 +88,15 @@ function getSetting(db: DatabaseSync, key: string): string | undefined {
 export function resolveActiveStages(
   db: DatabaseSync,
   workflow: ProjectWorkflow | null,
+  taskSize?: "small" | "medium" | "large",
 ): WorkflowStage[] {
   const qaMode = getSetting(db, "qa_mode") ?? "disabled";
   const reviewMode = getSetting(db, "review_mode") ?? "pr_only";
 
   const stages: WorkflowStage[] = ["in_progress"];
 
-  // test_generation: controlled by workflow config
-  if (workflow?.enableTestGeneration) {
+  // test_generation: controlled by workflow config, skipped for small tasks
+  if (workflow?.enableTestGeneration && taskSize !== "small") {
     stages.push("test_generation");
   }
 
@@ -210,7 +212,7 @@ export function determineNextStage(
   workflow: ProjectWorkflow | null,
 ): Task["status"] {
   const runStartedAt = task.started_at ?? 0;
-  const activeStages = resolveActiveStages(db, workflow);
+  const activeStages = resolveActiveStages(db, workflow, task.task_size);
 
   // QA run completed — check QA verdict
   if (task.status === "qa_testing") {
