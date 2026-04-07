@@ -26,6 +26,7 @@ import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
+import { runWorkflowHooks } from "../workflow/hooks.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
@@ -632,7 +633,20 @@ export function spawnAgent(
 
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
-    const finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
+    let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
+
+    // Run after_run hooks (lint, format, etc.) — on failure, revert to inbox
+    if (code === 0 && workflow?.afterRun.length) {
+      const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd);
+      for (const hr of hookResults) {
+        insertLogStmt.run(task.id, "system", `[after_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output}` : ""}`);
+      }
+      const hookFailed = hookResults.some((hr) => !hr.ok);
+      if (hookFailed) {
+        insertLogStmt.run(task.id, "system", "[after_run] Hook failed. Reverting task to inbox for rework.");
+        finalStatus = "inbox";
+      }
+    }
 
     // Artifact-based handoff: log structured context for the next phase agent
     if (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy") {
@@ -645,9 +659,15 @@ export function spawnAgent(
       insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`);
     }
 
-    db.prepare(
-      "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?"
-    ).run(finalStatus, finishTime, finishTime, task.id);
+    if (finalStatus === "inbox") {
+      db.prepare(
+        "UPDATE tasks SET status = 'inbox', started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ?"
+      ).run(finishTime, task.id);
+    } else {
+      db.prepare(
+        "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?"
+      ).run(finalStatus, finishTime, finishTime, task.id);
+    }
 
     db.prepare(
       "UPDATE agents SET status = 'idle', current_task_id = NULL, stats_tasks_done = stats_tasks_done + CASE WHEN ? = 'done' THEN 1 ELSE 0 END, updated_at = ? WHERE id = ?"
