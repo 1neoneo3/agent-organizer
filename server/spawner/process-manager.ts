@@ -214,8 +214,9 @@ export function spawnAgent(
   // Run before_run hooks (env setup, dependency install, etc.)
   if (workflow?.beforeRun.length && !isContinue) {
     const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd);
+    const logBefore = db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)");
     for (const hr of beforeResults) {
-      insertLogStmt.run(task.id, "system", `[before_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`);
+      logBefore.run(task.id, `[before_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`);
     }
   }
 
