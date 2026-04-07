@@ -41,9 +41,9 @@ function extractContextFromTask(task: Task): string {
   if (paths.length === 0) return "";
 
   const parts: string[] = [];
-  parts.push("## Auto-Injected Context");
+  parts.push("## 自動検出コンテキスト");
   parts.push("");
-  parts.push("The following file paths were detected in the task description:");
+  parts.push("タスク説明から以下のファイルパスが検出されました:");
   for (const p of paths.slice(0, 10)) {
     parts.push(`- \`${p}\``);
   }
@@ -64,7 +64,7 @@ function extractContextFromTask(task: Task): string {
     }).trim();
 
     if (gitLog) {
-      parts.push("Recent merged commits touching these files:");
+      parts.push("これらのファイルに関連する最近のマージコミット:");
       parts.push("```");
       parts.push(gitLog);
       parts.push("```");
@@ -272,26 +272,26 @@ export function buildTaskPrompt(
     parts.push("");
   }
 
-  parts.push("## Sprint Contract (Required Before Implementation)");
+  parts.push("## スプリント契約（実装前に必須）");
   parts.push("");
-  parts.push("Before writing ANY code, output a sprint contract in this format:");
+  parts.push("コードを書く前に、以下の形式でスプリント契約を出力してください:");
   parts.push("");
   parts.push("---SPRINT CONTRACT---");
-  parts.push("**Deliverables:**");
-  parts.push("1. [specific file/feature]");
-  parts.push("2. [specific file/feature]");
+  parts.push("**成果物:**");
+  parts.push("1. [具体的なファイル/機能]");
+  parts.push("2. [具体的なファイル/機能]");
   parts.push("");
-  parts.push("**Acceptance Criteria:**");
-  parts.push("- [ ] [testable criterion 1]");
-  parts.push("- [ ] [testable criterion 2]");
-  parts.push("- [ ] [testable criterion 3]");
+  parts.push("**受け入れ基準:**");
+  parts.push("- [ ] [テスト可能な基準1]");
+  parts.push("- [ ] [テスト可能な基準2]");
+  parts.push("- [ ] [テスト可能な基準3]");
   parts.push("");
-  parts.push("**Out of Scope:**");
-  parts.push("- [what you will NOT do]");
+  parts.push("**スコープ外:**");
+  parts.push("- [やらないこと]");
   parts.push("---END CONTRACT---");
   parts.push("");
-  parts.push("This contract will be used by the QA agent to verify your work.");
-  parts.push("After outputting the contract, proceed with implementation.");
+  parts.push("この契約はQAエージェントが作業を検証する際に使用されます。");
+  parts.push("契約を出力した後、実装に進んでください。");
   parts.push("");
   // Inject format command if configured in WORKFLOW.md
   if (opts?.workflow?.formatCommand) {
@@ -303,23 +303,23 @@ export function buildTaskPrompt(
     parts.push("");
   }
 
-  parts.push("## Mandatory Pre-Completion Checklist (MUST DO before finishing)");
+  parts.push("## 完了前チェックリスト（必須）");
   parts.push("");
-  parts.push("Before you declare your work done, you MUST run ALL of the following and fix any issues:");
+  parts.push("作業完了を宣言する前に、以下を全て実行し、問題があれば修正してください:");
   parts.push("");
-  parts.push("1. **Lint**: Run `npm run lint` (or the project's lint command). Fix ALL errors and warnings. Zero tolerance.");
-  parts.push("2. **Build**: Run `npm run build` (or the project's build command). It MUST succeed with zero errors.");
-  parts.push("3. **Type check**: Run `npx tsc --noEmit` if TypeScript. Fix all type errors.");
-  parts.push("4. **Run the code**: Actually execute the code/app and verify it works. Do not assume — verify.");
-  parts.push("5. **Console errors**: If it's a web app, check for browser console errors (hydration, runtime, etc.).");
-  parts.push("6. **Framework compatibility**: Verify your code is compatible with the ACTUAL version installed (check package.json). Do not use deprecated or removed APIs.");
+  parts.push("1. **Lint**: `npm run lint`（またはプロジェクトのlintコマンド）を実行。エラー・警告ゼロにすること。");
+  parts.push("2. **ビルド**: `npm run build`（またはプロジェクトのビルドコマンド）を実行。エラーゼロで成功すること。");
+  parts.push("3. **型チェック**: TypeScriptの場合 `npx tsc --noEmit` を実行。型エラーを全て修正。");
+  parts.push("4. **動作確認**: 実際にコード/アプリを実行し、動作を確認すること。推測ではなく検証する。");
+  parts.push("5. **コンソールエラー**: Webアプリの場合、ブラウザコンソールのエラー（hydration、ランタイム等）を確認。");
+  parts.push("6. **フレームワーク互換性**: 実際にインストールされているバージョン（package.json参照）との互換性を確認。非推奨APIを使わない。");
   parts.push("");
-  parts.push("If ANY of these checks fail, fix the issue BEFORE completing. Do NOT leave known issues for later.");
-  parts.push("A task that introduces lint errors, build failures, or runtime errors is NOT done — it is broken.");
+  parts.push("いずれかのチェックが失敗した場合、完了前に修正すること。既知の問題を残さない。");
+  parts.push("lintエラー、ビルド失敗、ランタイムエラーを含むタスクは完了ではなく壊れている。");
   parts.push("");
-  parts.push("## Prohibited Actions");
-  parts.push("- Do NOT create new tasks in Agent Organizer (no ao-cli.sh, no POST /api/tasks)");
-  parts.push("- Do NOT call AO API endpoints — your only job is to implement the current task");
+  parts.push("## 禁止事項");
+  parts.push("- Agent Organizerに新しいタスクを作成しない（ao-cli.sh、POST /api/tasks 禁止）");
+  parts.push("- AO APIエンドポイントを呼び出さない — あなたの仕事は現在のタスクの実装のみ");
   parts.push("");
 
   appendWorkflowContext(parts, opts?.workflow, opts?.runtimePolicy);
@@ -340,15 +340,15 @@ export function buildTaskPrompt(
   }
 
   // PR creation workflow (default for tasks that produce file changes)
-  parts.push("## Git Workflow");
+  parts.push("## Gitワークフロー");
   parts.push("");
-  parts.push("If your work produces file changes, you MUST follow this workflow:");
-  parts.push("1. Create a new branch from main: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
-  parts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
-  parts.push("2. Make your changes and commit with conventional commit messages");
-  parts.push("3. Push the branch: `git push -u origin <branch-name>`");
-  parts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`");
-  parts.push("5. **NEVER commit directly to main**");
+  parts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
+  parts.push("1. mainからブランチを作成: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
+  parts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
+  parts.push("2. 変更をコミット（conventional commits形式）");
+  parts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
+  parts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
+  parts.push("5. **mainに直接コミットしない**");
   parts.push("");
 
   // Inject relevant skills
@@ -400,49 +400,49 @@ export function buildExplorePrompt(task: Task): string {
 
   appendSharedContext(parts, task.project_path);
 
-  parts.push("# Explore Phase: Investigation Only");
+  parts.push("# 探索フェーズ: 調査のみ");
   parts.push("");
-  parts.push("**CRITICAL CONSTRAINT: DO NOT modify any files. Read-only investigation only.**");
+  parts.push("**重要な制約: ファイルを変更しないでください。読み取り専用の調査のみ。**");
   parts.push("");
-  parts.push(`## Task: ${task.title}`);
+  parts.push(`## タスク: ${task.title}`);
   parts.push("");
   if (task.description) {
     parts.push(task.description);
     parts.push("");
   }
   if (task.project_path) {
-    parts.push(`Project path: ${task.project_path}`);
+    parts.push(`プロジェクトパス: ${task.project_path}`);
     parts.push("");
   }
 
-  parts.push("## Your Mission");
+  parts.push("## ミッション");
   parts.push("");
-  parts.push("1. Read and understand the relevant code, dependencies, and patterns");
-  parts.push("2. Identify all files that need to be created or modified");
-  parts.push("3. Check for existing patterns, conventions, and similar implementations");
-  parts.push("4. Identify potential risks and edge cases");
+  parts.push("1. 関連するコード、依存関係、パターンを読んで理解する");
+  parts.push("2. 作成または変更が必要なファイルを全て特定する");
+  parts.push("3. 既存のパターン、規約、類似実装を確認する");
+  parts.push("4. 潜在的なリスクとエッジケースを特定する");
   parts.push("");
 
-  parts.push("## Output Format");
+  parts.push("## 出力形式");
   parts.push("");
-  parts.push("Output your findings as a structured plan:");
+  parts.push("調査結果を構造化された計画として出力:");
   parts.push("");
   parts.push("---EXPLORE RESULT---");
-  parts.push("**Relevant Files:**");
-  parts.push("- path/to/file.ts (reason for relevance)");
+  parts.push("**関連ファイル:**");
+  parts.push("- path/to/file.ts (関連する理由)");
   parts.push("");
-  parts.push("**Existing Patterns:**");
-  parts.push("- Pattern description (file reference)");
+  parts.push("**既存パターン:**");
+  parts.push("- パターンの説明 (ファイル参照)");
   parts.push("");
-  parts.push("**Implementation Plan:**");
-  parts.push("1. Step 1: what to do and where");
-  parts.push("2. Step 2: ...");
+  parts.push("**実装計画:**");
+  parts.push("1. ステップ1: 何をどこで行うか");
+  parts.push("2. ステップ2: ...");
   parts.push("");
-  parts.push("**Risks/Edge Cases:**");
-  parts.push("- Risk description");
+  parts.push("**リスク/エッジケース:**");
+  parts.push("- リスクの説明");
   parts.push("---END EXPLORE---");
   parts.push("");
-  parts.push("IMPORTANT: Do NOT create, edit, or write any files. Only read and analyze.");
+  parts.push("重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。");
 
   return parts.join("\n");
 }
@@ -463,55 +463,55 @@ export function buildReviewPrompt(task: Task): string {
   // Inject CLAUDE.md + rules
   appendSharedContext(parts, task.project_path);
 
-  parts.push("# Code Review Task");
+  parts.push("# コードレビュータスク");
   parts.push("");
-  parts.push(`You are reviewing the implementation for: **${task.title}**`);
+  parts.push(`以下の実装をレビューしてください: **${task.title}**`);
   parts.push("");
   if (task.description) {
-    parts.push("## Original Task Description");
+    parts.push("## 元のタスク説明");
     parts.push(task.description);
     parts.push("");
   }
   if (task.project_path) {
-    parts.push(`Project path: ${task.project_path}`);
+    parts.push(`プロジェクトパス: ${task.project_path}`);
     parts.push("");
   }
 
-  parts.push("## Sprint Contract Reference");
-  parts.push("Check the task logs for a ---SPRINT CONTRACT--- from the implementation phase.");
-  parts.push("Verify the implementation satisfies the stated deliverables and acceptance criteria.");
+  parts.push("## スプリント契約の参照");
+  parts.push("タスクログから ---SPRINT CONTRACT--- ブロックを確認してください。");
+  parts.push("実装が記載された成果物と受け入れ基準を満たしているか検証してください。");
   parts.push("");
 
-  parts.push("## Review Instructions");
+  parts.push("## レビュー手順");
   parts.push("");
-  parts.push("1. Run `git diff HEAD~1` and `git log --oneline -5` to understand recent changes");
-  parts.push("2. If the code is runnable, actually run it and any existing tests to verify correctness");
-  parts.push("");
-
-  parts.push("## Mandatory Build/Lint Gate (check FIRST)");
-  parts.push("");
-  parts.push("Before scoring, verify these pass. ANY failure = automatic [REVIEW:NEEDS_CHANGES]:");
-  parts.push("1. `npm run lint` — zero errors and zero warnings");
-  parts.push("2. `npm run build` — success with zero errors");
-  parts.push("3. `npx tsc --noEmit` if TypeScript — zero type errors");
-  parts.push("4. Run the app and check for runtime/console errors");
-  parts.push("");
-  parts.push("If any gate fails, output [REVIEW:NEEDS_CHANGES:<which gate failed>] immediately.");
-  parts.push("Do NOT give passing scores to code that doesn't build or lint.");
+  parts.push("1. `git diff HEAD~1` と `git log --oneline -5` で最近の変更を確認");
+  parts.push("2. 実行可能なコードであれば、実際に実行してテストで正確性を検証");
   parts.push("");
 
-  parts.push("## Review Checklist");
+  parts.push("## 必須ビルド/Lintゲート（最初にチェック）");
   parts.push("");
-  parts.push("Grade each aspect (1-5):");
-  parts.push("1. **Correctness** - Does the code do what the task asks?");
-  parts.push("2. **Code Quality** - Is it clean, readable, well-structured? Proper naming, no duplication");
-  parts.push("3. **Error Handling** - Are edge cases and boundary conditions handled?");
-  parts.push("4. **Completeness** - Are all requirements from the task description met?");
-  parts.push("5. **Security** - No hardcoded secrets, injection vulnerabilities, or unsafe patterns?");
+  parts.push("採点前に以下を確認。いずれかの失敗 = 自動的に [REVIEW:NEEDS_CHANGES]:");
+  parts.push("1. `npm run lint` — エラー・警告ゼロ");
+  parts.push("2. `npm run build` — エラーゼロで成功");
+  parts.push("3. TypeScriptの場合 `npx tsc --noEmit` — 型エラーゼロ");
+  parts.push("4. アプリを実行してランタイム/コンソールエラーを確認");
   parts.push("");
-  parts.push("## Report Format");
+  parts.push("ゲートが失敗した場合、即座に [REVIEW:NEEDS_CHANGES:<失敗したゲート>] を出力。");
+  parts.push("ビルドやlintが通らないコードに合格スコアを付けないこと。");
   parts.push("");
-  parts.push("For each aspect, provide:");
+
+  parts.push("## レビューチェックリスト");
+  parts.push("");
+  parts.push("各観点を1-5で採点:");
+  parts.push("1. **正確性** - コードはタスクの要求通りに動作するか？");
+  parts.push("2. **コード品質** - クリーンで読みやすく、構造化されているか？命名、重複なし");
+  parts.push("3. **エラーハンドリング** - エッジケースや境界条件が処理されているか？");
+  parts.push("4. **完全性** - タスク説明の全要件が満たされているか？");
+  parts.push("5. **セキュリティ** - ハードコードされた秘密情報、インジェクション脆弱性、危険なパターンはないか？");
+  parts.push("");
+  parts.push("## レポート形式");
+  parts.push("");
+  parts.push("各観点について以下を記載:");
   parts.push("```");
   parts.push("REVIEW RESULTS:");
   parts.push("Correctness:    [X/5] - Evidence: <what you verified>");
@@ -521,15 +521,15 @@ export function buildReviewPrompt(task: Task): string {
   parts.push("Security:       [X/5] - Evidence: <what you checked>");
   parts.push("```");
   parts.push("");
-  parts.push("## Scoring Threshold");
+  parts.push("## 合格基準");
   parts.push("");
-  parts.push("- 4-5 on all aspects → `[REVIEW:PASS]`");
-  parts.push("- Any aspect scored 1-2 → `[REVIEW:NEEDS_CHANGES:<aspects to fix>]`");
-  parts.push("- Mixed 3s → Use judgment, lean toward PASS if functionally complete");
+  parts.push("- 全観点4-5 → `[REVIEW:PASS]`");
+  parts.push("- いずれかの観点が1-2 → `[REVIEW:NEEDS_CHANGES:<修正すべき観点>]`");
+  parts.push("- 3が混在 → 判断に委ねる。機能的に完成していればPASS寄り");
   parts.push("");
-  parts.push("## Example Review (for calibration)");
+  parts.push("## レビュー例（採点基準の参考）");
   parts.push("");
-  parts.push('Task: "Add user authentication middleware"');
+  parts.push('タスク: "ユーザー認証ミドルウェアの追加"');
   parts.push("");
   parts.push("REVIEW RESULTS:");
   parts.push("Correctness:    [5/5] - Evidence: middleware correctly validates JWT tokens, tested with valid/invalid/expired tokens");
@@ -540,11 +540,11 @@ export function buildReviewPrompt(task: Task): string {
   parts.push("");
   parts.push("[REVIEW:PASS]");
   parts.push("");
-  parts.push("## Verdict");
+  parts.push("## 判定");
   parts.push("");
-  parts.push("Write a brief review summary (in Japanese), then output your verdict as the **final line**:");
-  parts.push("- `[REVIEW:PASS]` — if the implementation is acceptable");
-  parts.push("- `[REVIEW:NEEDS_CHANGES:<aspects to fix>]` — if changes are required");
+  parts.push("レビューの要約を日本語で記述し、**最終行**に判定を出力:");
+  parts.push("- `[REVIEW:PASS]` — 実装が許容範囲の場合");
+  parts.push("- `[REVIEW:NEEDS_CHANGES:<修正すべき観点>]` — 変更が必要な場合");
   parts.push("");
 
   return parts.join("\n");
@@ -566,21 +566,21 @@ export function buildQaPrompt(task: Task, projectType: ProjectType = "generic"):
   // Inject CLAUDE.md + rules
   appendSharedContext(parts, task.project_path);
 
-  parts.push("# QA Testing Task");
+  parts.push("# QAテストタスク");
   parts.push("");
-  parts.push(`You are a QA engineer testing the implementation of a task.`);
+  parts.push("あなたはQAエンジニアとして、タスクの実装をテストします。");
   parts.push("");
-  parts.push("## Task Under Test");
-  parts.push(`**Title**: ${task.title}`);
-  parts.push(`**Description**: ${task.description ?? "No description"}`);
-  parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
-  parts.push(`**Project Type**: ${projectType}`);
+  parts.push("## テスト対象タスク");
+  parts.push(`**タイトル**: ${task.title}`);
+  parts.push(`**説明**: ${task.description ?? "説明なし"}`);
+  parts.push(`**プロジェクトパス**: ${task.project_path ?? "/home/mk/workspace"}`);
+  parts.push(`**プロジェクトタイプ**: ${projectType}`);
   parts.push("");
 
-  parts.push("## Sprint Contract");
-  parts.push("Check the task logs for a ---SPRINT CONTRACT--- block from the implementation phase.");
-  parts.push("If found, use those acceptance criteria as your primary checklist.");
-  parts.push("If not found, derive your own criteria from the task description.");
+  parts.push("## スプリント契約");
+  parts.push("タスクログから ---SPRINT CONTRACT--- ブロックを確認してください。");
+  parts.push("見つかった場合、その受け入れ基準をチェックリストとして使用してください。");
+  parts.push("見つからない場合、タスク説明から独自の基準を導出してください。");
   parts.push("");
 
   if (projectType === "dbt") {
@@ -589,9 +589,9 @@ export function buildQaPrompt(task: Task, projectType: ProjectType = "generic"):
     appendGenericQaProcess(parts);
   }
 
-  parts.push("### Verdict");
-  parts.push("- If ALL criteria pass: output `[QA:PASS]`");
-  parts.push("- If ANY criterion fails: output `[QA:FAIL:<brief summary of failures>]`");
+  parts.push("### 判定");
+  parts.push("- 全基準が合格: `[QA:PASS]` を出力");
+  parts.push("- いずれかの基準が不合格: `[QA:FAIL:<不合格の簡潔な要約>]` を出力");
   parts.push("");
 
   return parts.join("\n");
@@ -631,37 +631,37 @@ function appendDbtQaProcess(parts: string[]): void {
 }
 
 function appendGenericQaProcess(parts: string[]): void {
-  parts.push("## Your Process");
+  parts.push("## QAプロセス");
   parts.push("");
-  parts.push("### Step 1: Extract Acceptance Criteria");
-  parts.push("From the task description (or the Sprint Contract if available), derive 3-7 concrete, testable acceptance criteria. Each criterion should be binary (pass/fail).");
-  parts.push("");
-
-  parts.push("### Step 2: Mandatory Build/Lint Gate (ALWAYS check these FIRST)");
-  parts.push("Before checking acceptance criteria, run these and report results:");
-  parts.push("1. `npm run lint` (or project lint command) — ANY error = automatic [QA:FAIL]");
-  parts.push("2. `npm run build` (or project build command) — ANY error = automatic [QA:FAIL]");
-  parts.push("3. `npx tsc --noEmit` if TypeScript — ANY type error = automatic [QA:FAIL]");
-  parts.push("4. Run the app/code and check for runtime errors — ANY crash/exception = automatic [QA:FAIL]");
-  parts.push("");
-  parts.push("If ANY of the above fails, immediately output [QA:FAIL:<reason>] without further testing.");
+  parts.push("### ステップ1: 受け入れ基準の抽出");
+  parts.push("タスク説明（またはスプリント契約がある場合はそれ）から、3-7個の具体的でテスト可能な受け入れ基準を導出。各基準は合否判定できること。");
   parts.push("");
 
-  parts.push("### Step 3: Active Verification of Acceptance Criteria");
-  parts.push("For EACH criterion:");
-  parts.push("1. **Execute** the relevant command");
-  parts.push("2. **Record** the actual result");
-  parts.push("3. **Grade** as PASS or FAIL with evidence");
+  parts.push("### ステップ2: 必須ビルド/Lintゲート（最初にチェック）");
+  parts.push("受け入れ基準の確認前に以下を実行し結果を報告:");
+  parts.push("1. `npm run lint`（またはプロジェクトのlintコマンド）— エラーがあれば自動 [QA:FAIL]");
+  parts.push("2. `npm run build`（またはプロジェクトのビルドコマンド）— エラーがあれば自動 [QA:FAIL]");
+  parts.push("3. TypeScriptの場合 `npx tsc --noEmit` — 型エラーがあれば自動 [QA:FAIL]");
+  parts.push("4. アプリ/コードを実行してランタイムエラーを確認 — クラッシュ/例外があれば自動 [QA:FAIL]");
   parts.push("");
-  parts.push("IMPORTANT: You MUST actually run the code. Do not just read it and assume it works.");
+  parts.push("上記のいずれかが失敗した場合、即座に [QA:FAIL:<理由>] を出力し、以降のテストは不要。");
   parts.push("");
 
-  parts.push("### Step 4: Report");
+  parts.push("### ステップ3: 受け入れ基準の検証");
+  parts.push("各基準について:");
+  parts.push("1. 関連するコマンドを**実行**する");
+  parts.push("2. 実際の結果を**記録**する");
+  parts.push("3. 証拠付きで合否を**判定**する");
+  parts.push("");
+  parts.push("重要: 必ず実際にコードを実行すること。読むだけで動作を推測しない。");
+  parts.push("");
+
+  parts.push("### ステップ4: レポート");
   parts.push("```");
-  parts.push("CRITERIA RESULTS:");
-  parts.push("[PASS] Criterion 1 - Evidence: <what you observed>");
-  parts.push("[FAIL] Criterion 2 - Evidence: <what went wrong>");
-  parts.push("OVERALL: X/Y criteria passed");
+  parts.push("基準結果:");
+  parts.push("[PASS] 基準1 - 証拠: <観察した内容>");
+  parts.push("[FAIL] 基準2 - 証拠: <問題の内容>");
+  parts.push("総合: X/Y 基準合格");
   parts.push("```");
   parts.push("");
 }
@@ -677,15 +677,15 @@ export function buildTestGenerationPrompt(task: Task, projectType: ProjectType =
 
   appendSharedContext(parts, task.project_path);
 
-  parts.push("# Test Generation Task");
+  parts.push("# テスト生成タスク");
   parts.push("");
-  parts.push("You are a test engineer. Generate tests for the implementation of this task.");
+  parts.push("あなたはテストエンジニアです。このタスクの実装に対するテストを生成してください。");
   parts.push("");
-  parts.push("## Task Under Test");
-  parts.push(`**Title**: ${task.title}`);
-  parts.push(`**Description**: ${task.description ?? "No description"}`);
-  parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
-  parts.push(`**Project Type**: ${projectType}`);
+  parts.push("## テスト対象タスク");
+  parts.push(`**タイトル**: ${task.title}`);
+  parts.push(`**説明**: ${task.description ?? "説明なし"}`);
+  parts.push(`**プロジェクトパス**: ${task.project_path ?? "/home/mk/workspace"}`);
+  parts.push(`**プロジェクトタイプ**: ${projectType}`);
   parts.push("");
 
   if (projectType === "dbt") {
@@ -779,16 +779,16 @@ function appendTypescriptTestGeneration(parts: string[]): void {
 }
 
 function appendGenericTestGeneration(parts: string[]): void {
-  parts.push("## Your Process");
+  parts.push("## テスト生成プロセス");
   parts.push("");
-  parts.push("1. Read the implementation changes (use git diff or read modified files)");
-  parts.push("2. Identify testable behaviors and edge cases");
-  parts.push("3. Write unit tests covering:");
-  parts.push("   - Happy path (normal operation)");
-  parts.push("   - Edge cases (boundary values, empty inputs, etc.)");
-  parts.push("   - Error cases (invalid inputs, failures)");
-  parts.push("4. Run the tests to verify they pass");
-  parts.push("5. Aim for 80%+ coverage on changed code");
+  parts.push("1. 実装の変更を読む（git diffまたは変更されたファイルを確認）");
+  parts.push("2. テスト可能な動作とエッジケースを特定");
+  parts.push("3. 以下をカバーするユニットテストを作成:");
+  parts.push("   - 正常系（通常の動作）");
+  parts.push("   - エッジケース（境界値、空入力等）");
+  parts.push("   - エラーケース（不正な入力、失敗）");
+  parts.push("4. テストを実行して通過を確認");
+  parts.push("5. 変更コードの80%以上のカバレッジを目指す");
   parts.push("");
   parts.push("## Output");
   parts.push("- Create test files following the project's testing conventions");
