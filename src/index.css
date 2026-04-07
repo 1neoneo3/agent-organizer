@@ -37,6 +37,12 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
+  /* Terminal */
+  --terminal-bg: #f0f0f0;
+  --terminal-header-bg: #e5e5e5;
+  --terminal-text: #1a1a1a;
+  --terminal-text-dim: #737373;
+
   /* Flavor accents (keep data-flavor system working) */
   --flavor-accent: #8b5cf6;
   --flavor-accent-subtle: #ede9fe;
@@ -83,6 +89,12 @@
   --text-tertiary: #666666;
 
   --accent-subtle: #2e1065;
+
+  /* Terminal */
+  --terminal-bg: #0d0d0d;
+  --terminal-header-bg: #1a1a1a;
+  --terminal-text: #e8e8e8;
+  --terminal-text-dim: #666;
 }
 
 .dark[data-flavor="mint"] {

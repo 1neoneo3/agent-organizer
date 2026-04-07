@@ -35,62 +35,43 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function LogEntry({ log }: { log: TaskLog }) {
+const LIGHT_KIND_STYLES: Record<string, { bg: string; text: string; border: string; label: string; icon: string }> = {
+  stdout: { bg: "#e8f5e9", text: "#1b5e20", border: "#4caf50", label: "stdout", icon: "\u25b8" },
+  stderr: { bg: "#ffebee", text: "#b71c1c", border: "#f44336", label: "stderr", icon: "\u2717" },
+  system: { bg: "#fff8e1", text: "#e65100", border: "#ff9800", label: "system", icon: "\u2699" },
+  thinking: { bg: "#f3e5f5", text: "#4a148c", border: "#9c27b0", label: "thinking", icon: "\ud83e\udde0" },
+  assistant: { bg: "#e3f2fd", text: "#0d47a1", border: "#2196f3", label: "assistant", icon: "\ud83d\udcac" },
+  tool_call: { bg: "#e0f7fa", text: "#006064", border: "#00bcd4", label: "tool", icon: "\ud83d\udd27" },
+  tool_result: { bg: "#e0f2f1", text: "#004d40", border: "#009688", label: "result", icon: "\ud83d\udccb" },
+};
+
+const DARK_KIND_STYLES: Record<string, { bg: string; text: string; border: string; label: string; icon: string }> = {
+  stdout: { bg: "#0d1f0d", text: "#86efac", border: "#22c55e", label: "stdout", icon: "\u25b8" },
+  stderr: { bg: "#1f0d0d", text: "#fca5a5", border: "#ef4444", label: "stderr", icon: "\u2717" },
+  system: { bg: "#1f1a0d", text: "#fde68a", border: "#f59e0b", label: "system", icon: "\u2699" },
+  thinking: { bg: "#170d1f", text: "#c4b5fd", border: "#8b5cf6", label: "thinking", icon: "\ud83e\udde0" },
+  assistant: { bg: "#0d171f", text: "#93c5fd", border: "#3b82f6", label: "assistant", icon: "\ud83d\udcac" },
+  tool_call: { bg: "#0d1a1f", text: "#67e8f9", border: "#06b6d4", label: "tool", icon: "\ud83d\udd27" },
+  tool_result: { bg: "#0d1f1a", text: "#5eead4", border: "#14b8a6", label: "result", icon: "\ud83d\udccb" },
+};
+
+function useIsDark(): boolean {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setDark(document.documentElement.classList.contains("dark"));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return dark;
+}
+
+function LogEntry({ log, isDark }: { log: TaskLog; isDark: boolean }) {
   const [collapsed, setCollapsed] = useState(true);
   const isLong = log.message.length > 300;
 
-  const kindStyles: Record<string, { bg: string; text: string; border: string; label: string; icon: string }> = {
-    stdout: {
-      bg: "#0d1f0d",
-      text: "#86efac",
-      border: "#22c55e",
-      label: "stdout",
-      icon: "\u25b8",
-    },
-    stderr: {
-      bg: "#1f0d0d",
-      text: "#fca5a5",
-      border: "#ef4444",
-      label: "stderr",
-      icon: "\u2717",
-    },
-    system: {
-      bg: "#1f1a0d",
-      text: "#fde68a",
-      border: "#f59e0b",
-      label: "system",
-      icon: "\u2699",
-    },
-    thinking: {
-      bg: "#170d1f",
-      text: "#c4b5fd",
-      border: "#8b5cf6",
-      label: "thinking",
-      icon: "\ud83e\udde0",
-    },
-    assistant: {
-      bg: "#0d171f",
-      text: "#93c5fd",
-      border: "#3b82f6",
-      label: "assistant",
-      icon: "\ud83d\udcac",
-    },
-    tool_call: {
-      bg: "#0d1a1f",
-      text: "#67e8f9",
-      border: "#06b6d4",
-      label: "tool",
-      icon: "\ud83d\udd27",
-    },
-    tool_result: {
-      bg: "#0d1f1a",
-      text: "#5eead4",
-      border: "#14b8a6",
-      label: "result",
-      icon: "\ud83d\udccb",
-    },
-  };
-
+  const kindStyles = isDark ? DARK_KIND_STYLES : LIGHT_KIND_STYLES;
   const style = kindStyles[log.kind] ?? kindStyles.stdout;
   const isThinking = log.kind === "thinking";
   const isAssistant = log.kind === "assistant";
@@ -199,7 +180,9 @@ function TerminalView({
 
   useEffect(() => {
     if (follow && containerRef.current) {
-      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight });
+      requestAnimationFrame(() => {
+        containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight });
+      });
     }
   }, [text, follow]);
 
@@ -218,11 +201,11 @@ function TerminalView({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        style={{ flex: 1, overflowY: "auto", background: "#0d0d0d" }}
+        style={{ flex: "1 1 0", overflowY: "auto", background: "var(--terminal-bg)" }}
       >
         {text ? (
           <pre
@@ -230,12 +213,13 @@ function TerminalView({
             style={{
               fontSize: "12px",
               lineHeight: "1.6",
-              color: "#e8e8e8",
+              color: "var(--terminal-text)",
               padding: "12px",
               fontFamily: "var(--font-mono)",
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
               margin: 0,
+              paddingBottom: "24px",
             }}
           >
             {text}
@@ -246,6 +230,25 @@ function TerminalView({
           </div>
         )}
       </div>
+      {!follow && (
+        <button
+          onClick={resumeFollow}
+          style={{
+            position: "absolute",
+            bottom: "8px",
+            right: "16px",
+            fontSize: "10px",
+            color: "var(--terminal-text-dim)",
+            background: "var(--terminal-header-bg)",
+            border: "1px solid var(--border-default)",
+            borderRadius: "4px",
+            padding: "2px 8px",
+            cursor: "pointer",
+          }}
+        >
+          {"\u2193"} Follow
+        </button>
+      )}
     </div>
   );
 }
@@ -255,6 +258,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   const [activeTab, setActiveTab] = useState<TabKey>("terminal");
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isDark = useIsDark();
 
   useEffect(() => {
     fetchTaskLogs(taskId).then((data) => {
@@ -304,7 +308,9 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
 
   useEffect(() => {
     if (activeTab !== "terminal" && autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight });
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+      });
     }
   }, [timeline, autoScroll, activeTab]);
 
@@ -323,13 +329,14 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
 
   return (
     <div style={{
-      background: "#111111",
+      background: "var(--terminal-header-bg)",
       border: "1px solid var(--border-default)",
       borderRadius: "8px",
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
       height: "384px",
+      position: "relative",
     }}>
       {/* Header */}
       <div style={{
@@ -337,8 +344,9 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
         alignItems: "center",
         justifyContent: "space-between",
         padding: "6px 12px",
-        background: "#1a1a1a",
+        background: "var(--terminal-header-bg)",
         borderBottom: "1px solid var(--border-default)",
+        flexShrink: 0,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "2px" }}>
           {TABS.map((tab) => (
@@ -354,7 +362,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
                 cursor: "pointer",
                 transition: "background 0.15s",
                 background: activeTab === tab.key ? "var(--bg-hover)" : "transparent",
-                color: activeTab === tab.key ? "#e8e8e8" : "#666",
+                color: activeTab === tab.key ? "var(--text-primary)" : "var(--terminal-text-dim)",
               }}
             >
               {tab.icon} {tab.label}
@@ -367,7 +375,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
           ))}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "10px", color: "#666", fontFamily: "var(--font-mono)" }}>
+          <span style={{ fontSize: "10px", color: "var(--terminal-text-dim)", fontFamily: "var(--font-mono)" }}>
             {taskId.slice(0, 8)}
           </span>
           {!isTerminalTab && !autoScroll && (
@@ -376,18 +384,18 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
                 setAutoScroll(true);
                 scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
               }}
-              style={{ fontSize: "10px", color: "#666", background: "none", border: "none", cursor: "pointer" }}
+              style={{ fontSize: "10px", color: "var(--terminal-text-dim)", background: "none", border: "none", cursor: "pointer" }}
             >
-              \u2193 Bottom
+              {"\u2193"} Bottom
             </button>
           )}
           <button
             onClick={onClose}
-            style={{ color: "#666", background: "none", border: "none", cursor: "pointer", fontSize: "14px" }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "#e8e8e8"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "#666"; }}
+            style={{ color: "var(--terminal-text-dim)", background: "none", border: "none", cursor: "pointer", fontSize: "14px" }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--terminal-text-dim)"; }}
           >
-            \u2715
+            {"\u2715"}
           </button>
         </div>
       </div>
@@ -396,14 +404,14 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
       {isTerminalTab ? (
         <TerminalView taskId={taskId} on={on} />
       ) : (
-        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: "auto", padding: "8px", background: "#0d0d0d" }}>
+        <div ref={scrollRef} onScroll={handleScroll} style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto", padding: "8px", paddingBottom: "24px", background: "var(--terminal-bg)" }}>
           {timeline.length === 0 && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#666", fontSize: "12px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--terminal-text-dim)", fontSize: "12px" }}>
               No activity yet
             </div>
           )}
           {timeline.map((entry) => (
-            <LogEntry key={`log-${entry.data.id}`} log={entry.data} />
+            <LogEntry key={`log-${entry.data.id}`} log={entry.data} isDark={isDark} />
           ))}
         </div>
       )}
