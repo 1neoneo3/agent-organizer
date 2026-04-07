@@ -3,28 +3,28 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /* ========================================
-   Linear-style Design System
+   Modern Design System
    ======================================== */
 
-/* --- Color Palette (dark-first) --- */
+/* --- Color Palette --- */
 :root {
-  --bg-primary: #f5f5f5;
+  --bg-primary: #f8f9fb;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #ebebeb;
-  --bg-hover: #e0e0e0;
+  --bg-tertiary: #f0f1f3;
+  --bg-hover: rgba(0, 0, 0, 0.04);
 
-  --border-default: #d4d4d4;
-  --border-subtle: #e5e5e5;
+  --border-default: rgba(0, 0, 0, 0.08);
+  --border-subtle: rgba(0, 0, 0, 0.04);
 
-  --text-primary: #171717;
-  --text-secondary: #525252;
-  --text-tertiary: #a3a3a3;
+  --text-primary: #111827;
+  --text-secondary: #4b5563;
+  --text-tertiary: #9ca3af;
 
-  --accent-primary: #8b5cf6;
-  --accent-hover: #7c3aed;
-  --accent-subtle: #ede9fe;
+  --accent-primary: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-subtle: #eef2ff;
 
-  --status-inbox: #a0a0a0;
+  --status-inbox: #9ca3af;
   --status-progress: #f59e0b;
   --status-review: #8b5cf6;
   --status-test-gen: #10b981;
@@ -38,14 +38,20 @@
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   /* Terminal */
-  --terminal-bg: #f0f0f0;
-  --terminal-header-bg: #e5e5e5;
-  --terminal-text: #1a1a1a;
-  --terminal-text-dim: #737373;
+  --terminal-bg: #fafbfc;
+  --terminal-header-bg: #f3f4f6;
+  --terminal-text: #111827;
+  --terminal-text-dim: #6b7280;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.03);
 
   /* Flavor accents (keep data-flavor system working) */
-  --flavor-accent: #8b5cf6;
-  --flavor-accent-subtle: #ede9fe;
+  --flavor-accent: #6366f1;
+  --flavor-accent-subtle: #eef2ff;
 }
 
 /* --- Flavor accents --- */
@@ -70,56 +76,62 @@
   --flavor-accent-subtle: #dbeafe;
 }
 [data-flavor="plain"] {
-  --flavor-accent: #8b5cf6;
-  --flavor-accent-subtle: #ede9fe;
+  --flavor-accent: #6366f1;
+  --flavor-accent-subtle: #eef2ff;
 }
 
 /* --- Dark mode --- */
 .dark {
-  --bg-primary: #0d0d0d;
-  --bg-secondary: #1a1a1a;
-  --bg-tertiary: #242424;
-  --bg-hover: #2a2a2a;
+  --bg-primary: #09090b;
+  --bg-secondary: #111113;
+  --bg-tertiary: #1a1a1e;
+  --bg-hover: rgba(255, 255, 255, 0.05);
 
-  --border-default: #333333;
-  --border-subtle: #2a2a2a;
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.04);
 
-  --text-primary: #e8e8e8;
-  --text-secondary: #a0a0a0;
-  --text-tertiary: #666666;
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #52525b;
 
-  --accent-subtle: #2e1065;
+  --accent-subtle: rgba(99, 102, 241, 0.15);
 
   /* Terminal */
-  --terminal-bg: #0d0d0d;
-  --terminal-header-bg: #1a1a1a;
-  --terminal-text: #e8e8e8;
-  --terminal-text-dim: #666;
+  --terminal-bg: #09090b;
+  --terminal-header-bg: #111113;
+  --terminal-text: #f4f4f5;
+  --terminal-text-dim: #71717a;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .dark[data-flavor="mint"] {
   --flavor-accent: #10b981;
-  --flavor-accent-subtle: #064e3b;
+  --flavor-accent-subtle: rgba(16, 185, 129, 0.15);
 }
 .dark[data-flavor="strawberry"] {
   --flavor-accent: #f43f5e;
-  --flavor-accent-subtle: #4c0519;
+  --flavor-accent-subtle: rgba(244, 63, 94, 0.15);
 }
 .dark[data-flavor="banana"] {
   --flavor-accent: #eab308;
-  --flavor-accent-subtle: #422006;
+  --flavor-accent-subtle: rgba(234, 179, 8, 0.15);
 }
 .dark[data-flavor="peanut"] {
   --flavor-accent: #d97706;
-  --flavor-accent-subtle: #431407;
+  --flavor-accent-subtle: rgba(217, 119, 6, 0.15);
 }
 .dark[data-flavor="blueberry"] {
   --flavor-accent: #3b82f6;
-  --flavor-accent-subtle: #172554;
+  --flavor-accent-subtle: rgba(59, 130, 246, 0.15);
 }
 .dark[data-flavor="plain"] {
-  --flavor-accent: #8b5cf6;
-  --flavor-accent-subtle: #2e1065;
+  --flavor-accent: #6366f1;
+  --flavor-accent-subtle: rgba(99, 102, 241, 0.15);
 }
 
 /* Legacy EB variable mappings (keep for any components that still reference them) */
@@ -158,14 +170,14 @@ html, body, #root {
   font-family: var(--font-sans);
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--text-primary);
 }
 
 .eb-body {
   font-family: var(--font-sans);
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--text-primary);
 }
 
@@ -179,19 +191,20 @@ html, body, #root {
 }
 
 /* ========================================
-   Card / Window Frame (Linear-style)
+   Card / Window Frame
    ======================================== */
 
 .eb-window {
   background: var(--bg-secondary);
   border: 1px solid var(--border-default);
-  border-radius: 8px;
-  box-shadow: none;
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
   overflow: hidden;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .eb-window:hover {
+  box-shadow: var(--shadow-md);
   border-color: var(--border-default);
 }
 
@@ -212,73 +225,73 @@ html, body, #root {
 }
 
 /* ========================================
-   Buttons (Linear-style)
+   Buttons
    ======================================== */
 
 .eb-btn {
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
   text-transform: none;
   padding: 6px 12px;
   border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--bg-secondary);
   color: var(--text-primary);
   cursor: pointer;
-  box-shadow: none;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s ease;
   white-space: nowrap;
 }
 
 .eb-btn:hover {
   background: var(--bg-hover);
-  border-color: var(--border-default);
+  box-shadow: var(--shadow-md);
 }
 
 .eb-btn:active {
-  transform: none;
-  box-shadow: none;
-  background: var(--bg-tertiary);
+  transform: scale(0.98);
+  box-shadow: var(--shadow-sm);
 }
 
 .eb-btn--primary {
   background: var(--accent-primary);
   color: #ffffff;
-  border-color: var(--accent-primary);
-  box-shadow: none;
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.3);
 }
 
 .eb-btn--primary:hover {
   background: var(--accent-hover);
   color: #ffffff;
-  border-color: var(--accent-hover);
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
 }
 
 .eb-btn--danger {
-  background: #dc2626;
+  background: #ef4444;
   color: #ffffff;
-  border-color: #dc2626;
-  box-shadow: none;
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.3);
 }
 
 .eb-btn--danger:hover {
-  background: #b91c1c;
-  border-color: #b91c1c;
+  background: #dc2626;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35);
 }
 
 .eb-btn--danger:active {
-  transform: none;
-  box-shadow: none;
+  transform: scale(0.98);
 }
 
 /* ========================================
-   Progress Bar (replaces HP bar)
+   Progress Bar
    ======================================== */
 
 .eb-hp-bar {
-  height: 4px;
+  height: 3px;
   background: var(--bg-tertiary);
   border-radius: 2px;
   overflow: hidden;
@@ -318,7 +331,7 @@ html, body, #root {
 }
 
 /* ========================================
-   Sprite / Agent animations (simplified)
+   Sprite / Agent animations
    ======================================== */
 
 .eb-sprite-idle {
@@ -326,20 +339,20 @@ html, body, #root {
 }
 
 .eb-sprite-working {
-  animation: linear-pulse 2s ease-in-out infinite;
+  animation: modern-pulse 2s ease-in-out infinite;
 }
 
-@keyframes linear-pulse {
+@keyframes modern-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
+  50% { opacity: 0.6; }
 }
 
 .eb-sprite-typing {
-  animation: linear-pulse 2s ease-in-out infinite;
+  animation: modern-pulse 2s ease-in-out infinite;
 }
 
 /* ========================================
-   Form Elements (Linear-style)
+   Form Elements
    ======================================== */
 
 .eb-select,
@@ -347,12 +360,13 @@ html, body, #root {
 .eb-textarea {
   font-family: var(--font-sans);
   font-size: 13px;
-  padding: 6px 10px;
-  background: var(--bg-tertiary);
+  padding: 7px 11px;
+  background: var(--bg-secondary);
   color: var(--text-primary);
   border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border-radius: 8px;
   outline: none;
+  box-shadow: var(--shadow-sm);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -360,30 +374,31 @@ html, body, #root {
 .eb-input:focus,
 .eb-textarea:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 2px var(--accent-subtle);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
 /* ========================================
-   Flavor Swatch (minimal dots)
+   Flavor Swatch
    ======================================== */
 
 .eb-swatch {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .eb-swatch:hover {
-  transform: scale(1.2);
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--border-default);
 }
 
 .eb-swatch--active {
   border-color: var(--text-primary);
-  transform: scale(1.2);
-  box-shadow: none;
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--text-primary);
 }
 
 /* ========================================
@@ -410,8 +425,13 @@ html, body, #root {
   50%, 100% { opacity: 0; }
 }
 
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ========================================
-   Office page: agent transitions (subtle)
+   Office page: agent transitions
    ======================================== */
 
 @keyframes office-enter-desk {
@@ -453,7 +473,7 @@ html, body, #root {
 }
 
 /* ========================================
-   Scrollbar (Linear-style thin)
+   Scrollbar (minimal)
    ======================================== */
 
 ::-webkit-scrollbar {
