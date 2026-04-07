@@ -211,6 +211,14 @@ export function spawnAgent(
 
   const workspace = prepareTaskWorkspace(task, workflow);
 
+  // Run before_run hooks (env setup, dependency install, etc.)
+  if (workflow?.beforeRun.length && !isContinue) {
+    const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd);
+    for (const hr of beforeResults) {
+      insertLogStmt.run(task.id, "system", `[before_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`);
+    }
+  }
+
   const child = spawn(args[0], args.slice(1), {
     cwd: workspace.cwd,
     env: cleanEnv,
