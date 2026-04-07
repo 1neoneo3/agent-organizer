@@ -234,12 +234,19 @@ export function spawnAgent(
   // Update task and agent status (skip for continue — already in_progress)
   if (!isContinue) {
     const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'in_progress', assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
+    // Preserve current status for QA/review/test_generation/pre_deploy runs — only set in_progress for inbox tasks
+    const currentStatus = task.status;
+    const shouldSetInProgress = currentStatus === "inbox";
+    if (shouldSetInProgress) {
+      db.prepare("UPDATE tasks SET status = 'in_progress', assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
+    } else {
+      db.prepare("UPDATE tasks SET assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
+    }
     db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
 
     invalidateCaches(cache);
     const startedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
-    ws.broadcast("task_update", startedTask ?? { id: task.id, status: "in_progress", started_at: now });
+    ws.broadcast("task_update", startedTask ?? { id: task.id, status: shouldSetInProgress ? "in_progress" : currentStatus, started_at: now });
     ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
   }
 
