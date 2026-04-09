@@ -225,7 +225,8 @@ export function determineNextStage(
     const qaFailed = logs.some((l) => l.message.includes("[QA:FAIL"));
     if (qaFailed) {
       recordFailedStage(db, task.id, "qa_testing");
-      return "inbox";
+      // Return to in_progress (not inbox) to preserve completed work
+      return "in_progress";
     }
     clearFailedStage(db, task.id);
     return nextStage("qa_testing", activeStages);
@@ -248,7 +249,17 @@ export function determineNextStage(
     const failed = logs.some((l) => l.message.includes("[PRE_DEPLOY:FAIL"));
     if (failed) {
       recordFailedStage(db, task.id, "pre_deploy");
-      return "inbox";
+      // Return to pr_review (not inbox) to preserve completed work
+      return "pr_review";
+    }
+    // Require explicit [PRE_DEPLOY:PASS] tag. Absence of the verdict is
+    // treated as failure so that a crashed or forgetful pre-deploy agent
+    // never silently marks a task as ready to ship. Loop protection is
+    // handled by max pre-deploy iterations in auto-pre-deploy.ts.
+    const passed = logs.some((l) => l.message.includes("[PRE_DEPLOY:PASS]"));
+    if (!passed) {
+      recordFailedStage(db, task.id, "pre_deploy");
+      return "pr_review";
     }
     clearFailedStage(db, task.id);
     return "done";
@@ -267,13 +278,20 @@ export function determineNextStage(
     );
     if (needsChanges) {
       recordFailedStage(db, task.id, "pr_review");
-      return "inbox";
+      // Return to in_progress (not inbox) to preserve completed work
+      return "in_progress";
     }
 
+    // Require explicit [REVIEW:PASS] tag. Absence of the verdict is treated
+    // as needing rework, so a crashed or forgetful reviewer can never cause
+    // an implicit pass-through. Loop protection is handled by review_count
+    // max in auto-reviewer.ts (defaults to 3 iterations) — once the cap is
+    // hit, auto-review stops and the task stays in pr_review for manual
+    // action instead of being silently promoted.
     const passed = logs.some((l) => l.message.includes("[REVIEW:PASS]"));
-    const autoDone = getSetting(db, "auto_done") ?? "true";
-    if (autoDone !== "true") {
-      if (!passed) return "pr_review";
+    if (!passed) {
+      recordFailedStage(db, task.id, "pr_review");
+      return "in_progress";
     }
     clearFailedStage(db, task.id);
     return nextStage("pr_review", activeStages);

@@ -112,21 +112,74 @@ describe("determineCompletionStatus", () => {
     const db = createDb();
     const task = insertTask(db, { review_count: 3, started_at: 10_000 });
 
-    insertStdoutLog(db, task.id, "[REVIEW:NEEDS_CHANGES]", 5_000);
-    insertStdoutLog(db, task.id, "[REVIEW:PASS]", 12_000);
+    // Log from a previous run (before started_at) should be ignored.
+    insertAssistantLog(db, task.id, "[REVIEW:NEEDS_CHANGES]", 5_000);
+    // Log from the current run decides the verdict.
+    insertAssistantLog(db, task.id, "[REVIEW:PASS]", 12_000);
 
     const status = determineCompletionStatus(db, task, false);
     assert.equal(status, "done");
   });
 
-  it("still returns inbox when current run requests changes", () => {
+  it("returns in_progress when current run requests changes", () => {
     const db = createDb();
     const task = insertTask(db, { review_count: 2, started_at: 10_000 });
 
     insertAssistantLog(db, task.id, "[REVIEW:NEEDS_CHANGES]", 12_000);
 
     const status = determineCompletionStatus(db, task, false);
-    assert.equal(status, "inbox");
+    assert.equal(status, "in_progress");
+  });
+
+  it("returns in_progress when pr_review run has no verdict tag (no implicit pass)", () => {
+    const db = createDb();
+    const task = insertTask(db, { review_count: 2, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "レビューしましたが判定タグを出力し忘れました", 12_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "in_progress");
+  });
+
+  it("ignores legacy auto_done setting and never implicitly passes pr_review", () => {
+    const db = createDb();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('auto_done', 'true')").run();
+    const task = insertTask(db, { review_count: 2, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "レビュー完了（タグなし）", 12_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "in_progress");
+  });
+
+  it("returns done when pre_deploy run outputs [PRE_DEPLOY:PASS]", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "pre_deploy", review_count: 0, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "全チェック通過しました\n[PRE_DEPLOY:PASS]", 12_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "done");
+  });
+
+  it("returns pr_review when pre_deploy run outputs [PRE_DEPLOY:FAIL]", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "pre_deploy", review_count: 0, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "[PRE_DEPLOY:FAIL:migration check failed]", 12_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "pr_review");
+  });
+
+  it("returns pr_review when pre_deploy run has no verdict tag (no implicit pass)", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "pre_deploy", review_count: 0, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "事前チェックを実施しましたが判定タグ未出力", 12_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "pr_review");
   });
 
   it("ignores old self-review logs from previous runs", () => {
