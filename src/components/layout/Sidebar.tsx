@@ -1,6 +1,6 @@
 import { NavLink } from "react-router";
 import type { ReactNode } from "react";
-import { CheckSquare, Compass, Building2, Users, Settings, Sun, Moon } from "lucide-react";
+import { CheckSquare, Compass, Building2, Users, Settings, Sun, Moon, Plus, UserPlus } from "lucide-react";
 import type { Flavor, TimeOfDay } from "../../hooks/useTheme.js";
 
 type NavItem = { to: string; label: string; icon: ReactNode };
@@ -128,6 +128,24 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
           </NavLink>
         ))}
       </nav>
+
+      {/* Action buttons */}
+      <div style={{ padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: "6px" }}>
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent("ao:new-task"))}
+          className="eb-btn eb-btn--primary"
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", fontSize: "12px" }}
+        >
+          <Plus size={14} /> New Task
+        </button>
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent("ao:new-agent"))}
+          className="eb-btn"
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", fontSize: "12px" }}
+        >
+          <UserPlus size={14} /> New Agent
+        </button>
+      </div>
 
       {/* Day/Night Toggle */}
       <div style={{ padding: "12px 16px 20px", borderTop: "1px solid var(--border-subtle)" }}>

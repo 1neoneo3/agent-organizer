@@ -6,7 +6,6 @@ import { DirectivesPage } from "./components/directives/DirectivesPage.js";
 import { OfficePage } from "./components/office/OfficePage.js";
 import { SettingsPanel } from "./components/settings/SettingsPanel.js";
 import { InteractivePromptToast } from "./components/layout/InteractivePromptToast.js";
-import { ReviewGuidancePopup } from "./components/layout/ReviewGuidancePopup.js";
 import { useAppData } from "./hooks/useAppData.js";
 import { useTheme } from "./hooks/useTheme.js";
 
@@ -66,10 +65,6 @@ function AppRoutes() {
       </Routes>
       <InteractivePromptToast
         interactivePrompts={interactivePrompts}
-        tasks={tasks}
-        onNavigateToTask={handleNavigateToTask}
-      />
-      <ReviewGuidancePopup
         tasks={tasks}
         onNavigateToTask={handleNavigateToTask}
       />

@@ -124,6 +124,18 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
     }
   }, [searchParams, tasks, setSearchParams]);
 
+  // Listen for sidebar button events
+  useEffect(() => {
+    const onNewTask = () => { play("select"); setShowCreate(true); };
+    const onNewAgent = () => { play("select"); setShowAddAgent(true); };
+    window.addEventListener("ao:new-task", onNewTask);
+    window.addEventListener("ao:new-agent", onNewAgent);
+    return () => {
+      window.removeEventListener("ao:new-task", onNewTask);
+      window.removeEventListener("ao:new-agent", onNewAgent);
+    };
+  }, [play]);
+
   const handleCreate = useCallback(async (data: Parameters<typeof createTask>[0]) => {
     await createTask(data);
     setShowCreate(false);
@@ -183,64 +195,6 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-      {/* Header bar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Tasks</h2>
-          {agents.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              {agents.map((a) => {
-                const isWorking = a.status === "working";
-                return (
-                  <span
-                    key={a.id}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      padding: "4px 10px",
-                      fontSize: "12px",
-                      fontWeight: 500,
-                      background: "var(--bg-secondary)",
-                      border: "1px solid var(--border-default)",
-                      borderRadius: "6px",
-                      color: "var(--text-secondary)",
-                    }}
-                    title={`${a.name} (${a.status})`}
-                  >
-                    <PixelAvatar role={a.role} size={16} className="inline-block align-middle" />
-                    <span>{a.name}</span>
-                    {agentView.roleLabelById.get(a.id) && (
-                      <span style={{ fontSize: "10px", color: "var(--text-tertiary)" }}>{agentView.roleLabelById.get(a.id)}</span>
-                    )}
-                    <span style={{
-                      width: "6px",
-                      height: "6px",
-                      borderRadius: "50%",
-                      background: isWorking ? "#22c55e" : "#a0a0a0",
-                      flexShrink: 0,
-                    }} />
-                  </span>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: "8px" }}>
-          <button
-            onClick={() => { play("select"); setShowAddAgent(true); }}
-            className="eb-btn"
-          >
-            + Agent
-          </button>
-          <button
-            onClick={() => { play("select"); setShowCreate(true); }}
-            className="eb-btn eb-btn--primary"
-          >
-            + New Task
-          </button>
-        </div>
-      </div>
 
       {/* Empty state */}
       {agents.length === 0 && tasks.length === 0 && !showAddAgent && (
