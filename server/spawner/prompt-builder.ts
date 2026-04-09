@@ -348,6 +348,8 @@ export function buildTaskPrompt(
   parts.push("2. 変更をコミット（conventional commits形式）");
   parts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
   parts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
+  parts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
+  parts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
   parts.push("5. **mainに直接コミットしない**");
   parts.push("");
 
@@ -540,11 +542,15 @@ export function buildReviewPrompt(task: Task): string {
   parts.push("");
   parts.push("[REVIEW:PASS]");
   parts.push("");
-  parts.push("## 判定");
+  parts.push("## 判定（必須）");
+  parts.push("");
+  parts.push("**重要: レビュー出力には必ず以下のいずれかの判定タグを含めてください。タグがない場合、レビューは無効とみなされタスクが停止します。**");
   parts.push("");
   parts.push("レビューの要約を日本語で記述し、**最終行**に判定を出力:");
   parts.push("- `[REVIEW:PASS]` — 実装が許容範囲の場合");
   parts.push("- `[REVIEW:NEEDS_CHANGES:<修正すべき観点>]` — 変更が必要な場合");
+  parts.push("");
+  parts.push("判定タグの出力を忘れないでください。これがないとワークフローが進行しません。");
   parts.push("");
 
   return parts.join("\n");

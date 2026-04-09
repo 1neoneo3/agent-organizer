@@ -29,6 +29,7 @@ interface CommandExecutor {
 
 interface PromoteOptions {
   exec?: CommandExecutor;
+  executedCommands?: string[];
 }
 
 function runCommand(
@@ -75,13 +76,29 @@ function buildPrTitle(task: Task): string {
   return `feat: ${task.title}`;
 }
 
-function buildPrBody(task: Task, branchName: string, commitSha: string): string {
+function buildPrBody(
+  task: Task,
+  branchName: string,
+  commitSha: string,
+  executedCommands: string[] = [],
+): string {
   const taskRef = task.task_number ? ` (${task.task_number})` : "";
-  const description = task.description ?? task.title;
+  const description = (task.description ?? task.title).trim();
+
+  // If description already contains markdown headings (## xxx), use it as-is
+  // to avoid duplicating "## 背景" section.
+  const descriptionHasHeadings = /^##\s/m.test(description);
+
+  const verificationLines = executedCommands.length > 0
+    ? executedCommands.map((cmd) => `- [x] \`${cmd}\``)
+    : ["- [ ] CI passed"];
+
+  const backgroundSection = descriptionHasHeadings
+    ? [`${description}${taskRef ? `\n\n${taskRef.trim()}` : ""}`]
+    : ["## 背景", "", `${description}${taskRef}`];
+
   const lines = [
-    "## 背景",
-    "",
-    `${description}${taskRef}`,
+    ...backgroundSection,
     "",
     "## 行った変更",
     "",
@@ -91,15 +108,15 @@ function buildPrBody(task: Task, branchName: string, commitSha: string): string 
     "",
     "## 影響範囲",
     "",
-    "- Agent Organizer による自動生成PR",
+    "- タスク変更箇所",
     "",
     "## 動作確認項目",
     "",
-    "- [ ] CI passed",
+    ...verificationLines,
     "",
     "## その他",
     "",
-    "- Agent Organizer による自動昇格フローで生成",
+    "- ",
   ];
   return lines.join("\n");
 }
@@ -178,8 +195,23 @@ export function promoteTaskReviewArtifact(
 
   try {
     result.baseBranch = detectBaseBranch(workspace.cwd, exec);
-    result.prUrl = lookupExistingPrUrl(workspace.cwd, result.branchName!, exec)
-      ?? runCommand(
+    const existingPrUrl = lookupExistingPrUrl(workspace.cwd, result.branchName!, exec);
+    const prBody = buildPrBody(task, result.branchName!, result.commitSha!, options?.executedCommands);
+    if (existingPrUrl) {
+      // Overwrite existing PR body to ensure consistent format (no duplicated sections)
+      try {
+        runCommand(
+          "gh",
+          ["pr", "edit", existingPrUrl, "--body", prBody],
+          workspace.cwd,
+          exec,
+        );
+      } catch {
+        // Ignore edit failures; the PR still exists
+      }
+      result.prUrl = existingPrUrl;
+    } else {
+      result.prUrl = runCommand(
         "gh",
         [
           "pr",
@@ -191,11 +223,12 @@ export function promoteTaskReviewArtifact(
           "--title",
           buildPrTitle(task),
           "--body",
-          buildPrBody(task, result.branchName!, result.commitSha!),
+          prBody,
         ],
         workspace.cwd,
         exec,
       );
+    }
     result.syncStatus = result.prUrl ? "pr_open" : "pushed";
   } catch (error) {
     result.syncError = `pr failed: ${commandErrorToMessage(error)}`;

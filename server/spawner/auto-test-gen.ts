@@ -26,9 +26,9 @@ export async function triggerAutoTestGen(
   const maxGenCount = 2;
   if (genCount >= maxGenCount) {
     const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto test generation stopped: iterations (${genCount}) reached max (${maxGenCount}). Returning to inbox.`);
-    ws.broadcast("task_update", { id: currentTask.id, status: "inbox" });
+    db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?").run(now, currentTask.id);
+    logSystem(db, currentTask.id, `Auto test generation stopped: iterations (${genCount}) reached max (${maxGenCount}). Returning to in_progress for manual action.`);
+    ws.broadcast("task_update", { id: currentTask.id, status: "in_progress" });
     return;
   }
 

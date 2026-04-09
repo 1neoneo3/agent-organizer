@@ -49,7 +49,7 @@ describe("promoteTaskReviewArtifact", () => {
       ["git symbolic-ref refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
       ["gh pr list --head issue/t12-review-artifact-promotion --state all --json url --limit 1", "[]"],
       [
-        `gh pr create --base main --head issue/t12-review-artifact-promotion --title feat: Review artifact promotion --body ## 背景\n\nReview artifact promotion (#12)\n\n## 行った変更\n\n- Review artifact promotion\n- review branch: issue/t12-review-artifact-promotion\n- review commit: abc123\n\n## 影響範囲\n\n- Agent Organizer による自動生成PR\n\n## 動作確認項目\n\n- [ ] CI passed\n\n## その他\n\n- Agent Organizer による自動昇格フローで生成`,
+        `gh pr create --base main --head issue/t12-review-artifact-promotion --title feat: Review artifact promotion --body ## 背景\n\nReview artifact promotion (#12)\n\n## 行った変更\n\n- Review artifact promotion\n- review branch: issue/t12-review-artifact-promotion\n- review commit: abc123\n\n## 影響範囲\n\n- タスク変更箇所\n\n## 動作確認項目\n\n- [ ] CI passed\n\n## その他\n\n- `,
         "https://github.com/example/repo/pull/1",
       ],
     ]);

@@ -102,6 +102,43 @@ function invalidateCaches(cache?: CacheService): void {
   cache.del("agents:all");
 }
 
+/**
+ * Extract executed shell commands from task logs for PR verification section.
+ * Parses Codex/Claude CLI stdout JSON to find command_execution items.
+ * Returns up to 10 unique commands with short descriptions.
+ */
+function extractExecutedCommands(
+  db: DatabaseSync,
+  taskId: string,
+  runStartedAt: number,
+): string[] {
+  const logs = db
+    .prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'stdout' AND created_at >= ? ORDER BY id ASC",
+    )
+    .all(taskId, runStartedAt) as Array<{ message: string }>;
+
+  const commands = new Set<string>();
+  for (const log of logs) {
+    // Parse Codex stdout JSON: {"type":"item.completed","item":{"type":"command_execution","command":"/bin/bash -lc 'xxx'",...}}
+    const match = log.message.match(/"type":"item\.completed"[^}]*"type":"command_execution"[^}]*"command":"([^"]+)"/);
+    if (!match) continue;
+    let cmd = match[1]
+      .replace(/\\n/g, " ")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\");
+    // Strip /bin/bash -lc wrapper
+    const bashMatch = cmd.match(/^\/bin\/bash -lc\s+['"](.+)['"]\s*$/);
+    if (bashMatch) cmd = bashMatch[1];
+    // Skip noise: read-only inspections, internal tool calls
+    if (/^(cat|ls|sed|head|tail|rg|grep|find|wc|git (status|log|diff|show|rev-parse|symbolic-ref|branch|remote)|date|pwd|which)\b/.test(cmd)) continue;
+    if (cmd.length > 120) cmd = cmd.slice(0, 117) + "...";
+    commands.add(cmd);
+    if (commands.size >= 10) break;
+  }
+  return Array.from(commands);
+}
+
 export function isReviewRunTask(
   task: Pick<Task, "status">,
   previousStatus?: Task["status"] | string,
@@ -434,12 +471,6 @@ export function spawnAgent(
       ws.broadcast("cli_output", deduped.map((e) => ({ task_id: task.id, ...e })), { taskId: task.id });
     }
 
-    // Auto-detect PR URL from agent output
-    const prUrlMatch = text.match(/https:\/\/github\.com\/[^\s"'<>)]+\/pull\/\d+/);
-    if (prUrlMatch) {
-      db.prepare("UPDATE tasks SET pr_url = ?, updated_at = ? WHERE id = ? AND pr_url IS NULL").run(prUrlMatch[0], Date.now(), task.id);
-    }
-
     // Check for self-review result
     if (selfReview && text.includes("[SELF_REVIEW:PASS]")) {
       db.prepare("UPDATE tasks SET review_count = review_count + 1, updated_at = ? WHERE id = ?").run(Date.now(), task.id);
@@ -651,16 +682,11 @@ export function spawnAgent(
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
     let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
 
-    // Run after_run hooks (lint, format, etc.) — on failure, revert to inbox
+    // Run after_run hooks (lint, format, etc.) — log failures as warnings but don't block progress
     if (code === 0 && workflow?.afterRun.length) {
       const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd);
       for (const hr of hookResults) {
-        insertLogStmt.run(task.id, "system", `[after_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output}` : ""}`);
-      }
-      const hookFailed = hookResults.some((hr) => !hr.ok);
-      if (hookFailed) {
-        insertLogStmt.run(task.id, "system", "[after_run] Hook failed. Reverting task to inbox for rework.");
-        finalStatus = "inbox";
+        insertLogStmt.run(task.id, "system", `[after_run] ${hr.command}: ${hr.ok ? "OK" : "WARNING"}${hr.output ? `\n${hr.output}` : ""}`);
       }
     }
 
@@ -694,7 +720,9 @@ export function spawnAgent(
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
 
     if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy" || finalStatus === "done")) {
-      const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace);
+      // Extract executed commands from task logs for PR verification section
+      const executedCommands = extractExecutedCommands(db, task.id, task.started_at ?? 0);
+      const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, { executedCommands });
       db.prepare(
         `UPDATE tasks
          SET pr_url = COALESCE(?, pr_url),

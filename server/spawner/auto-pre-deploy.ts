@@ -26,9 +26,9 @@ export async function triggerAutoPreDeploy(
   const maxDeployCount = 2;
   if (deployCount >= maxDeployCount) {
     const now = Date.now();
-    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto pre-deploy stopped: iterations (${deployCount}) reached max (${maxDeployCount}). Returning to inbox.`);
-    ws.broadcast("task_update", { id: currentTask.id, status: "inbox" });
+    db.prepare("UPDATE tasks SET status = 'pr_review', updated_at = ? WHERE id = ?").run(now, currentTask.id);
+    logSystem(db, currentTask.id, `Auto pre-deploy stopped: iterations (${deployCount}) reached max (${maxDeployCount}). Returning to pr_review for manual action.`);
+    ws.broadcast("task_update", { id: currentTask.id, status: "pr_review" });
     return;
   }
 
