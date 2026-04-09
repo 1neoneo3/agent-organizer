@@ -30,7 +30,7 @@ Explore フェーズ（read-only、3分タイムアウト）  ← explore_phase=
   │  └─ ループ検出: stderr 監視、同一エラー3回で SIGTERM
   │
   ▼
-pr_review ステータスに遷移（auto_done=false）
+pr_review ステータスに遷移
   │
   ▼
 自動レビューフェーズ（Code Reviewer エージェント）
@@ -188,7 +188,6 @@ QA エージェントがタスクの受け入れ条件を自動検証。
 | 設定 | デフォルト | 説明 |
 |------|----------|------|
 | `auto_review` | `true` | 自動レビューの有効/無効 |
-| `auto_done` | `false` | `false`: pr_review を経由 / `true`: 即 done |
 | `review_mode` | `pr_only` | レビュー方式（pr_only / none） |
 | `review_count` | `2` | 自動レビューの最大回数 |
 | `explore_phase` | `false` | `true`: Implement 前に Explore Phase を自動実行 |

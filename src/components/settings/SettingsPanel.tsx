@@ -141,21 +141,6 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
             </label>
 
             <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Auto Done</span>
-              <select
-                style={inputStyle}
-                value={local.auto_done ?? "true"}
-                onChange={(e) => update("auto_done", e.target.value)}
-              >
-                <option value="true">Enabled — review pass auto-completes task</option>
-                <option value="false">Disabled — require explicit [REVIEW:PASS] marker</option>
-              </select>
-              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                When disabled, tasks stay in PR Review unless the reviewer outputs [REVIEW:PASS] explicitly.
-              </p>
-            </label>
-
-            <label style={{ display: "block" }}>
               <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Self-Review Threshold</span>
               <select
                 style={inputStyle}
