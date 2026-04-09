@@ -48,7 +48,7 @@ interface TaskDetailModalProps {
 }
 
 export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribeTask, onClose, onRun, onStop }: TaskDetailModalProps) {
-  const [showTerminal, setShowTerminal] = useState(task.status !== "inbox");
+  const [showTerminal, setShowTerminal] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [sendingFeedback, setSendingFeedback] = useState(false);
   const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
@@ -327,7 +327,7 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
                 Stop Task
               </button>
             )}
-            {(task.status === "in_progress" || task.status === "done" || task.status === "self_review" || task.status === "pr_review") && (
+            {(task.status === "in_progress" || task.status === "done" || task.status === "self_review" || task.status === "test_generation" || task.status === "qa_testing" || task.status === "pr_review" || task.status === "human_review" || task.status === "pre_deploy") && (
               <button
                 onClick={() => setShowTerminal((v) => !v)}
                 className="eb-btn"

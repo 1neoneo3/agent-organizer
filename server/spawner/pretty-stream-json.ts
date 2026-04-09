@@ -153,15 +153,33 @@ export function prettyStreamJson(raw: string, opts: { includeReasoning?: boolean
   }
 
   if (!sawJson) {
-    return raw.trim();
+    return unescapeJsonText(raw.trim());
   }
 
   const stitched = chunks.join("");
-  const normalized = stitched
+  const normalized = unescapeJsonText(stitched);
+
+  return normalized;
+}
+
+function unescapeJsonText(text: string): string {
+  // Handle multi-level JSON escaping by processing from deepest level outward.
+  // Raw text may contain \\\\n (4 chars), \\n (3 chars), or \n (2 chars) for newlines.
+  // Process longest patterns first, then shorter ones.
+  const result = text
+    .replace(/\\\\\\\\n/g, "\n")   // \\\\n (5 chars: \,\,\,\,n) → newline
+    .replace(/\\\\\\\\t/g, "\t")
+    .replace(/\\\\\\\\"/g, '"')
+    .replace(/\\\\n/g, "\n")       // \\n (3 chars: \,\,n) → newline
+    .replace(/\\\\t/g, "\t")
+    .replace(/\\\\"/g, '"')
+    .replace(/\\n/g, "\n")         // \n (2 chars: \,n) → newline
+    .replace(/\\t/g, "\t")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");       // \\ → \ (cleanup remaining double backslashes)
+  return result
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
-
-  return normalized;
 }

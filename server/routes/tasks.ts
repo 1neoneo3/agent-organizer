@@ -361,7 +361,17 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     }
 
     const rawText = fileExists ? readLastLines(logPath, maxLines) : "";
-    const text = pretty ? prettyStreamJson(rawText) : rawText;
+    let text = pretty ? prettyStreamJson(rawText) : rawText;
+
+    // Cap response text to prevent browser freeze on large logs
+    const MAX_TEXT_BYTES = 128 * 1024; // 128KB
+    if (text.length > MAX_TEXT_BYTES) {
+      text = text.slice(-MAX_TEXT_BYTES);
+      const firstNewline = text.indexOf("\n");
+      if (firstNewline > 0) {
+        text = "[truncated]\n" + text.slice(firstNewline + 1);
+      }
+    }
 
     // Also fetch recent task_logs from DB for system/stderr entries
     const taskLogs = db.prepare(

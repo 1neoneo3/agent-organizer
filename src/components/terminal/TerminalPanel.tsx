@@ -260,13 +260,16 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   const scrollRef = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
 
+  const logsFetched = useRef(false);
   useEffect(() => {
-    fetchTaskLogs(taskId).then((data) => {
+    if (activeTab === "terminal" || logsFetched.current) return;
+    logsFetched.current = true;
+    fetchTaskLogs(taskId, 50).then((data) => {
       startTransition(() => {
         setLogs(data.reverse());
       });
     });
-  }, [taskId]);
+  }, [taskId, activeTab]);
 
   useEffect(() => {
     if (!subscribeTask) {

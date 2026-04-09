@@ -29,7 +29,7 @@ export interface TerminalResponse {
   task_logs: Array<{ kind: string; message: string; created_at: number }>;
 }
 
-export const fetchTerminal = (id: string, lines = 2000, pretty = true) =>
+export const fetchTerminal = (id: string, lines = 500, pretty = true) =>
   api.get<TerminalResponse>(`/tasks/${id}/terminal?lines=${lines}&pretty=${pretty ? "1" : "0"}`);
 
 // Messages
