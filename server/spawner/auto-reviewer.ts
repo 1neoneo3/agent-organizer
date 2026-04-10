@@ -31,12 +31,24 @@ export async function triggerAutoReview(
     return;
   }
 
-  // Loop prevention: stop auto-review if review_count reaches the configured max.
-  // The task stays in pr_review (not inbox) so that periodic dispatch does not
-  // re-pick it and create an infinite notification loop.
+  // Loop prevention: promote to human_review when review_count reaches the
+  // configured max. The task must NOT be returned to inbox (periodic dispatch
+  // would re-pick it and create an infinite loop) and must NOT silently stay
+  // in pr_review (the task would stagnate with no visible action signal).
+  //
+  // Matches the pattern in auto-qa.ts: exhausted automatic attempts hand off
+  // to a human via the human_review status, which is a terminal state waiting
+  // for manual action.
   const maxReviewCount = Number(getSetting(db, "review_count") ?? "3");
   if (currentTask.review_count >= maxReviewCount) {
-    logSystem(db, currentTask.id, `Auto review stopped: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Task remains in pr_review for manual action.`);
+    const now = Date.now();
+    db.prepare("UPDATE tasks SET status = 'human_review', updated_at = ? WHERE id = ?").run(now, currentTask.id);
+    logSystem(
+      db,
+      currentTask.id,
+      `Auto review stopped: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Moving to human_review — automatic review attempts exhausted, manual action required.`,
+    );
+    ws.broadcast("task_update", { id: currentTask.id, status: "human_review" });
     return;
   }
 

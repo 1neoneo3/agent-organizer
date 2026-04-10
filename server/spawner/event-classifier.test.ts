@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { detectTextInteractivePrompt, parseInteractivePrompt } from "./event-classifier.js";
+import {
+  classifyEvent,
+  detectTextInteractivePrompt,
+  isIgnoredEvent,
+  parseInteractivePrompt,
+} from "./event-classifier.js";
 
 describe("detectTextInteractivePrompt", () => {
   // --- True Positives (should detect) ---
@@ -169,5 +174,85 @@ describe("parseInteractivePrompt", () => {
   it("returns null for non-object", () => {
     const result = parseInteractivePrompt({ type: "text", text: "hello" });
     assert.strictEqual(result, null);
+  });
+});
+
+describe("classifyEvent: codex command_execution", () => {
+  it("classifies item.started with command_execution as tool_call", () => {
+    const ev = classifyEvent("codex", {
+      type: "item.started",
+      item: {
+        id: "item_2",
+        type: "command_execution",
+        command: '/bin/bash -lc "rg -n pattern ."',
+      },
+    });
+    assert.notStrictEqual(ev, null);
+    assert.ok(!isIgnoredEvent(ev));
+    assert.strictEqual(ev!.kind, "tool_call");
+    assert.match(ev!.message, /^shell\(/);
+    assert.match(ev!.message, /rg/);
+  });
+
+  it("classifies item.completed with command_execution as tool_result", () => {
+    const ev = classifyEvent("codex", {
+      type: "item.completed",
+      item: {
+        id: "item_2",
+        type: "command_execution",
+        command: "/bin/bash -lc 'rg -n pattern .'",
+        aggregated_output: "./README.md:1:result",
+      },
+    });
+    assert.notStrictEqual(ev, null);
+    assert.ok(!isIgnoredEvent(ev));
+    assert.strictEqual(ev!.kind, "tool_result");
+    assert.match(ev!.message, /^shell\(/);
+    assert.match(ev!.message, /→/);
+  });
+
+  it("truncates huge aggregated_output to avoid dumping multi-KB into the log", () => {
+    const hugeOutput = "x".repeat(200_000);
+    const ev = classifyEvent("codex", {
+      type: "item.completed",
+      item: {
+        type: "command_execution",
+        command: "/bin/bash -lc 'cat huge.txt'",
+        aggregated_output: hugeOutput,
+      },
+    });
+    assert.ok(ev);
+    assert.ok(!isIgnoredEvent(ev));
+    // sanitized output is bounded (sanitizeToolOutput truncates to MAX_TOOL_RESULT_LENGTH = 500)
+    assert.ok(
+      ev!.message.length < 2000,
+      `expected short message, got ${ev!.message.length} bytes`,
+    );
+  });
+
+  it("drops thread.started as ignored (not raw stdout)", () => {
+    const ev = classifyEvent("codex", { type: "thread.started", thread_id: "abc" });
+    assert.ok(isIgnoredEvent(ev));
+  });
+
+  it("drops turn.started as ignored", () => {
+    const ev = classifyEvent("codex", { type: "turn.started" });
+    assert.ok(isIgnoredEvent(ev));
+  });
+
+  it("still returns null for truly unknown codex event types", () => {
+    const ev = classifyEvent("codex", { type: "some.unknown.event", foo: "bar" });
+    assert.strictEqual(ev, null);
+  });
+
+  it("still classifies codex agent_message normally", () => {
+    const ev = classifyEvent("codex", {
+      type: "item.completed",
+      item: { type: "agent_message", text: "Hello from codex" },
+    });
+    assert.ok(ev);
+    assert.ok(!isIgnoredEvent(ev));
+    assert.strictEqual(ev!.kind, "assistant");
+    assert.strictEqual(ev!.message, "Hello from codex");
   });
 });

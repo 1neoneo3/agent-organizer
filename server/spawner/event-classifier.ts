@@ -158,10 +158,19 @@ export interface ClassifiedEvent {
   message: string;
 }
 
+/**
+ * Sentinel returned by provider classifiers for structured events that are
+ * recognized but intentionally not displayed (e.g., control events like
+ * `thread.started`). Distinct from `null`, which means "unrecognized — fall
+ * back to raw stdout". The process manager must treat this as "drop silently"
+ * to avoid dumping large JSON blobs into the terminal view.
+ */
+export const CODEX_IGNORED: ClassifiedEvent = { kind: "tool_call", message: "__ignored__" };
+
 export function classifyEvent(
   provider: string,
   obj: Record<string, unknown>
-): ClassifiedEvent | null {
+): ClassifiedEvent | null | typeof CODEX_IGNORED {
   let result: ClassifiedEvent | null;
   switch (provider) {
     case "claude":
@@ -177,10 +186,19 @@ export function classifyEvent(
       return null;
   }
 
+  // Pass through the ignored sentinel so callers can distinguish "handled
+  // silently" from "unknown event".
+  if (result === CODEX_IGNORED) return CODEX_IGNORED;
+
   // Filter out events with empty/whitespace-only messages
   if (result && !result.message.trim()) return null;
 
   return result;
+}
+
+/** Type guard: check whether a classify result should be silently dropped. */
+export function isIgnoredEvent(ev: ClassifiedEvent | null | typeof CODEX_IGNORED): boolean {
+  return ev === CODEX_IGNORED;
 }
 
 // --------------- Claude ---------------
@@ -294,7 +312,7 @@ function classifyCodex(obj: Record<string, unknown>): ClassifiedEvent | null {
   // item.completed with agent_message
   if (obj.type === "item.completed") {
     const item = obj.item as Record<string, unknown> | undefined;
-    if (!item) return null;
+    if (!item) return CODEX_IGNORED;
 
     if (item.type === "agent_message" && typeof item.text === "string") {
       return { kind: "assistant", message: item.text };
@@ -307,16 +325,35 @@ function classifyCodex(obj: Record<string, unknown>): ClassifiedEvent | null {
       return { kind: "tool_result", message: output ? `${tool} → ${output}` : `${tool} completed` };
     }
 
+    // Shell command execution result (Codex gpt-5.x "command_execution" item)
+    // Item shape: { type: "command_execution", command: "...", aggregated_output: "..." }
+    // `aggregated_output` can be huge (full grep/rg output), so must be sanitized.
+    if (item.type === "command_execution") {
+      const command = typeof item.command === "string" ? item.command : "";
+      const rawOutput =
+        typeof item.aggregated_output === "string"
+          ? item.aggregated_output
+          : typeof item.output === "string"
+            ? (item.output as string)
+            : "";
+      const summary = command ? summarizeCommand(command) : "command";
+      const output = sanitizeToolOutput(rawOutput);
+      return {
+        kind: "tool_result",
+        message: output ? `shell(${summary}) → ${output}` : `shell(${summary}) completed`,
+      };
+    }
+
     // Note: tool_call for function_call is emitted only on item.started (below)
     // to avoid duplicate events.
 
-    return null;
+    return CODEX_IGNORED;
   }
 
-  // item.started with function_call
+  // item.started with function_call / command_execution
   if (obj.type === "item.started") {
     const item = obj.item as Record<string, unknown> | undefined;
-    if (!item) return null;
+    if (!item) return CODEX_IGNORED;
 
     if (item.type === "function_call" || item.tool) {
       const tool = String(item.name ?? item.tool ?? "unknown");
@@ -324,24 +361,55 @@ function classifyCodex(obj: Record<string, unknown>): ClassifiedEvent | null {
       const summary = summarizeToolInput(tool, args);
       return { kind: "tool_call", message: `Tool: ${tool}(${summary})` };
     }
-    return null;
+
+    if (item.type === "command_execution") {
+      const command = typeof item.command === "string" ? item.command : "";
+      const summary = command ? summarizeCommand(command) : "command";
+      return { kind: "tool_call", message: `shell(${summary})` };
+    }
+
+    return CODEX_IGNORED;
   }
 
   // Reasoning / thinking
   if (obj.type === "reasoning" || obj.type === "thinking") {
     const text = extractText(obj);
     if (text) return { kind: "thinking", message: text };
-    return null;
+    return CODEX_IGNORED;
   }
 
   // Text output
   if (obj.type === "output_text" || obj.type === "assistant_message") {
     const text = extractText(obj);
     if (text) return { kind: "assistant", message: text };
-    return null;
+    return CODEX_IGNORED;
+  }
+
+  // Known control events (no useful info to display, but should be dropped
+  // rather than dumped to stdout as raw JSON)
+  if (
+    obj.type === "thread.started" ||
+    obj.type === "thread.completed" ||
+    obj.type === "turn.started" ||
+    obj.type === "turn.completed" ||
+    obj.type === "session.created" ||
+    obj.type === "session.completed"
+  ) {
+    return CODEX_IGNORED;
   }
 
   return null;
+}
+
+/** Summarize a shell command for display (strip leading shell wrapper, truncate). */
+function summarizeCommand(command: string): string {
+  // Strip common `/bin/bash -lc "..."` or `bash -c '...'` wrappers
+  const unwrapped = command.replace(
+    /^\s*\/?\w*bash\s+-[a-z]*c\s+['"](.+)['"]?\s*$/,
+    "$1",
+  );
+  const trimmed = unwrapped.trim();
+  return trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed;
 }
 
 // --------------- Gemini ---------------

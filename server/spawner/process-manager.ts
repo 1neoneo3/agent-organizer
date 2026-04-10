@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOWED_TOOLS } from "./cli-tools.js";
 import { runExplorePhase } from "./explore-phase.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
-import { classifyEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
+import { classifyEvent, isIgnoredEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
 import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt, buildTestGenerationPrompt, buildPreDeployPrompt } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { triggerAutoQa } from "./auto-qa.js";
@@ -399,10 +399,24 @@ export function spawnAgent(
         }
 
         const event = classifyEvent(agent.cli_provider, obj);
-        if (event) {
+        if (isIgnoredEvent(event)) {
+          // Known structured control event (e.g., thread.started, turn.started,
+          // or recognized item.* with no displayable content). Drop silently
+          // instead of falling back to stdout, which would otherwise dump
+          // multi-KB JSON blobs (including huge `aggregated_output` fields
+          // from shell command_execution events) into the terminal view.
+        } else if (event) {
           classified.push({ kind: event.kind, message: event.message });
         } else {
-          classified.push({ kind: "stdout", message: trimmed });
+          // Unrecognized JSON event — fall back to stdout, but truncate to
+          // avoid dumping huge payloads if an unknown event carries a large
+          // output field.
+          const MAX_RAW_JSON_STDOUT = 4000;
+          const safe =
+            trimmed.length > MAX_RAW_JSON_STDOUT
+              ? `${trimmed.slice(0, MAX_RAW_JSON_STDOUT)}... [truncated ${trimmed.length - MAX_RAW_JSON_STDOUT} bytes]`
+              : trimmed;
+          classified.push({ kind: "stdout", message: safe });
         }
 
         // Detect interactive prompts (ExitPlanMode / AskUserQuestion)
