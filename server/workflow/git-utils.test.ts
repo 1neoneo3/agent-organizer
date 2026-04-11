@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeGitUrl } from "./git-utils.js";
+import { mkdtempSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { detectRepositoryUrl, normalizeGitUrl } from "./git-utils.js";
 
 describe("normalizeGitUrl", () => {
   it("returns null for empty / nullish input", () => {
@@ -110,5 +114,44 @@ describe("normalizeGitUrl", () => {
       normalizeGitUrl("  https://github.com/user/repo.git\n"),
       "https://github.com/user/repo",
     );
+  });
+});
+
+describe("detectRepositoryUrl", () => {
+  function initGitRepo(dir: string, origin: string): void {
+    spawnSync("git", ["-C", dir, "init", "-q"], { encoding: "utf8" });
+    spawnSync("git", ["-C", dir, "remote", "add", "origin", origin], {
+      encoding: "utf8",
+    });
+  }
+
+  it("returns the normalized origin for a git toplevel", () => {
+    const root = mkdtempSync(join(tmpdir(), "ao-git-"));
+    initGitRepo(root, "git@github.com:acme/widget.git");
+    assert.equal(detectRepositoryUrl(root), "https://github.com/acme/widget");
+  });
+
+  it("returns null when the path is NOT the git toplevel", () => {
+    // A common misfire: projectPath is a subdirectory that happens to sit
+    // under an unrelated parent repo. git walks up and finds origin, but
+    // that origin does not describe the project at all.
+    const parent = mkdtempSync(join(tmpdir(), "ao-git-parent-"));
+    initGitRepo(parent, "git@github.com:unrelated/parent-repo.git");
+    const child = join(parent, "subproject");
+    mkdirSync(child);
+    assert.equal(detectRepositoryUrl(child), null);
+  });
+
+  it("returns null for a non-git path", () => {
+    const plain = mkdtempSync(join(tmpdir(), "ao-git-none-"));
+    assert.equal(detectRepositoryUrl(plain), null);
+  });
+
+  it("returns null for a missing path", () => {
+    assert.equal(detectRepositoryUrl("/definitely/not/a/real/path/xyz"), null);
+  });
+
+  it("returns null for empty input", () => {
+    assert.equal(detectRepositoryUrl(""), null);
   });
 });

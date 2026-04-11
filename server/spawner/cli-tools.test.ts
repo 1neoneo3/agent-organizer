@@ -12,7 +12,9 @@ describe("buildAgentArgs", () => {
     ]);
   });
 
-  it("uses explicit sandbox flags for host-level codex execution", () => {
+  it("uses explicit sandbox + -c approval_policy for non-default codex config", () => {
+    // codex CLI v0.116+ removed --ask-for-approval. Approval policy now
+    // goes through -c approval_policy=<value>.
     assert.deepEqual(
       buildAgentArgs("codex", {
         codexSandboxMode: "danger-full-access",
@@ -24,8 +26,8 @@ describe("buildAgentArgs", () => {
         "--json",
         "--sandbox",
         "danger-full-access",
-        "--ask-for-approval",
-        "never",
+        "-c",
+        "approval_policy=never",
       ],
     );
   });

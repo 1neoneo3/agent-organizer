@@ -89,6 +89,13 @@ export function buildAgentArgs(
       // `--full-auto` is shorthand for the default pair (workspace-write +
       // on-request). Any other combination must be emitted explicitly so the
       // host-level runner does not silently fall back to defaults.
+      //
+      // Note: codex CLI v0.116+ removed the `--ask-for-approval` flag.
+      // Approval policy is now set via the `-c approval_policy=<value>`
+      // config override, which is the documented replacement. See `codex
+      // exec --help` — only `--full-auto`, `--sandbox`, and
+      // `--dangerously-bypass-approvals-and-sandbox` remain as top-level
+      // flags for sandbox / approval concerns.
       if (
         codexSandboxMode === "workspace-write" &&
         codexApprovalPolicy === "on-request"
@@ -96,7 +103,7 @@ export function buildAgentArgs(
         args.push("--full-auto");
       } else {
         args.push("--sandbox", codexSandboxMode);
-        args.push("--ask-for-approval", codexApprovalPolicy);
+        args.push("-c", `approval_policy=${codexApprovalPolicy}`);
       }
       return args;
     }
