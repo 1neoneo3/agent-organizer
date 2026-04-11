@@ -7,7 +7,14 @@ import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOW
 import { runExplorePhase } from "./explore-phase.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, isIgnoredEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
-import { buildTaskPrompt, buildReviewPrompt, buildQaPrompt, buildTestGenerationPrompt, buildPreDeployPrompt } from "./prompt-builder.js";
+import {
+  buildTaskPrompt,
+  buildReviewPrompt,
+  buildQaPrompt,
+  buildTestGenerationPrompt,
+  buildPreDeployPrompt,
+  type ReviewerRole,
+} from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { triggerAutoQa } from "./auto-qa.js";
 import { triggerAutoTestGen } from "./auto-test-gen.js";
@@ -37,7 +44,68 @@ const capturedSessionIds = new Map<string, string>(); // taskId -> claude sessio
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
 
+/**
+ * Coordination state for a parallel review panel. When `triggerAutoReview`
+ * spawns more than one reviewer for the same task, it records the session
+ * here BEFORE the primary reviewer's `spawnAgent` close handler can fire.
+ *
+ * Responsibilities:
+ *  - Track secondary (non-primary) reviewer child processes so the
+ *    primary's close handler can detect that verdict collection isn't
+ *    finished yet and defer finalization.
+ *  - Hold the deferred-finalization closure that the LAST-to-finish
+ *    secondary must invoke (otherwise the task would stall in pr_review).
+ *  - Provide a single place for `killAgent` to terminate every reviewer
+ *    in the panel when the task is cancelled.
+ *
+ * Single-reviewer runs DO NOT create a session: the legacy behavior of
+ * finalizing immediately on primary close is preserved.
+ */
+interface ReviewerSession {
+  taskId: string;
+  expectedRoles: ReviewerRole[];
+  /** agentId → ChildProcess for every non-primary reviewer currently running */
+  secondaries: Map<string, ChildProcess>;
+  /** Set once the primary reviewer's close handler has fired. */
+  primaryDone: boolean;
+  /**
+   * Closure captured from the primary's close handler. When the primary
+   * finishes while secondaries are still running, it stores its
+   * finalization work here and returns without updating task state. The
+   * LAST-to-finish secondary is responsible for calling this closure so
+   * the task can advance.
+   */
+  primaryFinalize: (() => void) | null;
+}
+
+const reviewerSessions = new Map<string, ReviewerSession>();
+
 const MAX_CONTEXT_RESETS = 3;
+
+/**
+ * Create a reviewer-panel coordination session for a task. Must be
+ * called BEFORE the primary reviewer's `spawnAgent` invocation so that
+ * the primary's close handler sees the session during finalization.
+ *
+ * Only called by auto-reviewer when the panel has more than one entry.
+ */
+export function initReviewerSession(
+  taskId: string,
+  expectedRoles: ReviewerRole[],
+): void {
+  reviewerSessions.set(taskId, {
+    taskId,
+    expectedRoles,
+    secondaries: new Map(),
+    primaryDone: false,
+    primaryFinalize: null,
+  });
+}
+
+/** Test-only helper: inspect the current session for a task, or undefined. */
+export function getReviewerSession(taskId: string): ReviewerSession | undefined {
+  return reviewerSessions.get(taskId);
+}
 
 /** Restore pending interactive prompts from DB on server startup */
 export function restorePendingInteractivePrompts(db: DatabaseSync): void {
@@ -251,7 +319,19 @@ export function spawnAgent(
   ws: WsHub,
   agent: Agent,
   task: Task,
-  options?: { continuePrompt?: string; previousStatus?: string; cache?: CacheService; finalizeOnComplete?: boolean }
+  options?: {
+    continuePrompt?: string;
+    previousStatus?: string;
+    cache?: CacheService;
+    finalizeOnComplete?: boolean;
+    /**
+     * Role hint for review runs. When set, the primary reviewer will
+     * emit a role-tagged verdict (`[REVIEW:<role>:PASS]`) and the close
+     * handler will consult `reviewerSessions` for deferred-finalization
+     * coordination with any secondary reviewers.
+     */
+    reviewerRole?: ReviewerRole;
+  }
 ): { pid: number } {
   const cache = options?.cache;
   const isContinue = !!options?.continuePrompt;
@@ -327,7 +407,7 @@ export function spawnAgent(
         : (isPreDeployRun
           ? buildPreDeployPrompt(task) + handoffContext
           : (isReviewRun
-            ? buildReviewPrompt(task) + handoffContext
+            ? buildReviewPrompt(task, { reviewerRole: options?.reviewerRole ?? "code" }) + handoffContext
             : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy }) + exploreContext))));
 
   // Log directory
@@ -790,11 +870,10 @@ export function spawnAgent(
       return;
     }
 
-    const finishTime = Date.now();
-
     // Feedback respawn completed: restore previous status instead of finalizing as done
     // (unless finalizeOnComplete is set, e.g. after interactive prompt response)
     if (isContinue && !finalizeOnComplete) {
+      const finishTime = Date.now();
       const restoreStatus = options?.previousStatus ?? "in_progress";
 
       db.prepare(
@@ -816,14 +895,63 @@ export function spawnAgent(
       return;
     }
 
-    // Review runs fire parallel auto-checks (tsc / lint / tests) at
-    // pr_review entry. Before deciding whether to advance beyond
-    // pr_review, we must wait for those checks to settle so the stage
-    // pipeline's aggregateCheckResults gate has current data.
+    // Reviewer panel deferral (Phase 2): when this is a review run and
+    // a parallel panel session exists, only finalize once EVERY
+    // reviewer has posted its verdict. The primary captures its
+    // finalization work as a closure and hands it to the session; the
+    // last-to-finish secondary invokes it. Without this deferral,
+    // `determineNextStage` could read an incomplete log set (one
+    // role's verdict missing) and silently rework the task even when
+    // the missing reviewer was about to pass.
+    if (isReviewRun) {
+      const session = reviewerSessions.get(task.id);
+      if (session) {
+        session.primaryDone = true;
+        if (session.secondaries.size > 0) {
+          session.primaryFinalize = () => {
+            // Fire-and-forget: performFinalization is async because
+            // it waits for parallel auto-checks, but the caller is
+            // the synchronous secondary-reviewer close handler via
+            // maybeRunDeferredFinalization and does not await.
+            void performFinalization(code);
+          };
+          insertLogStmt.run(
+            task.id,
+            "system",
+            `[Reviewer Panel] primary reviewer finished (exit ${code}); awaiting ${session.secondaries.size} secondary reviewer(s) before task advance`,
+          );
+          return;
+        }
+        // Primary session exists but every secondary already finished —
+        // nothing left to wait for, fall through to finalization.
+        reviewerSessions.delete(task.id);
+      }
+    }
+
+    await performFinalization(code);
+  });
+
+  /**
+   * Perform the terminal side-effects for a completed primary run:
+   * compute the next status, persist it, run `after_run` hooks, promote
+   * review artifacts, broadcast task/agent updates, and trigger the next
+   * auto-stage. Split out so review-panel coordination can defer this
+   * work until every reviewer has finished posting verdicts.
+   *
+   * Async because Phase 1 auto-checks (tsc / lint / tests / e2e) run
+   * in parallel with the LLM reviewer panel at pr_review entry; we
+   * must wait for those checks to settle before the stage pipeline
+   * reads `resolveCheckVerdictForTask` to decide whether to advance
+   * beyond pr_review.
+   */
+  async function performFinalization(code: number | null): Promise<void> {
+    // Gate: block until any active auto-checks run for this task
+    // completes. No-op when checks are disabled or already finished.
     if (isReviewRun) {
       await waitForActiveChecks(task.id);
     }
 
+    const finishTime = Date.now();
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
     let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
@@ -956,7 +1084,7 @@ export function spawnAgent(
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
       setTimeout(() => triggerAutoPreDeploy(db, ws, freshTask, cache), 500);
     }
-  });
+  }
 
   return { pid: child.pid ?? 0 };
 }
@@ -1023,6 +1151,221 @@ export function resolveCompletionStatusAfterPromotion(
   };
 }
 
+/**
+ * Spawn a secondary (non-primary) reviewer for a parallel review panel.
+ *
+ * Secondary reviewers run the same review prompt (tailored to their role)
+ * but their process lifecycle is simpler than the primary's:
+ *  - They do NOT drive task state transitions (no status updates on close).
+ *  - Their verdicts are written to task_logs and picked up by the
+ *    stage-pipeline aggregator when the primary finalizes.
+ *  - When the secondary finishes AFTER the primary, it invokes the
+ *    primary's deferred-finalization closure so the task can advance.
+ *  - When the secondary finishes BEFORE the primary, it simply records
+ *    its verdict and exits — the primary's close handler will see the
+ *    verdict in the logs.
+ *
+ * Callers MUST have called `initReviewerSession` for `task.id` before
+ * invoking this function.
+ */
+export function spawnSecondaryReviewer(
+  db: DatabaseSync,
+  ws: WsHub,
+  agent: Agent,
+  task: Task,
+  role: ReviewerRole,
+  cache?: CacheService,
+): void {
+  const session = reviewerSessions.get(task.id);
+  if (!session) {
+    // Defensive: if no session exists, skip spawning. This should never
+    // happen because auto-reviewer.ts always calls initReviewerSession
+    // before spawnSecondaryReviewer.
+    return;
+  }
+
+  const projectPath = task.project_path ?? process.cwd();
+  const workflow = loadProjectWorkflow(projectPath);
+  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
+
+  const args = buildAgentArgs(agent.cli_provider, {
+    model: agent.cli_model ?? undefined,
+    reasoningLevel: agent.cli_reasoning_level ?? undefined,
+    allowedTools: REVIEW_ALLOWED_TOOLS,
+  });
+
+  // Extract handoff context for the review prompt
+  let handoffContext = "";
+  const handoffs = db.prepare(
+    "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[HANDOFF]%' ORDER BY created_at DESC LIMIT 3"
+  ).all(task.id) as Array<{ message: string }>;
+  if (handoffs.length > 0) {
+    handoffContext = "\n\n## Previous Phase Context\n" + handoffs.map(h => h.message.replace("[HANDOFF] ", "")).join("\n");
+  }
+
+  const prompt = buildReviewPrompt(task, { reviewerRole: role }) + handoffContext;
+
+  const logDir = join("data", "logs");
+  mkdirSync(logDir, { recursive: true });
+  const logPath = join(logDir, `${task.id}-${role}.log`);
+  const logStream = createWriteStream(logPath, { flags: "a" });
+
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.CLAUDECODE;
+  delete cleanEnv.CLAUDE_CODE;
+  cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? ""));
+  cleanEnv.NO_COLOR = "1";
+  cleanEnv.FORCE_COLOR = "0";
+  cleanEnv.CI = "1";
+  if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
+
+  const workspace = prepareTaskWorkspace(task, workflow);
+
+  const child = spawn(args[0], args.slice(1), {
+    cwd: workspace.cwd,
+    env: cleanEnv,
+    shell: process.platform === "win32",
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  // Track in the reviewer session (not in activeProcesses — the primary
+  // owns that slot for the task). killAgent will clean up via the session.
+  session.secondaries.set(agent.id, child);
+
+  // Mark agent as working
+  const now = Date.now();
+  db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
+  invalidateCaches(cache);
+  ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
+
+  const insertLogStmt = db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, ?, ?)"
+  );
+
+  insertLogStmt.run(task.id, "system", `[Runtime:${role}] ${runtimePolicy.summary}`);
+
+  // Send prompt via stdin
+  if (child.stdin) {
+    child.stdin.write(prompt);
+    child.stdin.end();
+  }
+
+  // Idle / hard timeout for the secondary
+  let idleTimer = setTimeout(() => {
+    try { child.kill("SIGTERM"); } catch { /* already dead */ }
+  }, TASK_RUN_IDLE_TIMEOUT_MS);
+  const hardTimer = setTimeout(() => {
+    try { child.kill("SIGTERM"); } catch { /* already dead */ }
+  }, TASK_RUN_HARD_TIMEOUT_MS);
+
+  // stdout handler — classify and persist to task_logs
+  child.stdout?.on("data", (data: Buffer) => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      try { child.kill("SIGTERM"); } catch { /* already dead */ }
+    }, TASK_RUN_IDLE_TIMEOUT_MS);
+
+    const text = normalizeStreamChunk(data);
+    if (!text.trim()) return;
+    logStream.write(text);
+
+    const classified: Array<{ kind: TaskLogKind; message: string }> = [];
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let obj: Record<string, unknown> | null = null;
+      try { obj = JSON.parse(trimmed); } catch { /* not JSON */ }
+      if (obj) {
+        const event = classifyEvent(agent.cli_provider, obj);
+        if (isIgnoredEvent(event)) {
+          // drop silently
+        } else if (event) {
+          classified.push({ kind: event.kind, message: event.message });
+        } else {
+          const MAX_RAW = 4000;
+          const safe = trimmed.length > MAX_RAW
+            ? `${trimmed.slice(0, MAX_RAW)}... [truncated]`
+            : trimmed;
+          classified.push({ kind: "stdout", message: safe });
+        }
+      } else {
+        classified.push({ kind: "stdout", message: trimmed });
+      }
+    }
+
+    if (classified.length > 0) {
+      db.exec("BEGIN");
+      try {
+        for (const entry of classified) {
+          insertLogStmt.run(task.id, entry.kind, entry.message);
+        }
+        db.exec("COMMIT");
+      } catch {
+        db.exec("ROLLBACK");
+      }
+      ws.broadcast(
+        "cli_output",
+        classified.map((e) => ({ task_id: task.id, ...e })),
+        { taskId: task.id },
+      );
+    }
+  });
+
+  child.stderr?.on("data", (data: Buffer) => {
+    const text = normalizeStreamChunk(data);
+    if (!text.trim()) return;
+    logStream.write(`[stderr:${role}] ${text}`);
+    insertLogStmt.run(task.id, "stderr", text);
+  });
+
+  child.on("error", () => {
+    clearTimeout(idleTimer);
+    clearTimeout(hardTimer);
+    session.secondaries.delete(agent.id);
+    logStream.end();
+
+    const finishTime = Date.now();
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(finishTime, agent.id);
+    invalidateCaches(cache);
+    ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+
+    // If primary already finished and we're the last secondary, run deferred finalization
+    maybeRunDeferredFinalization(session);
+  });
+
+  child.on("close", (code) => {
+    clearTimeout(idleTimer);
+    clearTimeout(hardTimer);
+    session.secondaries.delete(agent.id);
+    logStream.end();
+
+    const finishTime = Date.now();
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(finishTime, agent.id);
+    insertLogStmt.run(task.id, "system", `Secondary reviewer (${role}) exited with code ${code}.`);
+
+    invalidateCaches(cache);
+    ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+
+    // If primary already finished and we're the last secondary, run deferred finalization
+    maybeRunDeferredFinalization(session);
+  });
+}
+
+/**
+ * If the primary reviewer already finished (deferred its finalization) and
+ * all secondaries have exited, invoke the primary's deferred closure so the
+ * task can advance. Otherwise this is a no-op.
+ */
+function maybeRunDeferredFinalization(session: ReviewerSession): void {
+  if (session.primaryDone && session.secondaries.size === 0 && session.primaryFinalize) {
+    const fn = session.primaryFinalize;
+    session.primaryFinalize = null;
+    reviewerSessions.delete(session.taskId);
+    fn();
+  }
+}
+
 export function killAgent(taskId: string, reason?: string): boolean {
   const child = activeProcesses.get(taskId);
   if (!child) return false;
@@ -1041,6 +1384,16 @@ export function killAgent(taskId: string, reason?: string): boolean {
     // already dead
   }
   activeProcesses.delete(taskId);
+
+  // Also kill any secondary reviewers running for this task
+  const session = reviewerSessions.get(taskId);
+  if (session) {
+    for (const [, secondary] of session.secondaries) {
+      try { secondary.kill("SIGTERM"); } catch { /* already dead */ }
+    }
+    reviewerSessions.delete(taskId);
+  }
+
   return true;
 }
 

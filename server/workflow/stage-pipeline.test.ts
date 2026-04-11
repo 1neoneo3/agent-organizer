@@ -1,5 +1,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { SCHEMA_SQL } from "../db/schema.js";
 import {
   resolveActiveStages,
   nextStage,
@@ -8,6 +10,7 @@ import {
   clearFailedStage,
   validateStatusTransition,
   aggregateCheckResults,
+  aggregateReviewVerdicts,
   resolveCheckVerdictForTask,
   determineNextStage,
 } from "./stage-pipeline.js";
@@ -499,6 +502,11 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
     __clearLatestCheckResultsForTest("t-review-1");
   });
 
+  // Open block: these tests stub the DB assistant log scan so
+  // aggregateReviewVerdicts sees the review message injected via
+  // createNextStageMockDb. The auto-check verdict is seeded via
+  // __setLatestCheckResultsForTest before each `it`.
+
   it("advances to done when review PASSes and all checks PASS", () => {
     const db = createNextStageMockDb(reviewSettings, [
       { message: "Looks good. [REVIEW:PASS]" },
@@ -599,5 +607,150 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
       baseWorkflow,
     );
     assert.strictEqual(result, "in_progress");
+  });
+});
+
+// --------------- aggregateReviewVerdicts ---------------
+
+function createRealDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(SCHEMA_SQL);
+  return db;
+}
+
+function insertTaskForVerdict(db: DatabaseSync, taskId = "task-rv"): void {
+  db.prepare(
+    `INSERT INTO tasks (id, title, status, priority, task_size, review_count, review_sync_status, created_at, updated_at)
+     VALUES (?, 'test', 'pr_review', 0, 'medium', 1, 'pending', 1000, 2000)`,
+  ).run(taskId);
+}
+
+function insertLog(
+  db: DatabaseSync,
+  taskId: string,
+  kind: string,
+  message: string,
+  createdAt: number,
+): void {
+  db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
+  ).run(taskId, kind, message, createdAt);
+}
+
+describe("aggregateReviewVerdicts", () => {
+  it("detects legacy [REVIEW:PASS] as code role pass", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:PASS]", 3000);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, false);
+    assert.equal(result.allPassed, true);
+  });
+
+  it("detects legacy [REVIEW:NEEDS_CHANGES] as failure", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:NEEDS_CHANGES:bad code]", 3000);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, true);
+    assert.equal(result.allPassed, false);
+  });
+
+  it("detects role-tagged [REVIEW:code:PASS]", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "system", "[REVIEWER_PANEL:code]", 2500);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:code:PASS]", 3000);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, false);
+    assert.equal(result.allPassed, true);
+  });
+
+  it("requires all panel roles to pass (code+security)", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "system", "[REVIEWER_PANEL:code,security]", 2500);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:code:PASS]", 3000);
+    // security reviewer has not posted yet
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, false);
+    assert.equal(result.allPassed, false, "should not pass when security verdict is missing");
+  });
+
+  it("passes when both panel roles pass", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "system", "[REVIEWER_PANEL:code,security]", 2500);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:code:PASS]", 3000);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:security:PASS]", 3100);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, false);
+    assert.equal(result.allPassed, true);
+  });
+
+  it("fails when security role needs changes even if code passes", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "system", "[REVIEWER_PANEL:code,security]", 2500);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:code:PASS]", 3000);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:security:NEEDS_CHANGES:hardcoded secret]", 3100);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, true);
+    assert.equal(result.allPassed, false);
+  });
+
+  it("fails when code role needs changes even if security passes", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "system", "[REVIEWER_PANEL:code,security]", 2500);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:code:NEEDS_CHANGES:missing tests]", 3000);
+    insertLog(db, "task-rv", "assistant", "[REVIEW:security:PASS]", 3100);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, true);
+    assert.equal(result.allPassed, false);
+  });
+
+  it("ignores logs from before runStartedAt", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "system", "[REVIEWER_PANEL:code]", 2500);
+    // Old verdict from a previous run
+    insertLog(db, "task-rv", "assistant", "[REVIEW:code:NEEDS_CHANGES:old]", 1500);
+    // Current run verdict
+    insertLog(db, "task-rv", "assistant", "[REVIEW:code:PASS]", 3000);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, false);
+    assert.equal(result.allPassed, true);
+  });
+
+  it("no verdict at all → allPassed false", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "assistant", "レビューしましたが判定タグを出力し忘れました", 3000);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, false);
+    assert.equal(result.allPassed, false);
+  });
+
+  it("legacy PASS works for single-role panel (backward compat)", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "system", "[REVIEWER_PANEL:code]", 2500);
+    // Agent emits legacy format
+    insertLog(db, "task-rv", "assistant", "[REVIEW:PASS]", 3000);
+
+    const result = aggregateReviewVerdicts(db, "task-rv", 2000);
+    assert.equal(result.needsChanges, false);
+    assert.equal(result.allPassed, true, "legacy PASS should count as code role");
   });
 });
