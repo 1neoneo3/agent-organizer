@@ -92,7 +92,17 @@ export function createWsHub(): WsHub {
     const batch = batches.get(type);
     if (!batch || batch.queue.length === 0) return;
     const items = batch.queue.splice(0);
-    sendRaw(type, items.map((item) => item.payload), items[0]?.taskId);
+    // Flatten when individual payloads are already arrays. Without this,
+    // batching a stream of `[log, log]` payloads would produce the nested
+    // form `[[log, log], [log]]`, which clients handling `cli_output`
+    // treat as single entries and end up looking at a raw Array as a
+    // "log record". Flattening produces a uniform flat array for
+    // subscribers, regardless of whether the original broadcasts sent
+    // scalars or arrays.
+    const flattened = items.flatMap((item) =>
+      Array.isArray(item.payload) ? item.payload : [item.payload],
+    );
+    sendRaw(type, flattened, items[0]?.taskId);
     batches.delete(type);
   }
 
