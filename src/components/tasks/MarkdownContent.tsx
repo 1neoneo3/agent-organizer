@@ -44,6 +44,8 @@ const paragraphStyle: CSSProperties = {
   margin: "6px 0",
   lineHeight: 1.6,
   color: "var(--text-primary)",
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
 };
 
 const listStyle: CSSProperties = {
@@ -51,6 +53,8 @@ const listStyle: CSSProperties = {
   paddingLeft: "20px",
   color: "var(--text-primary)",
   lineHeight: 1.6,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
 };
 
 const blockquoteStyle: CSSProperties = {
@@ -59,6 +63,8 @@ const blockquoteStyle: CSSProperties = {
   margin: "6px 0",
   color: "var(--text-secondary)",
   fontStyle: "italic",
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
 };
 
 const tableStyle: CSSProperties = {
@@ -93,7 +99,19 @@ const hrStyle: CSSProperties = {
 
 export function MarkdownContent({ content }: MarkdownContentProps): ReactNode {
   return (
-    <div data-testid="markdown-content" style={{ fontSize: "13px", color: "var(--text-primary)" }}>
+    <div
+      data-testid="markdown-content"
+      style={{
+        fontSize: "13px",
+        color: "var(--text-primary)",
+        // Ensure long URLs and other unbreakable tokens wrap at the parent
+        // edge instead of pushing the panel wider. `minWidth: 0` prevents the
+        // default flex `min-width: auto` from expanding the content box.
+        minWidth: 0,
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+      }}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
