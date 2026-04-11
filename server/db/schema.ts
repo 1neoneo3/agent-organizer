@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   review_commit_sha TEXT,
   review_sync_status TEXT NOT NULL DEFAULT 'pending',
   review_sync_error TEXT,
+  repository_url TEXT,
   started_at INTEGER,
   completed_at INTEGER,
   last_heartbeat_at INTEGER,

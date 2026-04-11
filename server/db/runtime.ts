@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SCHEMA_SQL } from "./schema.js";
 import { DB_PATH, SETTINGS_DEFAULTS, DEFAULT_CLI_MODELS } from "../config/runtime.js";
+import { detectRepositoryUrl } from "../workflow/git-utils.js";
 
 let db: DatabaseSync | null = null;
 
@@ -30,6 +31,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddWorkflowStages(db);
   migrateAddLogStageAgent(db);
   migrateAddLastHeartbeat(db);
+  migrateAddRepositoryUrl(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -160,6 +162,33 @@ function migrateAddLastHeartbeat(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "last_heartbeat_at")) {
     db.exec("ALTER TABLE tasks ADD COLUMN last_heartbeat_at INTEGER");
+  }
+}
+
+function migrateAddRepositoryUrl(db: DatabaseSync): void {
+  // Add tasks.repository_url — a canonical HTTPS form of the project's
+  // git origin URL. The column is auto-populated at task creation time
+  // (see routes/tasks.ts) and backfilled here for any existing rows so
+  // the UI always has a clickable repository link available.
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "repository_url")) return;
+
+  db.exec("ALTER TABLE tasks ADD COLUMN repository_url TEXT");
+
+  // Backfill: walk every task with a project_path and try to detect its
+  // origin remote. A single `spawnSync` per task is cheap (no shell) and
+  // the migration only runs once per DB.
+  const rows = db.prepare(
+    "SELECT id, project_path FROM tasks WHERE project_path IS NOT NULL AND project_path <> ''",
+  ).all() as Array<{ id: string; project_path: string }>;
+  if (rows.length === 0) return;
+
+  const update = db.prepare("UPDATE tasks SET repository_url = ? WHERE id = ?");
+  for (const row of rows) {
+    const url = detectRepositoryUrl(row.project_path);
+    if (url) {
+      update.run(url, row.id);
+    }
   }
 }
 

@@ -17,6 +17,7 @@ import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/r
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
+import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -25,6 +26,7 @@ const CreateTaskSchema = z.object({
   project_path: z.string().nullish(),
   priority: z.number().int().min(0).max(10).default(0),
   task_size: z.enum(["small", "medium", "large"]).default("small"),
+  repository_url: z.string().url().nullish(),
 });
 
 const UpdateTaskSchema = z.object({
@@ -37,7 +39,28 @@ const UpdateTaskSchema = z.object({
   task_size: z.enum(["small", "medium", "large"]).optional(),
   result: z.string().nullish(),
   pr_url: z.string().url().nullish(),
+  repository_url: z.string().url().nullish(),
 });
+
+/**
+ * Resolve the repository_url for a task at write time. Precedence:
+ *   1. An explicit URL the caller sent (normalized to canonical form)
+ *   2. Auto-detected origin remote from the project_path (if it is a
+ *      git working copy)
+ *   3. null
+ */
+function resolveRepositoryUrl(
+  explicit: string | null | undefined,
+  projectPath: string | null | undefined,
+): string | null {
+  if (explicit) {
+    return normalizeGitUrl(explicit) ?? explicit;
+  }
+  if (projectPath) {
+    return detectRepositoryUrl(projectPath);
+  }
+  return null;
+}
 
 type InteractivePromptType = "exit_plan_mode" | "ask_user_question" | "text_input_request";
 
@@ -140,7 +163,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const parsed = CreateTaskSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const { title, description, assigned_agent_id, project_path, priority, task_size } = parsed.data;
+    const { title, description, assigned_agent_id, project_path, priority, task_size, repository_url } = parsed.data;
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
@@ -157,11 +180,12 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const id = randomUUID();
     const now = Date.now();
     const taskNumber = nextTaskNumber(db);
+    const resolvedRepoUrl = resolveRepositoryUrl(repository_url ?? null, project_path ?? null);
 
     db.prepare(
-      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, now, now);
+      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, repository_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, resolvedRepoUrl, now, now);
 
     let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
     ws.broadcast("task_update", task);
@@ -185,15 +209,29 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     const updates = parsed.data;
+    const existingTask = existing as unknown as Task;
 
     // Validate pipeline order for status changes
     if (updates.status) {
-      const existingTask = existing as unknown as Task;
       const workflow = loadProjectWorkflow(existingTask.project_path);
       const validationError = validateStatusTransition(db, existingTask.status, updates.status, workflow, existingTask.task_size);
       if (validationError) {
         return res.status(400).json({ error: "invalid_status_transition", message: validationError });
       }
+    }
+
+    // Repository URL resolution:
+    //   - If the caller explicitly set repository_url, normalize and honor it
+    //   - If project_path is changing and repository_url is not provided,
+    //     re-detect from the new path so the link stays accurate
+    if (updates.repository_url !== undefined && updates.repository_url !== null) {
+      updates.repository_url = normalizeGitUrl(updates.repository_url) ?? updates.repository_url;
+    } else if (
+      updates.project_path !== undefined &&
+      updates.project_path !== existingTask.project_path &&
+      updates.repository_url === undefined
+    ) {
+      updates.repository_url = updates.project_path ? detectRepositoryUrl(updates.project_path) : null;
     }
 
     const now = Date.now();

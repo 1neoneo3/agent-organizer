@@ -35,6 +35,7 @@ function insertTask(db: DatabaseSync, overrides: Partial<Task> = {}): Task {
     review_commit_sha: null,
     review_sync_status: "pending",
     review_sync_error: null,
+    repository_url: null,
     started_at: 2_000,
     completed_at: null,
     created_at: 1_000,

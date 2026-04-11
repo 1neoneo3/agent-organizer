@@ -60,6 +60,7 @@ function toReviewTask(task: ReviewTask): Task {
     directive_id: null,
     external_source: null,
     external_id: null,
+    repository_url: null,
     started_at: null,
     completed_at: null,
     created_at: 0,

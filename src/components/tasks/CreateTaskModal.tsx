@@ -10,6 +10,7 @@ interface CreateTaskModalProps {
     assigned_agent_id: string | null;
     project_path: string;
     task_size: "small" | "medium" | "large";
+    repository_url: string | null;
   }) => void;
 }
 
@@ -19,6 +20,7 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
   const [agentId, setAgentId] = useState("");
   const [projectPath, setProjectPath] = useState("/home/mk/workspace");
   const [taskSize, setTaskSize] = useState<"small" | "medium" | "large">("small");
+  const [repositoryUrl, setRepositoryUrl] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +31,7 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
       assigned_agent_id: agentId || null,
       project_path: projectPath.trim(),
       task_size: taskSize,
+      repository_url: repositoryUrl.trim() || null,
     });
   };
 
@@ -137,7 +140,7 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
           </label>
         </div>
 
-        <label style={{ display: "block", marginBottom: "20px" }}>
+        <label style={{ display: "block", marginBottom: "16px" }}>
           <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Project Path</span>
           <input
             style={{
@@ -153,6 +156,27 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
             }}
             value={projectPath}
             onChange={(e) => setProjectPath(e.target.value)}
+          />
+        </label>
+
+        <label style={{ display: "block", marginBottom: "20px" }}>
+          <span style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", marginBottom: "4px" }}>Repository URL <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}>(auto-detected from project path if blank)</span></span>
+          <input
+            type="url"
+            style={{
+              width: "100%",
+              background: "var(--bg-tertiary)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "13px",
+              color: "var(--text-primary)",
+              fontFamily: "var(--font-mono)",
+              outline: "none",
+            }}
+            value={repositoryUrl}
+            onChange={(e) => setRepositoryUrl(e.target.value)}
+            placeholder="https://github.com/user/repo"
           />
         </label>
 
