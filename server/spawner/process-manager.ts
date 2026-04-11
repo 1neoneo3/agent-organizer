@@ -141,6 +141,103 @@ function extractExecutedCommands(
   return Array.from(commands);
 }
 
+/**
+ * Scan task_logs for GitHub URLs the agent produced during its run.
+ *
+ * Two sources the task might have touched are considered:
+ *   - A GitHub pull-request URL: `https://github.com/<owner>/<repo>/pull/<n>`
+ *   - A GitHub repository URL:  `https://github.com/<owner>/<repo>`
+ *
+ * Both patterns are scanned across every task_log row (not just stdout):
+ * we've observed agents emitting the URL in assistant text, inside
+ * tool_result JSON bodies, and as raw stdout from `gh repo view --json`
+ * calls. The goal is simply "find any canonical GitHub URL the agent
+ * produced" — whichever of those surfaces it uses is fine.
+ *
+ * Both return values default to null. When a PR url IS found, the repo
+ * URL is derived from its `<owner>/<repo>` segment so both fields stay
+ * consistent (the PR implies the repo it lives in).
+ *
+ * This is used as a fallback when `promoteTaskReviewArtifact` cannot
+ * run (e.g. the project is `workspaceMode: shared`, or the agent
+ * created a brand-new nested repository inside project_path). Those
+ * code paths never populate `pr_url` / `repository_url`, so the UI
+ * showed neither even when the agent had already pushed a public PR.
+ */
+export function extractGithubArtifactsFromLogs(
+  db: DatabaseSync,
+  taskId: string,
+): { prUrl: string | null; repositoryUrl: string | null } {
+  const rows = db
+    .prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? ORDER BY id ASC",
+    )
+    .all(taskId) as Array<{ message: string }>;
+
+  // Track counts so the "most frequently mentioned" PR wins over a
+  // stale mention. Agents sometimes reference a past PR in their
+  // reasoning before creating a new one; we want the most-referenced
+  // URL, not the first.
+  const prCounts = new Map<string, number>();
+  const repoCounts = new Map<string, number>();
+
+  const prPattern = /https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*)\/pull\/(\d+)/g;
+  const repoPattern = /https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*)(?=[^A-Za-z0-9._/-]|$)/g;
+
+  for (const row of rows) {
+    const msg = row.message;
+
+    // 1. Collect PR URLs first. These subsume the repo segment, so when
+    // we later scan for repo URLs we'll still see the /pull/ version —
+    // but the repoPattern (below) deliberately stops at `<owner>/<repo>`
+    // without consuming the `/pull/N` tail, so both patterns coexist.
+    for (const match of msg.matchAll(prPattern)) {
+      const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`;
+      prCounts.set(canonical, (prCounts.get(canonical) ?? 0) + 1);
+    }
+
+    // 2. Collect repo URLs. Filter out well-known non-repo paths that
+    // match the same shape (e.g. `github.com/notifications`, or URLs
+    // into `/orgs/<name>/...` style paths). The set below is small by
+    // design — we only exclude obvious false positives.
+    for (const match of msg.matchAll(repoPattern)) {
+      const owner = match[1];
+      const repo = match[2].replace(/\.git$/, "");
+      if (owner === "orgs" || owner === "search" || owner === "notifications") continue;
+      const canonical = `https://github.com/${owner}/${repo}`;
+      repoCounts.set(canonical, (repoCounts.get(canonical) ?? 0) + 1);
+    }
+  }
+
+  function pickMostFrequent(counts: Map<string, number>): string | null {
+    let best: string | null = null;
+    let bestCount = 0;
+    for (const [url, count] of counts) {
+      if (count > bestCount) {
+        best = url;
+        bestCount = count;
+      }
+    }
+    return best;
+  }
+
+  const prUrl = pickMostFrequent(prCounts);
+
+  // Prefer a repo URL that matches the winning PR's owner/repo so the
+  // two fields stay consistent. Falling back to the most-frequent repo
+  // mention otherwise.
+  let repositoryUrl: string | null = null;
+  if (prUrl) {
+    const match = prUrl.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+)/);
+    repositoryUrl = match?.[1] ?? null;
+  }
+  if (!repositoryUrl) {
+    repositoryUrl = pickMostFrequent(repoCounts);
+  }
+
+  return { prUrl, repositoryUrl };
+}
+
 export function isReviewRunTask(
   task: Pick<Task, "status">,
   previousStatus?: Task["status"] | string,
@@ -757,9 +854,23 @@ export function spawnAgent(
       // Extract executed commands from task logs for PR verification section
       const executedCommands = extractExecutedCommands(db, task.id, task.started_at ?? 0);
       const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, { executedCommands });
+
+      // Fallback: when promoteTaskReviewArtifact can't run (workspaceMode
+      // !== "git-worktree", or the agent created a nested repository
+      // inside project_path), it returns null pr_url / leaves repository
+      // detection to the caller. Scan the task's logs for any github.com
+      // URLs the agent produced and use them as a best-effort fill-in.
+      // This is also how newly-created repositories end up in the
+      // `repository_url` column, since the at-creation-time detection
+      // cannot know a path that does not yet exist.
+      const logScan = extractGithubArtifactsFromLogs(db, task.id);
+      const fallbackPrUrl = promotion.prUrl ?? logScan.prUrl;
+      const fallbackRepoUrl = logScan.repositoryUrl;
+
       db.prepare(
         `UPDATE tasks
          SET pr_url = COALESCE(?, pr_url),
+             repository_url = COALESCE(?, repository_url),
              review_branch = ?,
              review_commit_sha = ?,
              review_sync_status = ?,
@@ -767,7 +878,8 @@ export function spawnAgent(
              updated_at = ?
          WHERE id = ?`
       ).run(
-        promotion.prUrl,
+        fallbackPrUrl,
+        fallbackRepoUrl,
         promotion.branchName,
         promotion.commitSha,
         promotion.syncStatus,

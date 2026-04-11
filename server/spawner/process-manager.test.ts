@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
-import { determineCompletionStatus, isReviewRunTask, resolveCompletionStatusAfterPromotion } from "./process-manager.js";
+import {
+  determineCompletionStatus,
+  extractGithubArtifactsFromLogs,
+  isReviewRunTask,
+  resolveCompletionStatusAfterPromotion,
+} from "./process-manager.js";
 import type { Task } from "../types/runtime.js";
 
 function createDb(): DatabaseSync {
@@ -90,6 +95,127 @@ function insertAssistantLog(db: DatabaseSync, taskId: string, message: string, c
   db.prepare("INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, 'assistant', ?, ?)")
     .run(taskId, message, createdAt);
 }
+
+function insertLog(
+  db: DatabaseSync,
+  taskId: string,
+  kind: "stdout" | "assistant" | "tool_result" | "system",
+  message: string,
+  createdAt: number,
+): void {
+  db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
+  ).run(taskId, kind, message, createdAt);
+}
+
+describe("extractGithubArtifactsFromLogs", () => {
+  it("returns nulls when no GitHub URL appears in any log", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t1" });
+    insertLog(db, task.id, "stdout", "ls /tmp", 10);
+    insertLog(db, task.id, "assistant", "Running tests locally.", 20);
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, null);
+    assert.equal(result.repositoryUrl, null);
+  });
+
+  it("extracts a PR URL and derives the repository URL from it", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t2" });
+    insertLog(
+      db,
+      task.id,
+      "stdout",
+      "Created pull request: https://github.com/acme/widget/pull/42",
+      100,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, "https://github.com/acme/widget/pull/42");
+    assert.equal(result.repositoryUrl, "https://github.com/acme/widget");
+  });
+
+  it("picks the most frequently referenced PR URL", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t3" });
+    // Stale mention from earlier reasoning
+    insertLog(
+      db,
+      task.id,
+      "assistant",
+      "Earlier I worked on https://github.com/acme/widget/pull/10",
+      10,
+    );
+    // New PR created three times across different log kinds
+    insertLog(
+      db,
+      task.id,
+      "stdout",
+      "https://github.com/acme/widget/pull/42 is ready for review",
+      20,
+    );
+    insertLog(
+      db,
+      task.id,
+      "assistant",
+      "PR URL: https://github.com/acme/widget/pull/42",
+      30,
+    );
+    insertLog(
+      db,
+      task.id,
+      "tool_result",
+      "{\"url\":\"https://github.com/acme/widget/pull/42\"}",
+      40,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, "https://github.com/acme/widget/pull/42");
+    assert.equal(result.repositoryUrl, "https://github.com/acme/widget");
+  });
+
+  it("falls back to a repository URL when no PR was mentioned", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t4" });
+    insertLog(
+      db,
+      task.id,
+      "stdout",
+      "origin\thttps://github.com/acme/widget.git (fetch)",
+      10,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, null);
+    assert.equal(result.repositoryUrl, "https://github.com/acme/widget");
+  });
+
+  it("ignores non-repo GitHub URLs like /orgs/, /search/, /notifications", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t5" });
+    insertLog(
+      db,
+      task.id,
+      "assistant",
+      "Checking https://github.com/notifications and https://github.com/search?q=test",
+      10,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, null);
+    assert.equal(result.repositoryUrl, null);
+  });
+
+  it("strips a trailing .git suffix from repository URLs", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t6" });
+    insertLog(
+      db,
+      task.id,
+      "stdout",
+      "git clone https://github.com/acme/widget.git",
+      10,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.repositoryUrl, "https://github.com/acme/widget");
+  });
+});
 
 describe("isReviewRunTask", () => {
   it("treats pr_review tasks as review runs", () => {
