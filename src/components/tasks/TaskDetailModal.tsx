@@ -293,6 +293,7 @@ export function TaskDetailModal({
                 agents={agents}
                 currentStage={task.status}
                 currentAgentId={task.assigned_agent_id}
+                fullHeight
               />
             </div>
           ) : (

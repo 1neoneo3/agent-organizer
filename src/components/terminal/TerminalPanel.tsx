@@ -55,6 +55,13 @@ interface TerminalPanelProps {
   // filled by the AFTER INSERT DB trigger.
   currentStage?: string | null;
   currentAgentId?: string | null;
+  /**
+   * When true, the panel fills its parent vertically (flex: 1) instead of
+   * using the fixed 384px default. Use this for embedded views like the
+   * tabbed task detail Activity pane, where the surrounding flex column
+   * already bounds the height.
+   */
+  fullHeight?: boolean;
 }
 
 function classifyLog(_kind: TaskLog["kind"]): TabKey {
@@ -524,6 +531,7 @@ export function TerminalPanel({
   agents = [],
   currentStage = null,
   currentAgentId = null,
+  fullHeight = false,
 }: TerminalPanelProps) {
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("terminal");
@@ -626,7 +634,10 @@ export function TerminalPanel({
       overflow: "hidden",
       display: "flex",
       flexDirection: "column",
-      height: "384px",
+      // When embedded in a flex column (e.g. the Activity tab) we fill the
+      // parent; otherwise fall back to the legacy fixed height used by the
+      // standalone log modal.
+      ...(fullHeight ? { flex: 1, minHeight: 0, width: "100%" } : { height: "384px" }),
       position: "relative",
     }}>
       {/* Header */}
