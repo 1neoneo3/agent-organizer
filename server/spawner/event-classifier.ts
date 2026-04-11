@@ -122,6 +122,12 @@ function looksLikeCompletionSummary(text: string): boolean {
  * bullet) AND a final "what next?" decision prompt in the same
  * message — the summary guard would otherwise swallow the prompt.
  *
+ * Regression source: task #349 (Phase 2 implementation) ended with
+ * `[REVIEW:PASS]` inside its report AND a trailing
+ * `次のアクションをどうしますか？\n1. ... 2. ... 3. ...` decision
+ * prompt; looksLikeCompletionSummary short-circuited and the task
+ * stalled in human_review.
+ *
  * Match shape:
  *   "...どうしますか？\n\n1. ...\n2. ..."
  *   "...What next?\n1) ...\n2) ..."
