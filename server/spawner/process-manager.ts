@@ -363,6 +363,24 @@ export function spawnAgent(
     }, TASK_RUN_IDLE_TIMEOUT_MS);
   }
 
+  // Heartbeat: update tasks.last_heartbeat_at every 30s while this process is
+  // alive. Orphan recovery uses this column (instead of updated_at) to decide
+  // whether a task is genuinely stuck vs. still being processed. An initial
+  // stamp is written immediately so a task that is about to transition into
+  // pr_review / qa_testing / etc. does not look stuck during the short gap
+  // between spawn and the first heartbeat tick.
+  const HEARTBEAT_INTERVAL_MS = 30_000;
+  const heartbeatStmt = db.prepare("UPDATE tasks SET last_heartbeat_at = ? WHERE id = ?");
+  const writeHeartbeat = (): void => {
+    try {
+      heartbeatStmt.run(Date.now(), task.id);
+    } catch {
+      // Ignore — DB may be shutting down
+    }
+  };
+  writeHeartbeat();
+  const heartbeatTimer = setInterval(writeHeartbeat, HEARTBEAT_INTERVAL_MS);
+
   // stdout handler
   child.stdout?.on("data", (data: Buffer) => {
     // Skip processing if we already killed the process for an interactive prompt
@@ -523,6 +541,7 @@ export function spawnAgent(
 
     clearTimeout(idleTimer);
     clearTimeout(hardTimer);
+    clearInterval(heartbeatTimer);
     activeProcesses.delete(task.id);
 
     const finishTime = Date.now();
@@ -559,6 +578,7 @@ export function spawnAgent(
 
     clearTimeout(idleTimer);
     clearTimeout(hardTimer);
+    clearInterval(heartbeatTimer);
     activeProcesses.delete(task.id);
     logStream.end();
 

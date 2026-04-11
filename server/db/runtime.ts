@@ -29,6 +29,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddQaTestingStatus(db);
   migrateAddWorkflowStages(db);
   migrateAddLogStageAgent(db);
+  migrateAddLastHeartbeat(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -147,6 +148,18 @@ function migrateAddWorkflowStages(db: DatabaseSync): void {
   } catch (e) {
     db.exec("ROLLBACK");
     throw e;
+  }
+}
+
+function migrateAddLastHeartbeat(db: DatabaseSync): void {
+  // Add tasks.last_heartbeat_at — a liveness signal that is updated on a
+  // fixed interval while a process is actively running against a task.
+  // Orphan recovery treats a task as stuck when its heartbeat is stale,
+  // which is more reliable than relying on updated_at (which does not
+  // advance for tasks that only produce log output).
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "last_heartbeat_at")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN last_heartbeat_at INTEGER");
   }
 }
 

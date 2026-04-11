@@ -52,6 +52,15 @@ describe("initializeDb", () => {
     assert.ok(columns.find((c) => c.name === "agent_id"), "task_logs.agent_id should exist");
   });
 
+  it("adds last_heartbeat_at column to tasks", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    const heartbeat = columns.find((c) => c.name === "last_heartbeat_at");
+    assert.ok(heartbeat, "tasks.last_heartbeat_at should exist");
+  });
+
   it("auto-populates stage and agent_id on log insert via trigger", async () => {
     const { initializeDb } = await import("./runtime.js");
     const db = initializeDb();
