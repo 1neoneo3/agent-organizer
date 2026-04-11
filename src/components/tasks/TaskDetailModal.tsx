@@ -50,6 +50,35 @@ function formatTimestamp(ts: number | null): string {
   });
 }
 
+/**
+ * Format a duration (milliseconds) into a human-friendly string.
+ *
+ *   < 1 min  → "12s"
+ *   < 1 hr   → "5m 32s"
+ *   < 1 day  → "1h 23m"
+ *   >= 1 day → "2d 4h"
+ *
+ * Negative / NaN inputs return "—" so the caller doesn't have to guard.
+ */
+function formatDuration(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return "\u2014";
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    const remSec = totalSeconds % 60;
+    return remSec === 0 ? `${totalMinutes}m` : `${totalMinutes}m ${remSec}s`;
+  }
+  const totalHours = Math.floor(totalMinutes / 60);
+  if (totalHours < 24) {
+    const remMin = totalMinutes % 60;
+    return remMin === 0 ? `${totalHours}h` : `${totalHours}h ${remMin}m`;
+  }
+  const totalDays = Math.floor(totalHours / 24);
+  const remHour = totalHours % 24;
+  return remHour === 0 ? `${totalDays}d` : `${totalDays}d ${remHour}h`;
+}
+
 interface TaskDetailModalProps {
   task: Task;
   agents: Agent[];
@@ -379,16 +408,31 @@ export function TaskDetailModal({
               <span style={{ color: "var(--text-tertiary)" }}>Created</span>
               <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{formatTimestamp(task.created_at)}</span>
             </div>
-            <div>
-              <span style={{ color: "var(--text-tertiary)" }}>Started</span>
-              <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{formatTimestamp(task.started_at)}</span>
-            </div>
             {task.completed_at && (
               <div>
                 <span style={{ color: "var(--text-tertiary)" }}>Completed</span>
                 <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>{formatTimestamp(task.completed_at)}</span>
               </div>
             )}
+            {/*
+              Duration is measured from task creation (when the user
+              submitted it to the inbox) to completion, per request.
+              While still running we show a live "in-progress" ticker so
+              users can tell at a glance how long a task has been
+              working without doing mental math. `started_at` is NOT
+              used here because the spawner overwrites it on every
+              re-run of the review loop, which made the previous
+              "Started" row show the latest spawn instead of the task's
+              actual entry point.
+            */}
+            <div>
+              <span style={{ color: "var(--text-tertiary)" }}>Duration</span>
+              <span style={{ marginLeft: "8px", color: "var(--text-primary)" }}>
+                {task.completed_at
+                  ? formatDuration(task.completed_at - task.created_at)
+                  : `${formatDuration(Date.now() - task.created_at)} (running)`}
+              </span>
+            </div>
           </div>
 
           {/* PR Link */}
