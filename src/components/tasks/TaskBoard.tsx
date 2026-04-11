@@ -199,21 +199,6 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
 
   const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
   const columnsRef = useRef<TaskColumns>(createEmptyTaskColumns());
-  const kanbanScrollRef = useRef<HTMLDivElement | null>(null);
-
-  // Convert vertical wheel input to horizontal scroll on the kanban board so
-  // users with a standard mouse can scroll between columns without a visible
-  // scrollbar. Trackpads / horizontal wheels still work via the default path.
-  const handleKanbanWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    const container = kanbanScrollRef.current;
-    if (!container) return;
-    // Only convert when the user is scrolling vertically (no native horizontal delta).
-    if (event.deltaY === 0 || event.deltaX !== 0) return;
-    // Skip if the container cannot actually scroll horizontally.
-    if (container.scrollWidth <= container.clientWidth) return;
-    container.scrollLeft += event.deltaY;
-    event.preventDefault();
-  }, []);
   const tasksByStatus = useMemo(() => {
     const grouped = groupTasksByStatusStable(tasks, columnsRef.current);
     columnsRef.current = grouped;
@@ -270,12 +255,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
 
       {/* Kanban columns */}
       <Profiler id="TaskBoardColumns" onRender={handleBoardRender}>
-      <div
-        ref={kanbanScrollRef}
-        className="kanban-scroll"
-        style={{ display: "flex", gap: "12px", overflowX: "auto" }}
-        onWheel={handleKanbanWheel}
-      >
+      <div className="kanban-scroll" style={{ display: "flex", gap: "12px", overflowX: "auto" }}>
         {TASK_BOARD_COLUMNS.map((col) => {
           const colTasks = tasksByStatus[col.key];
           return (
