@@ -1,3 +1,7 @@
+import { TASK_STATUSES, buildSqlCheckIn } from "../domain/task-status.js";
+
+const TASK_STATUS_CHECK = buildSqlCheckIn("status", TASK_STATUSES);
+
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
@@ -31,7 +35,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   description TEXT,
   assigned_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
   project_path TEXT,
-  status TEXT NOT NULL DEFAULT 'inbox' CHECK(status IN ('inbox','in_progress','self_review','test_generation','qa_testing','pr_review','human_review','pre_deploy','done','cancelled')),
+  status TEXT NOT NULL DEFAULT 'inbox' ${TASK_STATUS_CHECK},
   priority INTEGER NOT NULL DEFAULT 0,
   task_size TEXT NOT NULL DEFAULT 'small' CHECK(task_size IN ('small','medium','large')),
   task_number TEXT,

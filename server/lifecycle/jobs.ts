@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 
@@ -15,12 +16,9 @@ const AUTO_STAGE_STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 // process-manager time to repopulate its active-process map.
 const STARTUP_GRACE_MS = 2 * 60 * 1000; // 2 minutes
 
-// Statuses where an automated agent process should normally be running.
-// When a task sits in one of these with a stale heartbeat, we promote it to
+// The canonical list of auto-stages lives in `domain/task-status.ts`. When a
+// task sits in one of these with a stale heartbeat, we promote it to
 // human_review so it does not stagnate forever.
-const AUTO_STAGES = ["pr_review", "qa_testing", "test_generation", "pre_deploy"] as const;
-
-type AutoStage = (typeof AUTO_STAGES)[number];
 
 interface AutoStageRow {
   id: string;

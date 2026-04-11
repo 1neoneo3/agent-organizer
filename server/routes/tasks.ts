@@ -15,6 +15,8 @@ import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/runtime.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
+import { TASK_STATUSES } from "../domain/task-status.js";
+import { shouldStampCompletedAt } from "../domain/task-rules.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -30,7 +32,7 @@ const UpdateTaskSchema = z.object({
   description: z.string().nullish(),
   assigned_agent_id: z.string().nullish(),
   project_path: z.string().nullish(),
-  status: z.enum(["inbox", "in_progress", "self_review", "test_generation", "qa_testing", "pr_review", "human_review", "pre_deploy", "done", "cancelled"]).optional(),
+  status: z.enum(TASK_STATUSES).optional(),
   priority: z.number().int().min(0).max(10).optional(),
   task_size: z.enum(["small", "medium", "large"]).optional(),
   result: z.string().nullish(),
@@ -205,7 +207,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       }
     }
 
-    if (updates.status === "done" || updates.status === "cancelled") {
+    if (updates.status && shouldStampCompletedAt(updates.status)) {
       fields.push("completed_at = ?");
       values.push(now);
     }

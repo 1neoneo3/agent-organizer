@@ -3,6 +3,7 @@ import { spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import type { CacheService } from "../cache/cache-service.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
+import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
 
 interface AutoDispatchOptions {
   autoAssign: boolean;
@@ -34,10 +35,7 @@ export function autoDispatchTask(
   // Without this guard, periodic dispatch re-picks them and creates an infinite
   // pr_review → inbox → dispatch → pr_review loop with repeated Telegram notifications.
   if (task.status === "inbox" && task.review_count > 0) {
-    const maxReviewCount = Number(
-      (db.prepare("SELECT value FROM settings WHERE key = 'review_count'").get() as { value: string } | undefined)?.value ?? "3",
-    );
-    if (task.review_count >= maxReviewCount) {
+    if (hasExhaustedReviewBudget(task, getMaxReviewCount(db))) {
       return task;
     }
   }

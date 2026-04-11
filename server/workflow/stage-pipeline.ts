@@ -1,22 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Task } from "../types/runtime.js";
 import type { ProjectWorkflow } from "./loader.js";
+import { WORKFLOW_STAGES, type WorkflowStage } from "../domain/task-status.js";
 
-/**
- * Ordered workflow stages from start to completion.
- * Each stage must be completed before moving to the next.
- */
-const WORKFLOW_STAGES = [
-  "in_progress",
-  "test_generation",
-  "qa_testing",
-  "pr_review",
-  "human_review",
-  "pre_deploy",
-  "done",
-] as const;
-
-export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
+export { WORKFLOW_STAGES };
+export type { WorkflowStage };
 
 /**
  * Validate whether a manual status transition is allowed.

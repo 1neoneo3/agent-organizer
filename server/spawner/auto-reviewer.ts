@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
 
 /**
  * Trigger automatic code review when a task transitions to "pr_review".
@@ -39,8 +40,8 @@ export async function triggerAutoReview(
   // Matches the pattern in auto-qa.ts: exhausted automatic attempts hand off
   // to a human via the human_review status, which is a terminal state waiting
   // for manual action.
-  const maxReviewCount = Number(getSetting(db, "review_count") ?? "3");
-  if (currentTask.review_count >= maxReviewCount) {
+  const maxReviewCount = getMaxReviewCount(db);
+  if (hasExhaustedReviewBudget(currentTask, maxReviewCount)) {
     const now = Date.now();
     db.prepare("UPDATE tasks SET status = 'human_review', updated_at = ? WHERE id = ?").run(now, currentTask.id);
     logSystem(
