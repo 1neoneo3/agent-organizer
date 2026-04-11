@@ -741,3 +741,12 @@ html, body, #root {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary);
 }
+
+/* Kanban board horizontal scroll: hide scrollbar, keep scroll behavior */
+.kanban-scroll {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.kanban-scroll::-webkit-scrollbar {
+  display: none;
+}

@@ -19,7 +19,7 @@ import { buildAgentViewState } from "./agent-view.js";
 export type TaskDetailLayoutMode = "modal" | "pinned-left" | "pinned-right";
 
 /** Width of the docked side panel (when pinned). */
-export const PINNED_PANEL_WIDTH_PX = 640;
+export const PINNED_PANEL_WIDTH_PX = 820;
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   inbox: { label: "Inbox", color: "var(--status-inbox)" },
