@@ -243,143 +243,166 @@ export function buildTaskPrompt(
     runtimePolicy?: AgentRuntimePolicy | null;
   },
 ): string {
-  const parts: string[] = [];
+  // Prompt is built in two halves and joined at the end:
+  //   1. `staticParts` — everything that is the same across every task
+  //      run for a given project: language, CLAUDE.md + rules, contract
+  //      instructions, checklists, git workflow, skills, etc.
+  //   2. `dynamicParts` — everything that differs per task: title,
+  //      description, project path, auto-extracted context, CEO feedback.
+  //
+  // Anthropic's prompt cache matches a prefix, so arranging the static
+  // content FIRST maximizes cache-reuse across consecutive tasks inside
+  // the 5-minute cache window. Previously the task block was interleaved
+  // near the top of the prompt, which broke the cachable prefix on every
+  // run. This split keeps the semantics identical while shifting the
+  // dynamic portion to the tail.
+  const staticParts: string[] = [];
+  const dynamicParts: string[] = [];
 
-  parts.push("## Language");
-  parts.push(
+  staticParts.push("## Language");
+  staticParts.push(
     "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
   );
-  parts.push("");
+  staticParts.push("");
 
-  // Inject CLAUDE.md + rules
-  appendSharedContext(parts, task.project_path);
+  // Inject CLAUDE.md + rules (static per project).
+  appendSharedContext(staticParts, task.project_path);
 
-  // Inject auto-detected context (file paths, recent PRs)
-  const autoContext = extractContextFromTask(task);
-  if (autoContext) {
-    parts.push(autoContext);
-    parts.push("");
-  }
-
-  parts.push(`# Task: ${task.title}`);
-  parts.push("");
-  if (task.description) {
-    parts.push(task.description);
-    parts.push("");
-  }
-  if (task.project_path) {
-    parts.push(`Project path: ${task.project_path}`);
-    parts.push("");
-  }
-
-  parts.push("## スプリント契約（実装前に必須）");
-  parts.push("");
-  parts.push("コードを書く前に、以下の形式でスプリント契約を出力してください:");
-  parts.push("");
-  parts.push("---SPRINT CONTRACT---");
-  parts.push("**成果物:**");
-  parts.push("1. [具体的なファイル/機能]");
-  parts.push("2. [具体的なファイル/機能]");
-  parts.push("");
-  parts.push("**受け入れ基準:**");
-  parts.push("- [ ] [テスト可能な基準1]");
-  parts.push("- [ ] [テスト可能な基準2]");
-  parts.push("- [ ] [テスト可能な基準3]");
-  parts.push("");
-  parts.push("**スコープ外:**");
-  parts.push("- [やらないこと]");
-  parts.push("---END CONTRACT---");
-  parts.push("");
-  parts.push("この契約はQAエージェントが作業を検証する際に使用されます。");
-  parts.push("契約を出力した後、実装に進んでください。");
-  parts.push("");
-  // Inject format command if configured in WORKFLOW.md
+  staticParts.push("## スプリント契約（実装前に必須）");
+  staticParts.push("");
+  staticParts.push("コードを書く前に、以下の形式でスプリント契約を出力してください:");
+  staticParts.push("");
+  staticParts.push("---SPRINT CONTRACT---");
+  staticParts.push("**成果物:**");
+  staticParts.push("1. [具体的なファイル/機能]");
+  staticParts.push("2. [具体的なファイル/機能]");
+  staticParts.push("");
+  staticParts.push("**受け入れ基準:**");
+  staticParts.push("- [ ] [テスト可能な基準1]");
+  staticParts.push("- [ ] [テスト可能な基準2]");
+  staticParts.push("- [ ] [テスト可能な基準3]");
+  staticParts.push("");
+  staticParts.push("**スコープ外:**");
+  staticParts.push("- [やらないこと]");
+  staticParts.push("---END CONTRACT---");
+  staticParts.push("");
+  staticParts.push("この契約はQAエージェントが作業を検証する際に使用されます。");
+  staticParts.push("契約を出力した後、実装に進んでください。");
+  staticParts.push("");
+  // Inject format command if configured in WORKFLOW.md. This is
+  // per-project-workflow static content, so it still belongs in the
+  // cachable prefix as long as the same workflow is reused.
   if (opts?.workflow?.formatCommand) {
-    parts.push("## Auto-Format (MUST run after every file change)");
-    parts.push("");
-    parts.push(`After editing any file, run: \`${opts.workflow.formatCommand}\``);
+    staticParts.push("## Auto-Format (MUST run after every file change)");
+    staticParts.push("");
+    staticParts.push(`After editing any file, run: \`${opts.workflow.formatCommand}\``);
 
-    parts.push("This ensures consistent formatting without manual effort.");
-    parts.push("");
+    staticParts.push("This ensures consistent formatting without manual effort.");
+    staticParts.push("");
   }
 
-  parts.push("## 完了前チェックリスト（必須）");
-  parts.push("");
-  parts.push("作業完了を宣言する前に、以下を全て実行し、問題があれば修正してください:");
-  parts.push("");
-  parts.push("1. **Lint**: `npm run lint`（またはプロジェクトのlintコマンド）を実行。エラー・警告ゼロにすること。");
-  parts.push("2. **ビルド**: `npm run build`（またはプロジェクトのビルドコマンド）を実行。エラーゼロで成功すること。");
-  parts.push("3. **型チェック**: TypeScriptの場合 `npx tsc --noEmit` を実行。型エラーを全て修正。");
-  parts.push("4. **動作確認**: 実際にコード/アプリを実行し、動作を確認すること。推測ではなく検証する。");
-  parts.push("5. **コンソールエラー**: Webアプリの場合、ブラウザコンソールのエラー（hydration、ランタイム等）を確認。");
-  parts.push("6. **フレームワーク互換性**: 実際にインストールされているバージョン（package.json参照）との互換性を確認。非推奨APIを使わない。");
-  parts.push("");
-  parts.push("いずれかのチェックが失敗した場合、完了前に修正すること。既知の問題を残さない。");
-  parts.push("lintエラー、ビルド失敗、ランタイムエラーを含むタスクは完了ではなく壊れている。");
-  parts.push("");
-  parts.push("## 禁止事項");
-  parts.push("- Agent Organizerに新しいタスクを作成しない（ao-cli.sh、POST /api/tasks 禁止）");
-  parts.push("- AO APIエンドポイントを呼び出さない — あなたの仕事は現在のタスクの実装のみ");
-  parts.push("");
+  staticParts.push("## 完了前チェックリスト（必須）");
+  staticParts.push("");
+  staticParts.push("作業完了を宣言する前に、以下を全て実行し、問題があれば修正してください:");
+  staticParts.push("");
+  staticParts.push("1. **Lint**: `npm run lint`（またはプロジェクトのlintコマンド）を実行。エラー・警告ゼロにすること。");
+  staticParts.push("2. **ビルド**: `npm run build`（またはプロジェクトのビルドコマンド）を実行。エラーゼロで成功すること。");
+  staticParts.push("3. **型チェック**: TypeScriptの場合 `npx tsc --noEmit` を実行。型エラーを全て修正。");
+  staticParts.push("4. **動作確認**: 実際にコード/アプリを実行し、動作を確認すること。推測ではなく検証する。");
+  staticParts.push("5. **コンソールエラー**: Webアプリの場合、ブラウザコンソールのエラー（hydration、ランタイム等）を確認。");
+  staticParts.push("6. **フレームワーク互換性**: 実際にインストールされているバージョン（package.json参照）との互換性を確認。非推奨APIを使わない。");
+  staticParts.push("");
+  staticParts.push("いずれかのチェックが失敗した場合、完了前に修正すること。既知の問題を残さない。");
+  staticParts.push("lintエラー、ビルド失敗、ランタイムエラーを含むタスクは完了ではなく壊れている。");
+  staticParts.push("");
+  staticParts.push("## 禁止事項");
+  staticParts.push("- Agent Organizerに新しいタスクを作成しない（ao-cli.sh、POST /api/tasks 禁止）");
+  staticParts.push("- AO APIエンドポイントを呼び出さない — あなたの仕事は現在のタスクの実装のみ");
+  staticParts.push("");
 
-  appendWorkflowContext(parts, opts?.workflow, opts?.runtimePolicy);
+  // Per-workflow static context (sandbox mode, localhost allowance, e2e
+  // policy). Stable across tasks that share a workflow.
+  appendWorkflowContext(staticParts, opts?.workflow, opts?.runtimePolicy);
 
-  // Self-review instruction
+  // Self-review instruction (conditional — shape depends on opts.selfReview).
   if (opts?.selfReview) {
-    parts.push("## Review Instructions");
-    parts.push(
+    staticParts.push("## Review Instructions");
+    staticParts.push(
       "After completing the task, perform a self-review of your changes:",
     );
-    parts.push("1. Verify the implementation meets the task requirements");
-    parts.push("2. Check for obvious bugs, security issues, or regressions");
-    parts.push("3. Confirm tests pass (if applicable)");
-    parts.push(
+    staticParts.push("1. Verify the implementation meets the task requirements");
+    staticParts.push("2. Check for obvious bugs, security issues, or regressions");
+    staticParts.push("3. Confirm tests pass (if applicable)");
+    staticParts.push(
       '4. Output a final line: `[SELF_REVIEW:PASS]` or `[SELF_REVIEW:FAIL:<reason>]`',
     );
-    parts.push("");
+    staticParts.push("");
   }
 
-  // PR creation workflow (default for tasks that produce file changes)
-  parts.push("## Gitワークフロー");
-  parts.push("");
-  parts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
-  parts.push("1. mainからブランチを作成: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
-  parts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
-  parts.push("2. 変更をコミット（conventional commits形式）");
-  parts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
-  parts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
-  parts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
-  parts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
-  parts.push("5. **mainに直接コミットしない**");
-  parts.push("");
+  // PR creation workflow (default for tasks that produce file changes).
+  staticParts.push("## Gitワークフロー");
+  staticParts.push("");
+  staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
+  staticParts.push("1. mainからブランチを作成: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
+  staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
+  staticParts.push("2. 変更をコミット（conventional commits形式）");
+  staticParts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
+  staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
+  staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
+  staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
+  staticParts.push("5. **mainに直接コミットしない**");
+  staticParts.push("");
 
-  // Inject relevant skills
+  // Inject relevant skills (static across tasks in a given environment).
   const skills = loadSkillSnippets();
   if (skills.length > 0) {
-    parts.push("## Available Skills");
-    parts.push("");
+    staticParts.push("## Available Skills");
+    staticParts.push("");
     for (const skill of skills) {
-      parts.push(`### ${skill.name}`);
-      parts.push(skill.content);
-      parts.push("");
+      staticParts.push(`### ${skill.name}`);
+      staticParts.push(skill.content);
+      staticParts.push("");
     }
   }
 
-  // CEO Feedback file reference
-  const feedbackPath = join("data", "feedback", `${task.id}.md`);
-  if (existsSync(feedbackPath)) {
-    parts.push("## CEO Feedback");
-    parts.push("");
-    parts.push(
-      `There is active CEO feedback for this task. Read the file at: ${feedbackPath}`,
-    );
-    parts.push(
-      "Check this file periodically for new directives and adjust your work accordingly.",
-    );
-    parts.push("");
+  // ----- Dynamic portion starts here. Everything below this boundary is
+  // task-specific and will NOT be part of the cache-reused prefix. -----
+  dynamicParts.push("---");
+  dynamicParts.push("");
+  dynamicParts.push(`# Task: ${task.title}`);
+  dynamicParts.push("");
+  if (task.description) {
+    dynamicParts.push(task.description);
+    dynamicParts.push("");
+  }
+  if (task.project_path) {
+    dynamicParts.push(`Project path: ${task.project_path}`);
+    dynamicParts.push("");
   }
 
-  return parts.join("\n");
+  // Auto-detected context (file paths, recent PRs, git info). Stays at
+  // the tail because it derives from the current task state.
+  const autoContext = extractContextFromTask(task);
+  if (autoContext) {
+    dynamicParts.push(autoContext);
+    dynamicParts.push("");
+  }
+
+  // CEO Feedback file reference — dynamic per task.
+  const feedbackPath = join("data", "feedback", `${task.id}.md`);
+  if (existsSync(feedbackPath)) {
+    dynamicParts.push("## CEO Feedback");
+    dynamicParts.push("");
+    dynamicParts.push(
+      `There is active CEO feedback for this task. Read the file at: ${feedbackPath}`,
+    );
+    dynamicParts.push(
+      "Check this file periodically for new directives and adjust your work accordingly.",
+    );
+    dynamicParts.push("");
+  }
+
+  return [...staticParts, ...dynamicParts].join("\n");
 }
 
 /**

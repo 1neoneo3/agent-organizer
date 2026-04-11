@@ -74,6 +74,16 @@ export function buildAgentArgs(
         "--output-format=stream-json",
         "--max-turns",
         "200",
+        // Keep the system prompt stable across invocations so Anthropic's
+        // 5-minute prompt cache can actually reuse it. The default system
+        // prompt embeds per-machine details (cwd, env info, memory paths,
+        // current git status) which change every run and shatter the
+        // cache prefix. This flag moves those sections into the first
+        // user message, where cache hits only need to match up to the
+        // static portion of the system prompt — effectively every
+        // subsequent task inside a 5-minute window reuses the cached
+        // prefix instead of re-tokenizing it.
+        "--exclude-dynamic-system-prompt-sections",
       ];
       if (resumeSessionId) args.push("--resume", resumeSessionId);
       if (model) args.push("--model", model);
