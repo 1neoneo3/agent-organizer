@@ -81,10 +81,14 @@ describe("shouldIncludeWorkflow", () => {
       includeTask: true,
       includeReview: false,
       includeDecompose: false,
-          enableTestGeneration: false,
-          enableHumanReview: false,
-          enablePreDeploy: false,
-          projectType: "generic" as const,
+      enableTestGeneration: false,
+      enableHumanReview: false,
+      enablePreDeploy: false,
+      projectType: "generic" as const,
+      checkTypesCmd: null,
+      checkLintCmd: null,
+      checkTestsCmd: null,
+      checkE2eCmd: null,
     };
 
     assert.equal(shouldIncludeWorkflow(workflow, "task"), true);
@@ -127,6 +131,70 @@ Body
     assert.equal(result.enableTestGeneration, null);
     assert.equal(result.enableHumanReview, null);
     assert.equal(result.enablePreDeploy, null);
+
+    rmSync(tmpDir, { recursive: true });
+  });
+});
+
+describe("loadProjectWorkflow — check_* commands", () => {
+  it("parses check_types_cmd / check_lint_cmd / check_tests_cmd / check_e2e_cmd", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "ao-check-"));
+    writeFileSync(
+      join(tmpDir, "WORKFLOW.md"),
+      [
+        "---",
+        "project_type: python",
+        "check_types_cmd: python -m mypy src",
+        "check_lint_cmd: ruff check .",
+        "check_tests_cmd: pytest --cov=src -q",
+        "check_e2e_cmd: pytest tests/e2e --timeout=300",
+        "---",
+        "Python project",
+      ].join("\n"),
+    );
+
+    const result = loadProjectWorkflow(tmpDir);
+    assert.ok(result);
+    assert.equal(result.projectType, "python");
+    assert.equal(result.checkTypesCmd, "python -m mypy src");
+    assert.equal(result.checkLintCmd, "ruff check .");
+    assert.equal(result.checkTestsCmd, "pytest --cov=src -q");
+    assert.equal(result.checkE2eCmd, "pytest tests/e2e --timeout=300");
+
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  it("leaves check_* fields null when not specified", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "ao-check-"));
+    writeFileSync(join(tmpDir, "WORKFLOW.md"), "---\nproject_type: python\n---\nbody\n");
+
+    const result = loadProjectWorkflow(tmpDir);
+    assert.ok(result);
+    assert.equal(result.checkTypesCmd, null);
+    assert.equal(result.checkLintCmd, null);
+    assert.equal(result.checkTestsCmd, null);
+    assert.equal(result.checkE2eCmd, null);
+
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  it("treats empty quoted string as null (skip)", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "ao-check-"));
+    writeFileSync(
+      join(tmpDir, "WORKFLOW.md"),
+      [
+        "---",
+        "check_types_cmd: \"\"",
+        "check_lint_cmd: ruff check .",
+        "---",
+        "",
+      ].join("\n"),
+    );
+
+    const result = loadProjectWorkflow(tmpDir);
+    assert.ok(result);
+    assert.equal(result.checkTypesCmd, null);
+    assert.equal(result.checkLintCmd, "ruff check .");
 
     rmSync(tmpDir, { recursive: true });
   });

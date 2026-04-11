@@ -36,6 +36,26 @@ export interface ProjectWorkflow {
   enableHumanReview: boolean | null;
   enablePreDeploy: boolean | null;
   projectType: ProjectType;
+  /**
+   * Per-project auto-check commands. Each of these is a bash shell
+   * command (executed via `bash -lc`) that runs at pr_review entry in
+   * parallel with the LLM reviewer. Missing or empty string = skip
+   * that check kind.
+   *
+   * When a field is `null`, the auto-checks module falls back to the
+   * global settings key of the same name (e.g. `check_types_cmd`) for
+   * backward compatibility with pre-WORKFLOW.md deployments.
+   */
+  checkTypesCmd: string | null;
+  checkLintCmd: string | null;
+  checkTestsCmd: string | null;
+  /**
+   * E2E check command. Runs in parallel with other checks at
+   * pr_review entry. Given E2E suites are typically slower than unit
+   * tests, operators should consider whether blocking pr_review on
+   * E2E is the right tradeoff for their project.
+   */
+  checkE2eCmd: string | null;
 }
 
 const DEFAULT_WORKFLOW: ProjectWorkflow = {
@@ -58,6 +78,10 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   enableHumanReview: null,
   enablePreDeploy: null,
   projectType: "generic",
+  checkTypesCmd: null,
+  checkLintCmd: null,
+  checkTestsCmd: null,
+  checkE2eCmd: null,
 };
 
 function stripQuotes(value: string): string {
@@ -202,6 +226,18 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
         if (value === "typescript" || value === "python" || value === "dbt" || value === "generic") {
           workflow.projectType = value;
         }
+        break;
+      case "check_types_cmd":
+        workflow.checkTypesCmd = value || null;
+        break;
+      case "check_lint_cmd":
+        workflow.checkLintCmd = value || null;
+        break;
+      case "check_tests_cmd":
+        workflow.checkTestsCmd = value || null;
+        break;
+      case "check_e2e_cmd":
+        workflow.checkE2eCmd = value || null;
         break;
       default:
         break;

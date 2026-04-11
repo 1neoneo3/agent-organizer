@@ -2,9 +2,49 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Task } from "../types/runtime.js";
 import type { ProjectWorkflow } from "./loader.js";
 import { WORKFLOW_STAGES, type WorkflowStage } from "../domain/task-status.js";
+import {
+  getLatestCheckResults,
+  type CheckResult,
+} from "../spawner/auto-checks.js";
 
 export { WORKFLOW_STAGES };
 export type { WorkflowStage };
+
+/**
+ * Verdict derived from auto-check results for a task.
+ *
+ *   - `none`   — no results recorded (feature disabled, no specs, or
+ *                the server restarted since the last run). The pipeline
+ *                falls back to review-only gating.
+ *   - `pass`   — every check recorded ok=true.
+ *   - `fail`   — at least one check failed. The pipeline forces rework
+ *                regardless of what the LLM reviewer said, because a
+ *                broken type check or failing test is a hard block.
+ */
+export type CheckVerdict = "none" | "pass" | "fail";
+
+/**
+ * Compute the aggregated verdict from a set of {@link CheckResult}s.
+ * Exported for unit testing; production code should call
+ * {@link resolveCheckVerdictForTask} which fetches the latest results
+ * from the auto-checks in-memory store.
+ */
+export function aggregateCheckResults(
+  results: CheckResult[] | undefined | null,
+): CheckVerdict {
+  if (!results || results.length === 0) return "none";
+  return results.some((r) => !r.ok) ? "fail" : "pass";
+}
+
+/**
+ * Resolve the check verdict for a task by reading the most recent
+ * completed results from the auto-checks module. Wraps
+ * {@link aggregateCheckResults} so the pipeline can decide without
+ * depending on the auto-checks internal map shape.
+ */
+export function resolveCheckVerdictForTask(taskId: string): CheckVerdict {
+  return aggregateCheckResults(getLatestCheckResults(taskId));
+}
 
 /**
  * Validate whether a manual status transition is allowed.
@@ -292,6 +332,16 @@ export function determineNextStage(
         "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50",
       )
       .all(task.id, runStartedAt) as Array<{ message: string }>;
+
+    // Auto-checks gate: runs in parallel with the LLM reviewer. A
+    // single failing automated check forces rework regardless of what
+    // the reviewer concluded — a broken tsc / lint / test is a hard
+    // block that no amount of LLM "looks good to me" should paper over.
+    const checkVerdict = resolveCheckVerdictForTask(task.id);
+    if (checkVerdict === "fail") {
+      recordFailedStage(db, task.id, "pr_review");
+      return "in_progress";
+    }
 
     const needsChanges = logs.some((l) =>
       l.message.includes("[REVIEW:NEEDS_CHANGES]"),

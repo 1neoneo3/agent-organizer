@@ -12,6 +12,7 @@ import { triggerAutoReview } from "./auto-reviewer.js";
 import { triggerAutoQa } from "./auto-qa.js";
 import { triggerAutoTestGen } from "./auto-test-gen.js";
 import { triggerAutoPreDeploy } from "./auto-pre-deploy.js";
+import { triggerAutoChecks, waitForActiveChecks } from "./auto-checks.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
 import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
 import { determineNextStage } from "../workflow/stage-pipeline.js";
@@ -670,7 +671,13 @@ export function spawnAgent(
   });
 
   // Process exit
-  child.on("close", (code) => {
+  // NOTE: this handler is intentionally async so we can block on
+  // parallel auto-checks (triggered at pr_review entry) before the
+  // stage pipeline decides whether to advance. Node's EventEmitter
+  // does not await the returned promise, which is fine — the DB
+  // writes that used to be synchronous are serialized per-task by
+  // the fact that each task has exactly one child process at a time.
+  child.on("close", async (code) => {
     if (terminatedBySpawnError) return;
 
     clearTimeout(idleTimer);
@@ -809,6 +816,14 @@ export function spawnAgent(
       return;
     }
 
+    // Review runs fire parallel auto-checks (tsc / lint / tests) at
+    // pr_review entry. Before deciding whether to advance beyond
+    // pr_review, we must wait for those checks to settle so the stage
+    // pipeline's aggregateCheckResults gate has current data.
+    if (isReviewRun) {
+      await waitForActiveChecks(task.id);
+    }
+
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
     let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
@@ -926,6 +941,11 @@ export function spawnAgent(
     // Trigger auto-review if task landed in pr_review
     if (finalStatus === "pr_review") {
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+      // Fire parallel automated checks (tsc / lint / tests) synchronously
+      // so the promise is registered in auto-checks' in-memory map before
+      // any reviewer exit could race a waitForActiveChecks call. The
+      // actual subprocess work happens in the background.
+      triggerAutoChecks(db, ws, freshTask, cache);
       setTimeout(() => triggerAutoReview(db, ws, freshTask, cache), 500);
     }
 

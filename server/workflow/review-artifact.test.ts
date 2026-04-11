@@ -32,6 +32,10 @@ describe("promoteTaskReviewArtifact", () => {
           enableHumanReview: false,
           enablePreDeploy: false,
           projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
       },
       { cwd: "/tmp/shared", branchName: null, rootPath: "/tmp/shared" },
     );
@@ -85,6 +89,10 @@ describe("promoteTaskReviewArtifact", () => {
           enableHumanReview: false,
           enablePreDeploy: false,
           projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
       },
       {
         cwd: "/tmp/worktree",

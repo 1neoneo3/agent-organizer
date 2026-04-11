@@ -684,6 +684,10 @@ export function buildQaPrompt(task: Task, projectType: ProjectType = "generic"):
 
   if (projectType === "dbt") {
     appendDbtQaProcess(parts);
+  } else if (projectType === "python") {
+    appendPythonQaProcess(parts);
+  } else if (projectType === "typescript") {
+    appendTypescriptQaProcess(parts);
   } else {
     appendGenericQaProcess(parts);
   }
@@ -724,6 +728,88 @@ function appendDbtQaProcess(parts: string[]): void {
   parts.push("[PASS/FAIL] dbt test — Evidence: ...");
   parts.push("[PASS/FAIL] Schema tests exist — Evidence: ...");
   parts.push("[PASS/FAIL] Data quality — Evidence: ...");
+  parts.push("OVERALL: X/Y criteria passed");
+  parts.push("```");
+  parts.push("");
+}
+
+function appendPythonQaProcess(parts: string[]): void {
+  parts.push("## Python QA Process");
+  parts.push("");
+  parts.push("### Step 1: Mandatory Gates");
+  parts.push("Run these FIRST — ANY failure = automatic [QA:FAIL]:");
+  parts.push("1. `ruff check .` — lint エラーがないこと (別の linter を使っているなら `flake8` / `pylint` 等に読み替える)");
+  parts.push("2. `python -m mypy src` — 型エラーがないこと (`mypy` が無いなら `pyright` / `pyre` に読み替える; type hint 無しプロジェクトはスキップ可)");
+  parts.push("3. `python -m pytest -q` — 全テスト通過すること (`uv run pytest` / `poetry run pytest` など環境に合わせる)");
+  parts.push("4. 実装されたコマンド/エントリポイントを**実際に実行**してランタイムエラーを確認 — crash/exception があれば即 [QA:FAIL]");
+  parts.push("");
+  parts.push("上記のいずれかが失敗した場合、即座に [QA:FAIL:<理由>] を出力し、以降のテストは不要。");
+  parts.push("");
+  parts.push("### Step 2: Coverage Gate");
+  parts.push("```bash");
+  parts.push("python -m pytest --cov=src --cov-report=term-missing");
+  parts.push("```");
+  parts.push("- 変更された関数/クラスが未カバーの場合は [QA:FAIL]");
+  parts.push("- プロジェクト全体カバレッジ 80% 未満の場合は警告 (FAIL にはしないが REPORT に記載)");
+  parts.push("");
+  parts.push("### Step 3: Acceptance Criteria Verification");
+  parts.push("タスク説明から受け入れ基準を3-7個導出し、各基準について:");
+  parts.push("1. 関連するコマンド / テストを**実行**する");
+  parts.push("2. 実際の出力を**記録**する");
+  parts.push("3. 証拠付きで合否を**判定**する");
+  parts.push("");
+  parts.push("重要: 必ず実際にコードを実行すること。読むだけで動作を推測しない。");
+  parts.push("");
+  parts.push("### Step 4: Report");
+  parts.push("```");
+  parts.push("CRITERIA RESULTS:");
+  parts.push("[PASS/FAIL] ruff check — Evidence: ...");
+  parts.push("[PASS/FAIL] mypy — Evidence: ...");
+  parts.push("[PASS/FAIL] pytest — Evidence: ...");
+  parts.push("[PASS/FAIL] coverage ≥ 80% — Evidence: ...");
+  parts.push("[PASS/FAIL] <acceptance criterion 1> — Evidence: ...");
+  parts.push("OVERALL: X/Y criteria passed");
+  parts.push("```");
+  parts.push("");
+}
+
+function appendTypescriptQaProcess(parts: string[]): void {
+  parts.push("## TypeScript QA Process");
+  parts.push("");
+  parts.push("### Step 1: Mandatory Gates");
+  parts.push("Run these FIRST — ANY failure = automatic [QA:FAIL]:");
+  parts.push("1. `pnpm lint` (or `npm run lint` / `yarn lint`) — ESLint エラーがないこと");
+  parts.push("2. `pnpm exec tsc --noEmit` (or `npx tsc --noEmit`) — 型エラーがないこと");
+  parts.push("3. `pnpm test` (or `npm test` / `pnpm exec vitest run`) — 全テスト通過すること");
+  parts.push("4. `pnpm build` (or `npm run build`) — ビルドが通ること");
+  parts.push("5. 実装された機能/エンドポイントを**実際に実行**してランタイムエラーを確認 — crash/exception があれば即 [QA:FAIL]");
+  parts.push("");
+  parts.push("上記のいずれかが失敗した場合、即座に [QA:FAIL:<理由>] を出力し、以降のテストは不要。");
+  parts.push("");
+  parts.push("### Step 2: Coverage Gate");
+  parts.push("```bash");
+  parts.push("pnpm test -- --coverage");
+  parts.push("```");
+  parts.push("- 変更されたファイルが未カバーの場合は [QA:FAIL]");
+  parts.push("- プロジェクト全体カバレッジ 80% 未満の場合は警告");
+  parts.push("");
+  parts.push("### Step 3: Acceptance Criteria Verification");
+  parts.push("タスク説明から受け入れ基準を3-7個導出し、各基準について:");
+  parts.push("1. 関連するコマンド / テストを**実行**する");
+  parts.push("2. 実際の出力を**記録**する");
+  parts.push("3. 証拠付きで合否を**判定**する");
+  parts.push("");
+  parts.push("重要: 必ず実際にコードを実行すること。読むだけで動作を推測しない。");
+  parts.push("");
+  parts.push("### Step 4: Report");
+  parts.push("```");
+  parts.push("CRITERIA RESULTS:");
+  parts.push("[PASS/FAIL] lint — Evidence: ...");
+  parts.push("[PASS/FAIL] tsc --noEmit — Evidence: ...");
+  parts.push("[PASS/FAIL] tests — Evidence: ...");
+  parts.push("[PASS/FAIL] build — Evidence: ...");
+  parts.push("[PASS/FAIL] coverage ≥ 80% — Evidence: ...");
+  parts.push("[PASS/FAIL] <acceptance criterion 1> — Evidence: ...");
   parts.push("OVERALL: X/Y criteria passed");
   parts.push("```");
   parts.push("");

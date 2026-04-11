@@ -24,6 +24,10 @@ describe("resolveAgentRuntimePolicy", () => {
           enableHumanReview: false,
           enablePreDeploy: false,
           projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
       },
     );
 
@@ -54,6 +58,10 @@ describe("resolveAgentRuntimePolicy", () => {
           enableHumanReview: false,
           enablePreDeploy: false,
           projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
       },
     );
 

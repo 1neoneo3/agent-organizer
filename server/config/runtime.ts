@@ -132,6 +132,16 @@ export const SETTINGS_DEFAULTS = {
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
   auto_qa: "true" as const, // "true" | "false" — auto-trigger QA agent on qa_testing
   auto_dispatch_mode: "all_inbox" as const, // "disabled" | "github_only" | "all_inbox"
+  // Phase 1: run tsc / lint / tests / e2e in parallel at pr_review entry.
+  // Enabled by default so new installations benefit immediately; the
+  // module is a no-op unless at least one `check_*_cmd` is configured
+  // (per-project via WORKFLOW.md or globally via settings), so turning
+  // this on is safe on empty projects.
+  auto_checks_enabled: "true" as const, // "true" | "false"
+  // Enable the test_generation stage globally so every task that does
+  // not explicitly opt out in WORKFLOW.md gets a dedicated tester pass
+  // after implementation. Small tasks still skip this stage by design.
+  default_enable_test_generation: "true" as const, // "true" | "false"
 };
 
 

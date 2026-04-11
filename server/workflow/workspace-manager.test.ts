@@ -49,6 +49,10 @@ describe("prepareTaskWorkspace", () => {
           enableHumanReview: false,
           enablePreDeploy: false,
           projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
       },
     );
 
@@ -76,6 +80,10 @@ describe("prepareTaskWorkspace", () => {
           enableHumanReview: false,
           enablePreDeploy: false,
           projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
     };
 
     const workspace = prepareTaskWorkspace(

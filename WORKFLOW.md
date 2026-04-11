@@ -13,6 +13,13 @@ enable_test_generation: true
 enable_human_review: true
 enable_pre_deploy: false
 project_type: typescript
+# Auto-checks (Phase 1): run these in parallel with the LLM reviewer
+# at pr_review entry. A single failure forces rework regardless of the
+# reviewer's verdict. Leave a field blank to skip that check.
+check_types_cmd: pnpm exec tsc --noEmit
+check_lint_cmd:
+check_tests_cmd: node --import tsx --test server/workflow/stage-pipeline.test.ts server/spawner/auto-checks.test.ts server/spawner/auto-reviewer.test.ts server/spawner/prompt-builder.test.ts server/workflow/loader.test.ts
+check_e2e_cmd:
 ---
 
 # Agent Organizer Workflow
