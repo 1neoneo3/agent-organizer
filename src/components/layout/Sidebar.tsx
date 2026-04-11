@@ -1,6 +1,6 @@
 import { NavLink } from "react-router";
 import type { ReactNode } from "react";
-import { CheckSquare, Compass, Building2, Users, Settings, Sun, Moon, Plus, UserPlus } from "lucide-react";
+import { CheckSquare, Compass, Building2, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose } from "lucide-react";
 import type { Flavor, TimeOfDay } from "../../hooks/useTheme.js";
 
 type NavItem = { to: string; label: string; icon: ReactNode };
@@ -22,9 +22,10 @@ interface SidebarProps {
   timeOfDay: TimeOfDay;
   toggleTimeOfDay: () => void;
   flavors: readonly Flavor[];
+  onCollapse?: () => void;
 }
 
-export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps) {
+export function Sidebar({ connected, timeOfDay, toggleTimeOfDay, onCollapse }: SidebarProps) {
   return (
     <aside
       className="flex flex-col h-full"
@@ -56,6 +57,7 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
           </svg>
         </div>
         <span style={{
+          flex: 1,
           fontSize: "14px",
           fontWeight: 600,
           color: "var(--text-primary)",
@@ -63,6 +65,30 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay }: SidebarProps)
         }}>
           Agent Organizer
         </span>
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            title="Hide sidebar"
+            aria-label="Hide sidebar"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "4px",
+              background: "transparent",
+              border: "none",
+              borderRadius: "4px",
+              color: "var(--text-tertiary)",
+              cursor: "pointer",
+              lineHeight: 0,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; }}
+          >
+            <PanelLeftClose size={16} />
+          </button>
+        )}
       </div>
 
       {/* Connection status */}

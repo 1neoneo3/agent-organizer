@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { PanelLeft, PanelRight } from "lucide-react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
@@ -7,6 +8,18 @@ import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
 import { buildAgentViewState } from "./agent-view.js";
+
+/**
+ * Layout mode for the task detail view.
+ *
+ * - `modal`        — centered overlay with backdrop (default)
+ * - `pinned-left`  — fixed side panel docked to the left of the main area
+ * - `pinned-right` — fixed side panel docked to the right of the main area
+ */
+export type TaskDetailLayoutMode = "modal" | "pinned-left" | "pinned-right";
+
+/** Width of the docked side panel (when pinned). */
+export const PINNED_PANEL_WIDTH_PX = 640;
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   inbox: { label: "Inbox", color: "var(--status-inbox)" },
@@ -46,9 +59,22 @@ interface TaskDetailModalProps {
   onClose: () => void;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
+  layoutMode?: TaskDetailLayoutMode;
+  onLayoutModeChange?: (mode: TaskDetailLayoutMode) => void;
 }
 
-export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribeTask, onClose, onRun, onStop }: TaskDetailModalProps) {
+export function TaskDetailModal({
+  task,
+  agents,
+  interactivePrompt,
+  on,
+  subscribeTask,
+  onClose,
+  onRun,
+  onStop,
+  layoutMode = "modal",
+  onLayoutModeChange,
+}: TaskDetailModalProps) {
   const [showTerminal, setShowTerminal] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [sendingFeedback, setSendingFeedback] = useState(false);
@@ -73,22 +99,31 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
   const status = STATUS_LABELS[task.status] ?? { label: task.status, color: "var(--status-inbox)" };
   const sizeLabel = SIZE_LABELS[task.task_size] ?? task.task_size;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div
-        style={{
-          background: "var(--bg-secondary)",
-          border: "1px solid var(--border-default)",
-          borderRadius: "12px",
-          width: "100%",
-          maxWidth: "56rem",
-          maxHeight: "90vh",
-          display: "flex",
-          flexDirection: "column",
-          boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
+  /**
+   * Pin toggle: if we're already pinned to `side`, revert to modal.
+   * Otherwise dock to the requested side.
+   */
+  const togglePin = (side: "left" | "right") => {
+    if (!onLayoutModeChange) return;
+    const pinned: TaskDetailLayoutMode = side === "left" ? "pinned-left" : "pinned-right";
+    onLayoutModeChange(layoutMode === pinned ? "modal" : pinned);
+  };
+
+  const pinButtonStyle = (active: boolean) => ({
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "4px",
+    cursor: "pointer",
+    background: active ? "var(--accent-subtle)" : "transparent",
+    border: "1px solid " + (active ? "var(--accent-primary)" : "transparent"),
+    borderRadius: "4px",
+    color: active ? "var(--accent-primary)" : "var(--text-tertiary)",
+    lineHeight: 0,
+  });
+
+  const panelBody: ReactNode = (
+    <>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", padding: "20px 24px 12px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -153,23 +188,51 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
               )}
             </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              color: "var(--text-tertiary)",
-              fontSize: "16px",
-              lineHeight: 1,
-              padding: "4px",
-              cursor: "pointer",
-              background: "none",
-              border: "none",
-              borderRadius: "4px",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; }}
-          >
-            &#x2715;
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            {onLayoutModeChange && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => togglePin("left")}
+                  title={layoutMode === "pinned-left" ? "Unpin" : "Pin to left"}
+                  aria-label={layoutMode === "pinned-left" ? "Unpin task detail" : "Pin task detail to the left"}
+                  aria-pressed={layoutMode === "pinned-left"}
+                  style={pinButtonStyle(layoutMode === "pinned-left")}
+                >
+                  <PanelLeft size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => togglePin("right")}
+                  title={layoutMode === "pinned-right" ? "Unpin" : "Pin to right"}
+                  aria-label={layoutMode === "pinned-right" ? "Unpin task detail" : "Pin task detail to the right"}
+                  aria-pressed={layoutMode === "pinned-right"}
+                  style={pinButtonStyle(layoutMode === "pinned-right")}
+                >
+                  <PanelRight size={14} />
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close task detail"
+              style={{
+                color: "var(--text-tertiary)",
+                fontSize: "16px",
+                lineHeight: 1,
+                padding: "4px",
+                cursor: "pointer",
+                background: "none",
+                border: "none",
+                borderRadius: "4px",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; }}
+            >
+              &#x2715;
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -392,7 +455,59 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
             />
           )}
         </div>
+    </>
+  );
+
+  // Modal mode: centered overlay with backdrop.
+  if (layoutMode === "modal") {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+        <div
+          style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-default)",
+            borderRadius: "12px",
+            width: "100%",
+            maxWidth: "56rem",
+            maxHeight: "90vh",
+            display: "flex",
+            flexDirection: "column",
+            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {panelBody}
+        </div>
       </div>
+    );
+  }
+
+  // Pinned mode: fixed side panel docked to the left or right of the main area.
+  // No backdrop, so the user can continue interacting with the kanban board.
+  const isLeft = layoutMode === "pinned-left";
+  return (
+    <div
+      role="complementary"
+      aria-label="Pinned task detail"
+      style={{
+        position: "fixed",
+        top: 0,
+        bottom: 0,
+        left: isLeft ? "var(--ao-sidebar-width, 232px)" : "auto",
+        right: isLeft ? "auto" : 0,
+        width: `${PINNED_PANEL_WIDTH_PX}px`,
+        background: "var(--bg-secondary)",
+        borderLeft: isLeft ? "none" : "1px solid var(--border-default)",
+        borderRight: isLeft ? "1px solid var(--border-default)" : "none",
+        display: "flex",
+        flexDirection: "column",
+        zIndex: 40,
+        boxShadow: isLeft
+          ? "4px 0 12px -6px rgba(0, 0, 0, 0.2)"
+          : "-4px 0 12px -6px rgba(0, 0, 0, 0.2)",
+      }}
+    >
+      {panelBody}
     </div>
   );
 }

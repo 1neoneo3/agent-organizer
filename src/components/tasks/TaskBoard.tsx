@@ -2,7 +2,7 @@ import { memo, Profiler, useState, useEffect, useMemo, useCallback, useRef } fro
 import { useNavigate, useSearchParams } from "react-router";
 import { TaskCard } from "./TaskCard.js";
 import { CreateTaskModal } from "./CreateTaskModal.js";
-import { TaskDetailModal } from "./TaskDetailModal.js";
+import { TaskDetailModal, PINNED_PANEL_WIDTH_PX, type TaskDetailLayoutMode } from "./TaskDetailModal.js";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { createTask, runTask, stopTask, updateTask, deleteTask, createAgent } from "../../api/endpoints.js";
 import { AgentForm, type AgentFormData } from "../agents/AgentForm.js";
@@ -106,11 +106,33 @@ const TaskColumn = memo(function TaskColumn({
   );
 });
 
+const DETAIL_LAYOUT_STORAGE_KEY = "ao:task-detail-layout-mode";
+
+function loadDetailLayoutMode(): TaskDetailLayoutMode {
+  if (typeof window === "undefined") return "modal";
+  const stored = window.localStorage.getItem(DETAIL_LAYOUT_STORAGE_KEY);
+  if (stored === "pinned-left" || stored === "pinned-right" || stored === "modal") {
+    return stored;
+  }
+  return "modal";
+}
+
 export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubscribeTask }: TaskBoardProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [logTaskId, setLogTaskId] = useState<string | null>(null);
+  const [detailLayoutMode, setDetailLayoutModeState] = useState<TaskDetailLayoutMode>(loadDetailLayoutMode);
+
+  // Persist the pin state so it survives reloads. Modal is the default and
+  // does not need to be written explicitly, but we store it so switching
+  // back to modal is also remembered.
+  const setDetailLayoutMode = useCallback((mode: TaskDetailLayoutMode) => {
+    setDetailLayoutModeState(mode);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(DETAIL_LAYOUT_STORAGE_KEY, mode);
+    }
+  }, []);
   const { on } = useWebSocket();
   const { play } = useSfx();
   const navigate = useNavigate();
@@ -193,8 +215,23 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
     console.debug("[perf]", id, phase, `${actualDuration.toFixed(1)}ms`);
   }, []);
 
+  // When a task is pinned open, push the kanban content away from the docked
+  // panel so the rightmost / leftmost column does not sit behind it.
+  const pinnedPanelVisible = selectedTaskId !== null && detailLayoutMode !== "modal";
+  const boardPaddingLeft = pinnedPanelVisible && detailLayoutMode === "pinned-left" ? `${PINNED_PANEL_WIDTH_PX}px` : undefined;
+  const boardPaddingRight = pinnedPanelVisible && detailLayoutMode === "pinned-right" ? `${PINNED_PANEL_WIDTH_PX}px` : undefined;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
+        paddingLeft: boardPaddingLeft,
+        paddingRight: boardPaddingRight,
+        transition: "padding 150ms ease",
+      }}
+    >
 
       {/* Empty state */}
       {agents.length === 0 && tasks.length === 0 && !showAddAgent && (
@@ -258,6 +295,8 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
             onClose={() => setSelectedTaskId(null)}
             onRun={handleRun}
             onStop={handleStop}
+            layoutMode={detailLayoutMode}
+            onLayoutModeChange={setDetailLayoutMode}
           />
         );
       })()}
