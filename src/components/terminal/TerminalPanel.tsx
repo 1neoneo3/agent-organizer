@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { memo, startTransition, useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { fetchTaskLogs } from "../../api/endpoints.js";
 import type { TaskLog, WSEventType, Agent } from "../../types/index.js";
 import { getRoleLabel } from "../agents/roles.js";
@@ -98,7 +98,15 @@ function useIsDark(): boolean {
   return dark;
 }
 
-function LogEntry({ log, isDark, agents }: { log: TaskLog; isDark: boolean; agents: Agent[] }) {
+const LogEntry = memo(function LogEntry({
+  log,
+  isDark,
+  agents,
+}: {
+  log: TaskLog;
+  isDark: boolean;
+  agents: Agent[];
+}) {
   const [collapsed, setCollapsed] = useState(true);
   const isLong = log.message.length > 300;
 
@@ -228,7 +236,7 @@ function LogEntry({ log, isDark, agents }: { log: TaskLog; isDark: boolean; agen
       </div>
     </div>
   );
-}
+});
 
 const PAUSE_SCROLL_THRESHOLD = 50;
 
@@ -321,12 +329,12 @@ function TerminalView({
     containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
   };
 
-  const toggleSegment = (id: string, defaultOpen: boolean) => {
+  const toggleSegment = useCallback((id: string, defaultOpen: boolean) => {
     setExpandedOverride((prev) => {
       const currentlyOpen = prev[id] ?? defaultOpen;
       return { ...prev, [id]: !currentlyOpen };
     });
-  };
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -389,7 +397,7 @@ function TerminalView({
   );
 }
 
-function StageSegmentBlock({
+const StageSegmentBlock = memo(function StageSegmentBlock({
   segment,
   isOpen,
   onToggle,
@@ -506,7 +514,7 @@ function StageSegmentBlock({
       )}
     </div>
   );
-}
+});
 
 export function TerminalPanel({
   taskId,

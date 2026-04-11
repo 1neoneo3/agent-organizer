@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -95,12 +95,8 @@ describe("shouldIncludeWorkflow", () => {
 
 describe("loadProjectWorkflow — enable_* fields", () => {
   it("parses enable_test_generation, enable_human_review, enable_pre_deploy from frontmatter", () => {
-    const fs = require("node:fs");
-    const os = require("node:os");
-    const path = require("node:path");
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ao-test-"));
-    fs.writeFileSync(path.join(tmpDir, "WORKFLOW.md"), `---
+    const tmpDir = mkdtempSync(join(tmpdir(), "ao-test-"));
+    writeFileSync(join(tmpDir, "WORKFLOW.md"), `---
 enable_test_generation: true
 enable_human_review: true
 enable_pre_deploy: false
@@ -115,16 +111,12 @@ Custom workflow body
     assert.equal(result.enablePreDeploy, false);
     assert.equal(result.body, "Custom workflow body");
 
-    fs.rmSync(tmpDir, { recursive: true });
+    rmSync(tmpDir, { recursive: true });
   });
 
   it("defaults enable_* to false when not specified", () => {
-    const fs = require("node:fs");
-    const os = require("node:os");
-    const path = require("node:path");
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ao-test-"));
-    fs.writeFileSync(path.join(tmpDir, "WORKFLOW.md"), `---
+    const tmpDir = mkdtempSync(join(tmpdir(), "ao-test-"));
+    writeFileSync(join(tmpDir, "WORKFLOW.md"), `---
 git_workflow: none
 ---
 Body
@@ -136,6 +128,6 @@ Body
     assert.equal(result.enableHumanReview, false);
     assert.equal(result.enablePreDeploy, false);
 
-    fs.rmSync(tmpDir, { recursive: true });
+    rmSync(tmpDir, { recursive: true });
   });
 });

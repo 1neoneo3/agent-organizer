@@ -86,6 +86,9 @@ export function buildAgentArgs(
       const args = ["codex"];
       if (model) args.push("-m", model);
       args.push("exec", "--json");
+      // `--full-auto` is shorthand for the default pair (workspace-write +
+      // on-request). Any other combination must be emitted explicitly so the
+      // host-level runner does not silently fall back to defaults.
       if (
         codexSandboxMode === "workspace-write" &&
         codexApprovalPolicy === "on-request"
@@ -93,6 +96,7 @@ export function buildAgentArgs(
         args.push("--full-auto");
       } else {
         args.push("--sandbox", codexSandboxMode);
+        args.push("--ask-for-approval", codexApprovalPolicy);
       }
       return args;
     }
