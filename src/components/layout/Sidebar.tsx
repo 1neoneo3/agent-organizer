@@ -50,7 +50,7 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay, onCollapse }: S
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          boxShadow: "0 2px 8px rgba(99, 102, 241, 0.3)",
+          boxShadow: "0 2px 8px var(--accent-glow)",
         }}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M2 8l4 4 8-8" />

@@ -7,131 +7,145 @@
    ======================================== */
 
 /* --- Color Palette --- */
+/*
+ * Palettemaker-inspired theme: muted teals, soft pastels, and a creamy
+ * off-white background. Shadows and borders are tinted with deep teal
+ * (rgba(30, 60, 65, *)) instead of pure black so surfaces feel warm and
+ * cohesive.
+ */
 :root {
-  --bg-primary: #f8f9fb;
+  --bg-primary: #f4f7f8;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f0f1f3;
-  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-tertiary: #e8eeef;
+  --bg-hover: rgba(30, 60, 65, 0.04);
 
-  --border-default: rgba(0, 0, 0, 0.08);
-  --border-subtle: rgba(0, 0, 0, 0.04);
+  --border-default: rgba(30, 60, 65, 0.10);
+  --border-subtle: rgba(30, 60, 65, 0.05);
 
-  --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-tertiary: #9ca3af;
+  --text-primary: #1f3f43;
+  --text-secondary: #5e7a7f;
+  --text-tertiary: #9fb0b3;
 
-  --accent-primary: #6366f1;
-  --accent-hover: #4f46e5;
-  --accent-subtle: #eef2ff;
+  --accent-primary: #6ba4a9;
+  --accent-hover: #558b90;
+  --accent-subtle: #e0eef0;
+  --accent-glow: rgba(107, 164, 169, 0.30);
 
-  --status-inbox: #9ca3af;
-  --status-progress: #f59e0b;
-  --status-review: #8b5cf6;
-  --status-test-gen: #10b981;
-  --status-done: #22c55e;
-  --status-qa: #06b6d4;
-  --status-human-review: #f97316;
-  --status-pre-deploy: #6366f1;
-  --status-cancelled: #ef4444;
+  --status-inbox: #a8b8bb;
+  --status-progress: #d4a876;
+  --status-review: #a89bc7;
+  --status-test-gen: #7fb5a6;
+  --status-done: #6ba4a9;
+  --status-qa: #88c3c8;
+  --status-human-review: #d9a68d;
+  --status-pre-deploy: #a89bc7;
+  --status-cancelled: #c88787;
 
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   /* Terminal */
-  --terminal-bg: #fafbfc;
-  --terminal-header-bg: #f3f4f6;
-  --terminal-text: #111827;
-  --terminal-text-dim: #6b7280;
+  --terminal-bg: #f8fafb;
+  --terminal-header-bg: #eef3f4;
+  --terminal-text: #1f3f43;
+  --terminal-text-dim: #5e7a7f;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.03);
+  /* Shadows — tinted with deep teal so they blend with the palette */
+  --shadow-sm: 0 1px 2px rgba(30, 60, 65, 0.05);
+  --shadow-md: 0 2px 8px rgba(30, 60, 65, 0.07), 0 1px 2px rgba(30, 60, 65, 0.04);
+  --shadow-lg: 0 8px 24px rgba(30, 60, 65, 0.09), 0 2px 8px rgba(30, 60, 65, 0.04);
+  --shadow-card: 0 1px 3px rgba(30, 60, 65, 0.05), 0 0 0 1px rgba(30, 60, 65, 0.04);
 
   /* Flavor accents (keep data-flavor system working) */
-  --flavor-accent: #6366f1;
-  --flavor-accent-subtle: #eef2ff;
+  --flavor-accent: #6ba4a9;
+  --flavor-accent-subtle: #e0eef0;
 }
 
-/* --- Flavor accents --- */
+/* --- Flavor accents (all tuned to the pastel palette) --- */
 [data-flavor="mint"] {
-  --flavor-accent: #10b981;
-  --flavor-accent-subtle: #d1fae5;
+  --flavor-accent: #7fb5a6;
+  --flavor-accent-subtle: #e2efea;
 }
 [data-flavor="strawberry"] {
-  --flavor-accent: #f43f5e;
-  --flavor-accent-subtle: #ffe4e6;
+  --flavor-accent: #c88787;
+  --flavor-accent-subtle: #f3e0e0;
 }
 [data-flavor="banana"] {
-  --flavor-accent: #eab308;
-  --flavor-accent-subtle: #fef9c3;
+  --flavor-accent: #d4b876;
+  --flavor-accent-subtle: #f4ecd4;
 }
 [data-flavor="peanut"] {
-  --flavor-accent: #d97706;
-  --flavor-accent-subtle: #fef3c7;
+  --flavor-accent: #bc8f6b;
+  --flavor-accent-subtle: #ede1d3;
 }
 [data-flavor="blueberry"] {
-  --flavor-accent: #3b82f6;
-  --flavor-accent-subtle: #dbeafe;
+  --flavor-accent: #88a6c6;
+  --flavor-accent-subtle: #e1eaf3;
 }
 [data-flavor="plain"] {
-  --flavor-accent: #6366f1;
-  --flavor-accent-subtle: #eef2ff;
+  --flavor-accent: #6ba4a9;
+  --flavor-accent-subtle: #e0eef0;
 }
 
 /* --- Dark mode --- */
+/*
+ * Dark mode uses a deep teal-black base (not pure black) so it feels like
+ * the palette at twilight instead of an unrelated dark theme.
+ */
 .dark {
-  --bg-primary: #09090b;
-  --bg-secondary: #111113;
-  --bg-tertiary: #1a1a1e;
-  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-primary: #0f1e21;
+  --bg-secondary: #162a2e;
+  --bg-tertiary: #1e373c;
+  --bg-hover: rgba(168, 208, 210, 0.06);
 
-  --border-default: rgba(255, 255, 255, 0.08);
-  --border-subtle: rgba(255, 255, 255, 0.04);
+  --border-default: rgba(168, 208, 210, 0.12);
+  --border-subtle: rgba(168, 208, 210, 0.06);
 
-  --text-primary: #f4f4f5;
-  --text-secondary: #a1a1aa;
-  --text-tertiary: #52525b;
+  --text-primary: #e8f0f1;
+  --text-secondary: #9bb3b6;
+  --text-tertiary: #5e7a7f;
 
-  --accent-subtle: rgba(99, 102, 241, 0.15);
+  --accent-primary: #88c3c8;
+  --accent-hover: #a8d0d2;
+  --accent-subtle: rgba(107, 164, 169, 0.18);
+  --accent-glow: rgba(136, 195, 200, 0.35);
 
   /* Terminal */
-  --terminal-bg: #09090b;
-  --terminal-header-bg: #111113;
-  --terminal-text: #f4f4f5;
-  --terminal-text-dim: #71717a;
+  --terminal-bg: #0f1e21;
+  --terminal-header-bg: #162a2e;
+  --terminal-text: #e8f0f1;
+  --terminal-text-dim: #7a9296;
 
   /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-  --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(168, 208, 210, 0.05);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 0 0 1px rgba(168, 208, 210, 0.08), 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .dark[data-flavor="mint"] {
-  --flavor-accent: #10b981;
-  --flavor-accent-subtle: rgba(16, 185, 129, 0.15);
+  --flavor-accent: #7fb5a6;
+  --flavor-accent-subtle: rgba(127, 181, 166, 0.18);
 }
 .dark[data-flavor="strawberry"] {
-  --flavor-accent: #f43f5e;
-  --flavor-accent-subtle: rgba(244, 63, 94, 0.15);
+  --flavor-accent: #c88787;
+  --flavor-accent-subtle: rgba(200, 135, 135, 0.18);
 }
 .dark[data-flavor="banana"] {
-  --flavor-accent: #eab308;
-  --flavor-accent-subtle: rgba(234, 179, 8, 0.15);
+  --flavor-accent: #d4b876;
+  --flavor-accent-subtle: rgba(212, 184, 118, 0.18);
 }
 .dark[data-flavor="peanut"] {
-  --flavor-accent: #d97706;
-  --flavor-accent-subtle: rgba(217, 119, 6, 0.15);
+  --flavor-accent: #bc8f6b;
+  --flavor-accent-subtle: rgba(188, 143, 107, 0.18);
 }
 .dark[data-flavor="blueberry"] {
-  --flavor-accent: #3b82f6;
-  --flavor-accent-subtle: rgba(59, 130, 246, 0.15);
+  --flavor-accent: #88a6c6;
+  --flavor-accent-subtle: rgba(136, 166, 198, 0.18);
 }
 .dark[data-flavor="plain"] {
-  --flavor-accent: #6366f1;
-  --flavor-accent-subtle: rgba(99, 102, 241, 0.15);
+  --flavor-accent: #6ba4a9;
+  --flavor-accent-subtle: rgba(107, 164, 169, 0.18);
 }
 
 /* Legacy EB variable mappings (keep for any components that still reference them) */
@@ -259,27 +273,27 @@ html, body, #root {
   background: var(--accent-primary);
   color: #ffffff;
   border-color: transparent;
-  box-shadow: 0 1px 3px rgba(99, 102, 241, 0.3);
+  box-shadow: 0 1px 3px var(--accent-glow);
 }
 
 .eb-btn--primary:hover {
   background: var(--accent-hover);
   color: #ffffff;
   border-color: transparent;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 2px 8px var(--accent-glow);
 }
 
 .eb-btn--danger {
-  background: #ef4444;
+  background: var(--status-cancelled);
   color: #ffffff;
   border-color: transparent;
-  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.3);
+  box-shadow: 0 1px 3px rgba(200, 135, 135, 0.35);
 }
 
 .eb-btn--danger:hover {
-  background: #dc2626;
+  background: #b06f6f;
   border-color: transparent;
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.35);
+  box-shadow: 0 2px 8px rgba(200, 135, 135, 0.40);
 }
 
 .eb-btn--danger:active {
