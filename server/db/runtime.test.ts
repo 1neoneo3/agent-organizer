@@ -61,6 +61,33 @@ describe("initializeDb", () => {
     assert.ok(heartbeat, "tasks.last_heartbeat_at should exist");
   });
 
+  it("creates the composite status/priority/created index on tasks", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tasks'")
+      .all() as Array<{ name: string }>;
+    const composite = indexes.find((idx) => idx.name === "idx_tasks_status_priority_created");
+    assert.ok(composite, "idx_tasks_status_priority_created should exist");
+
+    // Sanity-check the SQLite planner actually picks this index for the
+    // periodic dispatch query. If a future refactor renames the index or
+    // changes the query shape this test catches the regression.
+    const plan = db
+      .prepare(
+        "EXPLAIN QUERY PLAN SELECT id FROM tasks WHERE status = 'inbox' ORDER BY priority DESC, created_at ASC",
+      )
+      .all() as Array<{ detail: string }>;
+    const usedComposite = plan.some((row) =>
+      row.detail.includes("idx_tasks_status_priority_created"),
+    );
+    assert.ok(
+      usedComposite,
+      `planner did not pick the composite index. plan=${JSON.stringify(plan)}`,
+    );
+  });
+
   it("auto-populates stage and agent_id on log insert via trigger", async () => {
     const { initializeDb } = await import("./runtime.js");
     const db = initializeDb();
