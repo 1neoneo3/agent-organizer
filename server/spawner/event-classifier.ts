@@ -105,8 +105,12 @@ const TEXT_PROMPT_PATTERNS_EN: RegExp[] = [
 
 function looksLikeCompletionSummary(text: string): boolean {
   return (
+    // Legacy untagged verdicts
     text.includes("[REVIEW:PASS]") ||
     text.includes("[REVIEW:NEEDS_CHANGES]") ||
+    // Role-tagged verdicts: [REVIEW:code:PASS], [REVIEW:security:NEEDS_CHANGES:…]
+    /\[REVIEW:\w+:PASS\]/.test(text) ||
+    /\[REVIEW:\w+:NEEDS_CHANGES/.test(text) ||
     text.includes("[SELF_REVIEW:PASS]") ||
     text.includes("[SELF_REVIEW:FAIL:") ||
     (text.includes("レビューサマリー") && text.includes("### 判定"))

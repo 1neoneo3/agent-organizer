@@ -326,40 +326,44 @@ export function determineNextStage(
   }
 
   // Review run completed (pr_review)
+  //
+  // Verdict format (role-tagged, preferred):
+  //   [REVIEW:code:PASS]  /  [REVIEW:code:NEEDS_CHANGES:<reason>]
+  //   [REVIEW:security:PASS]  /  [REVIEW:security:NEEDS_CHANGES:<reason>]
+  //
+  // Legacy format (backward compat, treated as "code" role):
+  //   [REVIEW:PASS]  /  [REVIEW:NEEDS_CHANGES:<reason>]
+  //
+  // The expected roles for this run are recorded in a [REVIEWER_PANEL:…]
+  // system log entry. If no panel marker exists (legacy single-reviewer
+  // or manual trigger), we fall back to requiring any PASS/NEEDS_CHANGES
+  // from the combined log set.
   if (reviewRun) {
-    const logs = db
-      .prepare(
-        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50",
-      )
-      .all(task.id, runStartedAt) as Array<{ message: string }>;
-
-    // Auto-checks gate: runs in parallel with the LLM reviewer. A
-    // single failing automated check forces rework regardless of what
-    // the reviewer concluded — a broken tsc / lint / test is a hard
-    // block that no amount of LLM "looks good to me" should paper over.
+    // Auto-checks gate (Phase 1): runs in parallel with the LLM
+    // reviewer(s). A single failing automated check forces rework
+    // regardless of what the reviewer concluded — a broken tsc / lint
+    // / test is a hard block that no amount of LLM "looks good to me"
+    // should paper over. This gate fires BEFORE review verdict
+    // aggregation so a check failure short-circuits the pipeline even
+    // if the reviewer panel unanimously passed.
     const checkVerdict = resolveCheckVerdictForTask(task.id);
     if (checkVerdict === "fail") {
       recordFailedStage(db, task.id, "pr_review");
       return "in_progress";
     }
 
-    const needsChanges = logs.some((l) =>
-      l.message.includes("[REVIEW:NEEDS_CHANGES]"),
-    );
+    // Role-based review verdict aggregation (Phase 2): reads the
+    // [REVIEWER_PANEL:…] marker to learn which roles were expected,
+    // then scans role-tagged and legacy verdict tags in assistant
+    // logs. Requires every expected role to PASS for advancement.
+    const { needsChanges, allPassed } = aggregateReviewVerdicts(db, task.id, runStartedAt);
+
     if (needsChanges) {
       recordFailedStage(db, task.id, "pr_review");
-      // Return to in_progress (not inbox) to preserve completed work
       return "in_progress";
     }
 
-    // Require explicit [REVIEW:PASS] tag. Absence of the verdict is treated
-    // as needing rework, so a crashed or forgetful reviewer can never cause
-    // an implicit pass-through. Loop protection is handled by review_count
-    // max in auto-reviewer.ts (defaults to 3 iterations) — once the cap is
-    // hit, auto-review stops and the task stays in pr_review for manual
-    // action instead of being silently promoted.
-    const passed = logs.some((l) => l.message.includes("[REVIEW:PASS]"));
-    if (!passed) {
+    if (!allPassed) {
       recordFailedStage(db, task.id, "pr_review");
       return "in_progress";
     }
@@ -390,4 +394,113 @@ export function determineNextStage(
   }
 
   return nextStage("in_progress", activeStages);
+}
+
+// --------------- Review verdict aggregation ---------------
+
+/**
+ * Regex patterns for role-tagged and legacy review verdict tags.
+ *
+ * Role-tagged (preferred):
+ *   [REVIEW:code:PASS]
+ *   [REVIEW:security:NEEDS_CHANGES:<reason>]
+ *
+ * Legacy (backward compat):
+ *   [REVIEW:PASS]
+ *   [REVIEW:NEEDS_CHANGES:<reason>]
+ */
+const ROLE_VERDICT_PASS = /\[REVIEW:(\w+):PASS\]/;
+const ROLE_VERDICT_NEEDS_CHANGES = /\[REVIEW:(\w+):NEEDS_CHANGES/;
+const LEGACY_VERDICT_PASS = /\[REVIEW:PASS\]/;
+const LEGACY_VERDICT_NEEDS_CHANGES = /\[REVIEW:NEEDS_CHANGES/;
+const PANEL_MARKER = /\[REVIEWER_PANEL:([^\]]+)\]/;
+
+export interface ReviewAggregation {
+  /** True when any reviewer (any role) emitted NEEDS_CHANGES. */
+  needsChanges: boolean;
+  /** True when every expected role has a PASS verdict. */
+  allPassed: boolean;
+}
+
+/**
+ * Aggregate review verdicts from task_logs for a single review run.
+ *
+ * 1. Read the `[REVIEWER_PANEL:code,security]` system log to discover
+ *    which roles were expected in this run.
+ * 2. Scan assistant logs for role-tagged verdicts.
+ * 3. Legacy (untagged) verdicts count as role="code".
+ * 4. Any NEEDS_CHANGES from any role → `needsChanges = true`.
+ * 5. `allPassed = true` only when every expected role has at least one
+ *    PASS verdict and no NEEDS_CHANGES.
+ */
+export function aggregateReviewVerdicts(
+  db: DatabaseSync,
+  taskId: string,
+  runStartedAt: number,
+): ReviewAggregation {
+  // 1. Find the expected roles from the panel marker in system logs
+  const systemLogs = db
+    .prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND created_at >= ? ORDER BY id DESC LIMIT 50",
+    )
+    .all(taskId, runStartedAt) as Array<{ message: string }>;
+
+  let expectedRoles: Set<string> | null = null;
+  for (const log of systemLogs) {
+    const match = log.message.match(PANEL_MARKER);
+    if (match) {
+      expectedRoles = new Set(match[1].split(",").map((r) => r.trim()));
+      break;
+    }
+  }
+
+  // 2. Scan assistant logs for verdicts
+  const assistantLogs = db
+    .prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 100",
+    )
+    .all(taskId, runStartedAt) as Array<{ message: string }>;
+
+  const passedRoles = new Set<string>();
+  let anyNeedsChanges = false;
+
+  for (const log of assistantLogs) {
+    const msg = log.message;
+
+    // Role-tagged NEEDS_CHANGES
+    const ncMatch = msg.match(ROLE_VERDICT_NEEDS_CHANGES);
+    if (ncMatch) {
+      anyNeedsChanges = true;
+    }
+
+    // Legacy NEEDS_CHANGES (no role tag → "code")
+    if (!ncMatch && LEGACY_VERDICT_NEEDS_CHANGES.test(msg)) {
+      anyNeedsChanges = true;
+    }
+
+    // Role-tagged PASS
+    const passMatch = msg.match(ROLE_VERDICT_PASS);
+    if (passMatch) {
+      passedRoles.add(passMatch[1]);
+    }
+
+    // Legacy PASS → counts as "code"
+    if (!passMatch && LEGACY_VERDICT_PASS.test(msg)) {
+      passedRoles.add("code");
+    }
+  }
+
+  // 3. Determine allPassed
+  if (anyNeedsChanges) {
+    return { needsChanges: true, allPassed: false };
+  }
+
+  if (!expectedRoles) {
+    // No panel marker → legacy single-reviewer: require at least one PASS
+    return { needsChanges: false, allPassed: passedRoles.size > 0 };
+  }
+
+  // Every expected role must have a PASS
+  const allPassed = [...expectedRoles].every((role) => passedRoles.has(role));
+  return { needsChanges: false, allPassed };
 }

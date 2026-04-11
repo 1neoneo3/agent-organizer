@@ -339,6 +339,68 @@ describe("determineCompletionStatus", () => {
     const status = determineCompletionStatus(db, task, false, false);
     assert.equal(status, "pr_review");
   });
+
+  // --- Role-tagged verdict tests (parallel review panel) ---
+
+  it("passes when both code and security role-tagged verdicts are PASS", () => {
+    const db = createDb();
+    const task = insertTask(db, { review_count: 1, started_at: 10_000 });
+
+    // Panel marker tells aggregation which roles to expect
+    insertLog(db, task.id, "system", "[REVIEWER_PANEL:code,security]", 10_500);
+    insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
+    insertAssistantLog(db, task.id, "[REVIEW:security:PASS]", 13_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "done");
+  });
+
+  it("returns in_progress when security reviewer requests changes despite code pass", () => {
+    const db = createDb();
+    const task = insertTask(db, { review_count: 1, started_at: 10_000 });
+
+    insertLog(db, task.id, "system", "[REVIEWER_PANEL:code,security]", 10_500);
+    insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
+    insertAssistantLog(db, task.id, "[REVIEW:security:NEEDS_CHANGES:SQL injection in query builder]", 13_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "in_progress");
+  });
+
+  it("returns in_progress when code reviewer requests changes despite security pass", () => {
+    const db = createDb();
+    const task = insertTask(db, { review_count: 1, started_at: 10_000 });
+
+    insertLog(db, task.id, "system", "[REVIEWER_PANEL:code,security]", 10_500);
+    insertAssistantLog(db, task.id, "[REVIEW:code:NEEDS_CHANGES:poor error handling]", 12_000);
+    insertAssistantLog(db, task.id, "[REVIEW:security:PASS]", 13_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "in_progress");
+  });
+
+  it("returns in_progress when panel expects two roles but only code verdict arrives", () => {
+    const db = createDb();
+    const task = insertTask(db, { review_count: 1, started_at: 10_000 });
+
+    insertLog(db, task.id, "system", "[REVIEWER_PANEL:code,security]", 10_500);
+    insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
+    // security verdict never arrives (agent crashed or timed out)
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "in_progress");
+  });
+
+  it("legacy [REVIEW:PASS] still works when no panel marker exists", () => {
+    const db = createDb();
+    const task = insertTask(db, { review_count: 2, started_at: 10_000 });
+
+    // No [REVIEWER_PANEL:...] marker — legacy single-reviewer flow
+    insertAssistantLog(db, task.id, "[REVIEW:PASS]", 12_000);
+
+    const status = determineCompletionStatus(db, task, false);
+    assert.equal(status, "done");
+  });
 });
 
 describe("resolveCompletionStatusAfterPromotion", () => {

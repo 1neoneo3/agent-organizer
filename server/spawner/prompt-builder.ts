@@ -491,10 +491,41 @@ export function buildExplorePrompt(task: Task): string {
 }
 
 /**
- * Build a prompt for an automated code review run.
- * The reviewer agent checks the implementation and outputs a verdict marker.
+ * Reviewer role for role-aware review prompts and verdict tags.
+ *
+ * - "code": general code-quality reviewer (correctness, quality, error
+ *   handling, completeness, secondary security check). This is the
+ *   default and matches the pre-panel review behavior.
+ * - "security": dedicated security reviewer — narrower checklist that
+ *   focuses on secrets, injection, XSS/CSRF, auth/authz, dependency
+ *   vulnerabilities, and data-exposure risks.
  */
-export function buildReviewPrompt(task: Task): string {
+export type ReviewerRole = "code" | "security";
+
+export interface BuildReviewPromptOptions {
+  /**
+   * Which reviewer role this prompt is for. Defaults to `"code"` for
+   * backward compatibility with the pre-panel single-reviewer flow.
+   */
+  reviewerRole?: ReviewerRole;
+}
+
+/**
+ * Build a prompt for an automated code review run.
+ *
+ * The reviewer agent checks the implementation and outputs a verdict
+ * marker. When `reviewerRole` is provided, the prompt is tailored to
+ * that role and the reviewer is instructed to emit a role-tagged
+ * verdict (`[REVIEW:<role>:PASS]` / `[REVIEW:<role>:NEEDS_CHANGES]`)
+ * so that the stage-pipeline aggregator can distinguish verdicts from
+ * different reviewers operating on the same task in parallel.
+ */
+export function buildReviewPrompt(
+  task: Task,
+  options: BuildReviewPromptOptions = {},
+): string {
+  const reviewerRole: ReviewerRole = options.reviewerRole ?? "code";
+  const isSecurityReviewer = reviewerRole === "security";
   const parts: string[] = [];
 
   parts.push("## Language");
@@ -506,8 +537,14 @@ export function buildReviewPrompt(task: Task): string {
   // Inject CLAUDE.md + rules
   appendSharedContext(parts, task.project_path);
 
-  parts.push("# コードレビュータスク");
+  parts.push(isSecurityReviewer ? "# セキュリティレビュータスク" : "# コードレビュータスク");
   parts.push("");
+  if (isSecurityReviewer) {
+    parts.push(
+      "あなたは **セキュリティレビュー専門** の reviewer です。Code reviewer と並列に実行されているため、一般的な品質・完全性の観点は別担当が見ます。**セキュリティ観点だけ** に集中してください。",
+    );
+    parts.push("");
+  }
   parts.push(`以下の実装をレビューしてください: **${task.title}**`);
   parts.push("");
   if (task.description) {
@@ -595,56 +632,98 @@ export function buildReviewPrompt(task: Task): string {
   parts.push("4. 最後にアプリを実行してランタイム/コンソールエラーを確認 (可能な場合)");
   parts.push("");
 
-  parts.push("## レビューチェックリスト");
-  parts.push("");
-  parts.push("各観点を1-5で採点:");
-  parts.push("1. **正確性** - コードはタスクの要求通りに動作するか？");
-  parts.push("2. **コード品質** - クリーンで読みやすく、構造化されているか？命名、重複なし");
-  parts.push("3. **エラーハンドリング** - エッジケースや境界条件が処理されているか？");
-  parts.push("4. **完全性** - タスク説明の全要件が満たされているか？");
-  parts.push("5. **セキュリティ** - ハードコードされた秘密情報、インジェクション脆弱性、危険なパターンはないか？");
-  parts.push("");
-  parts.push("## レポート形式");
-  parts.push("");
-  parts.push("各観点について以下を記載:");
-  parts.push("```");
-  parts.push("REVIEW RESULTS:");
-  parts.push("Correctness:    [X/5] - Evidence: <what you verified>");
-  parts.push("Code Quality:   [X/5] - Evidence: <specific observations>");
-  parts.push("Error Handling: [X/5] - Evidence: <what you checked>");
-  parts.push("Completeness:   [X/5] - Evidence: <requirements coverage>");
-  parts.push("Security:       [X/5] - Evidence: <what you checked>");
-  parts.push("```");
-  parts.push("");
-  parts.push("## 合格基準");
-  parts.push("");
-  parts.push("- 全観点4-5 → `[REVIEW:PASS]`");
-  parts.push("- いずれかの観点が1-2 → `[REVIEW:NEEDS_CHANGES:<修正すべき観点>]`");
-  parts.push("- 3が混在 → 判断に委ねる。機能的に完成していればPASS寄り");
-  parts.push("");
-  parts.push("## レビュー例（採点基準の参考）");
-  parts.push("");
-  parts.push('タスク: "ユーザー認証ミドルウェアの追加"');
-  parts.push("");
-  parts.push("REVIEW RESULTS:");
-  parts.push("Correctness:    [5/5] - Evidence: middleware correctly validates JWT tokens, tested with valid/invalid/expired tokens");
-  parts.push("Code Quality:   [4/5] - Evidence: clean separation of concerns, good naming, minor: one function could be extracted");
-  parts.push("Error Handling: [4/5] - Evidence: handles missing token, expired token, malformed token; returns appropriate HTTP status codes");
-  parts.push("Completeness:   [5/5] - Evidence: all 3 requirements met (JWT validation, role-based access, token refresh)");
-  parts.push("Security:       [3/5] - Evidence: tokens validated correctly, but secret is loaded from env (good), rate limiting not implemented");
-  parts.push("");
-  parts.push("[REVIEW:PASS]");
-  parts.push("");
-  parts.push("## 判定（必須）");
-  parts.push("");
-  parts.push("**重要: レビュー出力には必ず以下のいずれかの判定タグを含めてください。タグがない場合、レビューは無効とみなされタスクが停止します。**");
-  parts.push("");
-  parts.push("レビューの要約を日本語で記述し、**最終行**に判定を出力:");
-  parts.push("- `[REVIEW:PASS]` — 実装が許容範囲の場合");
-  parts.push("- `[REVIEW:NEEDS_CHANGES:<修正すべき観点>]` — 変更が必要な場合");
-  parts.push("");
-  parts.push("判定タグの出力を忘れないでください。これがないとワークフローが進行しません。");
-  parts.push("");
+  if (isSecurityReviewer) {
+    parts.push("## セキュリティレビューチェックリスト");
+    parts.push("");
+    parts.push("各観点を1-5で採点 (1=重大な問題あり / 5=問題なし):");
+    parts.push("1. **シークレット管理** - API key / token / password / DB credentials がハードコードされていないか？ `.env` 経由か？ commit に混入していないか？");
+    parts.push("2. **インジェクション耐性** - SQL injection (parameterized query 使用), command injection (shell=true / exec 系の危険な引数), path traversal の防御");
+    parts.push("3. **XSS / CSRF / 出力エスケープ** - ユーザー入力のサニタイズ, innerHTML/dangerouslySetInnerHTML, CSRF token, SameSite cookie");
+    parts.push("4. **認証 / 認可** - auth middleware の抜け道, 権限チェック不足, 署名検証の有無, セッション固定, JWT の alg=none");
+    parts.push("5. **依存関係 & データ露出** - 既知脆弱性のある library, verbose error message での情報漏洩, ログへの PII/secret 流出, CORS の過剰許可");
+    parts.push("");
+    parts.push("## レポート形式");
+    parts.push("");
+    parts.push("各観点について以下を記載:");
+    parts.push("```");
+    parts.push("SECURITY REVIEW RESULTS:");
+    parts.push("Secret Management:  [X/5] - Evidence: <何を確認したか>");
+    parts.push("Injection:          [X/5] - Evidence: <確認した query / exec パターン>");
+    parts.push("XSS/CSRF:           [X/5] - Evidence: <サニタイズ / token / cookie 設定>");
+    parts.push("AuthN/AuthZ:        [X/5] - Evidence: <middleware / 権限チェック>");
+    parts.push("Deps & Exposure:    [X/5] - Evidence: <依存関係 / log / error>");
+    parts.push("```");
+    parts.push("");
+    parts.push("## 合格基準");
+    parts.push("");
+    parts.push("- 全観点4-5 → `[REVIEW:security:PASS]`");
+    parts.push("- いずれかの観点が1-2 (= 重大な脆弱性) → `[REVIEW:security:NEEDS_CHANGES:<危険な観点>]`");
+    parts.push("- 3が混在 → 実害の有無で判定。理論上の懸念のみなら PASS 寄り");
+    parts.push("");
+    parts.push("## 判定（必須）");
+    parts.push("");
+    parts.push("**重要: レビュー出力には必ず以下のいずれかの判定タグを含めてください。タグがない場合、セキュリティレビューは無効とみなされタスクが停止します。**");
+    parts.push("");
+    parts.push("レビューの要約を日本語で記述し、**最終行**に判定を出力:");
+    parts.push("- `[REVIEW:security:PASS]` — セキュリティ上の重大問題なし");
+    parts.push("- `[REVIEW:security:NEEDS_CHANGES:<危険な観点>]` — 修正が必要");
+    parts.push("");
+    parts.push("判定タグの出力を忘れないでください。これがないとワークフローが進行しません。Code reviewer と並列実行中なので、一般品質の指摘は不要です。**セキュリティだけ**見てください。");
+    parts.push("");
+  } else {
+    parts.push("## レビューチェックリスト");
+    parts.push("");
+    parts.push("各観点を1-5で採点:");
+    parts.push("1. **正確性** - コードはタスクの要求通りに動作するか？");
+    parts.push("2. **コード品質** - クリーンで読みやすく、構造化されているか？命名、重複なし");
+    parts.push("3. **エラーハンドリング** - エッジケースや境界条件が処理されているか？");
+    parts.push("4. **完全性** - タスク説明の全要件が満たされているか？");
+    parts.push("5. **セキュリティ** - ハードコードされた秘密情報、インジェクション脆弱性、危険なパターンはないか？（※ security_reviewer と並列実行中の場合は二次チェック扱いで OK）");
+    parts.push("");
+    parts.push("## レポート形式");
+    parts.push("");
+    parts.push("各観点について以下を記載:");
+    parts.push("```");
+    parts.push("REVIEW RESULTS:");
+    parts.push("Correctness:    [X/5] - Evidence: <what you verified>");
+    parts.push("Code Quality:   [X/5] - Evidence: <specific observations>");
+    parts.push("Error Handling: [X/5] - Evidence: <what you checked>");
+    parts.push("Completeness:   [X/5] - Evidence: <requirements coverage>");
+    parts.push("Security:       [X/5] - Evidence: <what you checked>");
+    parts.push("```");
+    parts.push("");
+    parts.push("## 合格基準");
+    parts.push("");
+    parts.push("- 全観点4-5 → `[REVIEW:code:PASS]`");
+    parts.push("- いずれかの観点が1-2 → `[REVIEW:code:NEEDS_CHANGES:<修正すべき観点>]`");
+    parts.push("- 3が混在 → 判断に委ねる。機能的に完成していればPASS寄り");
+    parts.push("");
+    parts.push("## レビュー例（採点基準の参考）");
+    parts.push("");
+    parts.push('タスク: "ユーザー認証ミドルウェアの追加"');
+    parts.push("");
+    parts.push("REVIEW RESULTS:");
+    parts.push("Correctness:    [5/5] - Evidence: middleware correctly validates JWT tokens, tested with valid/invalid/expired tokens");
+    parts.push("Code Quality:   [4/5] - Evidence: clean separation of concerns, good naming, minor: one function could be extracted");
+    parts.push("Error Handling: [4/5] - Evidence: handles missing token, expired token, malformed token; returns appropriate HTTP status codes");
+    parts.push("Completeness:   [5/5] - Evidence: all 3 requirements met (JWT validation, role-based access, token refresh)");
+    parts.push("Security:       [3/5] - Evidence: tokens validated correctly, but secret is loaded from env (good), rate limiting not implemented");
+    parts.push("");
+    parts.push("[REVIEW:code:PASS]");
+    parts.push("");
+    parts.push("## 判定（必須）");
+    parts.push("");
+    parts.push("**重要: レビュー出力には必ず以下のいずれかの判定タグを含めてください。タグがない場合、レビューは無効とみなされタスクが停止します。**");
+    parts.push("");
+    parts.push("レビューの要約を日本語で記述し、**最終行**に判定を出力:");
+    parts.push("- `[REVIEW:code:PASS]` — 実装が許容範囲の場合");
+    parts.push("- `[REVIEW:code:NEEDS_CHANGES:<修正すべき観点>]` — 変更が必要な場合");
+    parts.push("");
+    parts.push("**後方互換**: 旧形式の `[REVIEW:PASS]` / `[REVIEW:NEEDS_CHANGES:<理由>]` も引き続き受理されますが、新規出力には必ず `code` role を付けてください。");
+    parts.push("");
+    parts.push("判定タグの出力を忘れないでください。これがないとワークフローが進行しません。");
+    parts.push("");
+  }
 
   return parts.join("\n");
 }
