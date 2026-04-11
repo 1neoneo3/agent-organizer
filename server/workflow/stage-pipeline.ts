@@ -6,6 +6,10 @@ import {
   getLatestCheckResults,
   type CheckResult,
 } from "../spawner/auto-checks.js";
+import {
+  hasParallelTestCompletion,
+  isParallelImplTestEnabled,
+} from "./parallel-impl.js";
 
 export { WORKFLOW_STAGES };
 export type { WorkflowStage };
@@ -142,6 +146,17 @@ export function resolveActiveStages(
   db: DatabaseSync,
   workflow: ProjectWorkflow | null,
   taskSize?: "small" | "medium" | "large",
+  /**
+   * AO Phase 3: optional task id. When provided, `resolveActiveStages`
+   * additionally checks whether the parallel impl/test mode has already
+   * produced a `[PARALLEL_TEST:DONE]` marker for this task. If it has,
+   * the serial `test_generation` stage is dropped — running it would be
+   * a redundant second round of test generation after the parallel
+   * tester already finished. Callers that don't have a task id (e.g.
+   * `validateStatusTransition` at task creation time) can safely omit
+   * this argument and will get the historical behavior.
+   */
+  taskId?: string,
 ): WorkflowStage[] {
   const qaMode = getSetting(db, "qa_mode") ?? "disabled";
   const reviewMode = getSetting(db, "review_mode") ?? "pr_only";
@@ -150,13 +165,19 @@ export function resolveActiveStages(
 
   // test_generation: workflow override → settings default → false.
   // Small tasks always skip this stage regardless of the toggle so the
-  // pipeline stays short for trivial work.
+  // pipeline stays short for trivial work. When the parallel impl/test
+  // mode has already finished for this task (DONE marker present),
+  // drop the serial stage entirely to avoid duplicated work.
   const testGenEnabled = resolveWorkflowToggle(
     db,
     workflow?.enableTestGeneration,
     "default_enable_test_generation",
   );
-  if (testGenEnabled && taskSize !== "small") {
+  const parallelAlreadyRan =
+    taskId !== undefined &&
+    isParallelImplTestEnabled(db) &&
+    hasParallelTestCompletion(db, taskId);
+  if (testGenEnabled && taskSize !== "small" && !parallelAlreadyRan) {
     stages.push("test_generation");
   }
 
@@ -272,7 +293,9 @@ export function determineNextStage(
   workflow: ProjectWorkflow | null,
 ): Task["status"] {
   const runStartedAt = task.started_at ?? 0;
-  const activeStages = resolveActiveStages(db, workflow, task.task_size);
+  // Pass task.id so parallel-mode completion drops the serial
+  // test_generation stage for this task only.
+  const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
 
   // QA run completed — check QA verdict
   if (task.status === "qa_testing") {

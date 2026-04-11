@@ -18,6 +18,10 @@ import {
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { triggerAutoQa } from "./auto-qa.js";
 import { triggerAutoTestGen } from "./auto-test-gen.js";
+import {
+  isParallelImplTestEnabled,
+  recordParallelTestCompletion,
+} from "../workflow/parallel-impl.js";
 import { triggerAutoPreDeploy } from "./auto-pre-deploy.js";
 import { triggerAutoChecks, waitForActiveChecks } from "./auto-checks.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
@@ -331,10 +335,20 @@ export function spawnAgent(
      * coordination with any secondary reviewers.
      */
     reviewerRole?: ReviewerRole;
+    /**
+     * AO Phase 3: when true, this spawn is the *parallel tester* half of
+     * the parallel implementer + tester pair. The parallel tester shares
+     * a worktree with the implementer, runs `buildTestGenerationPrompt`
+     * in parallel mode, and finalizes by writing a
+     * `[PARALLEL_TEST:DONE]` marker instead of driving the task status —
+     * the implementer remains the source of truth for status transitions.
+     */
+    parallelTester?: boolean;
   }
 ): { pid: number } {
   const cache = options?.cache;
   const isContinue = !!options?.continuePrompt;
+  const isParallelTester = options?.parallelTester === true;
   const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
   const projectPath = task.project_path ?? process.cwd();
@@ -351,8 +365,13 @@ export function spawnAgent(
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
 
   const isQaRun = task.status === "qa_testing";
-  const isTestGenRun = task.status === "test_generation";
+  // A parallel tester spawn runs the test_generation prompt even though
+  // the task's status stays in_progress, so treat it as a test-gen run
+  // for tool-restrictions, handoff context, and prompt routing.
+  const isTestGenRun = task.status === "test_generation" || isParallelTester;
   const isPreDeployRun = task.status === "pre_deploy";
+  const parallelImplEnabled =
+    !isParallelTester && !isContinue && isParallelImplTestEnabled(db);
 
   // Restrict tools for review/QA/pre-deploy phases (read-only)
   const allowedTools = (isReviewRun || isQaRun || isPreDeployRun)
@@ -401,14 +420,21 @@ export function spawnAgent(
   const prompt = isContinue
     ? options!.continuePrompt!
     : (isTestGenRun
-      ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic") + handoffContext
+      ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
+          parallel: isParallelTester,
+        }) + handoffContext
       : (isQaRun
         ? buildQaPrompt(task, workflow?.projectType ?? "generic") + handoffContext
         : (isPreDeployRun
           ? buildPreDeployPrompt(task) + handoffContext
           : (isReviewRun
             ? buildReviewPrompt(task, { reviewerRole: options?.reviewerRole ?? "code" }) + handoffContext
-            : buildTaskPrompt(task, { selfReview, workflow, runtimePolicy }) + exploreContext))));
+            : buildTaskPrompt(task, {
+                selfReview,
+                workflow,
+                runtimePolicy,
+                parallelScope: parallelImplEnabled ? "implementer" : undefined,
+              }) + exploreContext))));
 
   // Log directory
   const logDir = join("data", "logs");
@@ -454,7 +480,13 @@ export function spawnAgent(
     // Preserve current status for QA/review/test_generation/pre_deploy runs — only set in_progress for inbox tasks
     const currentStatus = task.status;
     const shouldSetInProgress = currentStatus === "inbox";
-    if (shouldSetInProgress) {
+    if (isParallelTester) {
+      // The implementer "owns" assigned_agent_id / started_at / status.
+      // The parallel tester must not overwrite them — it just borrows the
+      // same worktree and logs a [PARALLEL_TEST:DONE] marker on exit.
+      // Only flip the *tester* agent to working so the UI shows both
+      // agents busy during parallel execution.
+    } else if (shouldSetInProgress) {
       db.prepare("UPDATE tasks SET status = 'in_progress', assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
     } else {
       db.prepare("UPDATE tasks SET assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
@@ -465,6 +497,39 @@ export function spawnAgent(
     const startedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
     ws.broadcast("task_update", startedTask ?? { id: task.id, status: shouldSetInProgress ? "in_progress" : currentStatus, started_at: now });
     ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
+
+    // AO Phase 3: if parallel impl/test mode is enabled and this is an
+    // implementer spawn (not the parallel tester itself, not a review /
+    // QA / test-gen / pre-deploy run, not a feedback continue), fire a
+    // parallel tester now so it runs concurrently. `triggerParallelTester`
+    // is idempotent and no-ops if the setting is off, no idle tester
+    // exists, or a DONE marker is already present.
+    if (
+      parallelImplEnabled &&
+      !isReviewRun &&
+      !isQaRun &&
+      !isTestGenRun &&
+      !isPreDeployRun
+    ) {
+      const freshTask = db
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(task.id) as unknown as Task;
+      setTimeout(async () => {
+        try {
+          const { triggerParallelTester } = await import(
+            "../workflow/parallel-impl.js"
+          );
+          await triggerParallelTester(db, ws, freshTask, { cache });
+        } catch (err) {
+          db.prepare(
+            "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+          ).run(
+            task.id,
+            `Parallel tester trigger failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }, 500);
+    }
   }
 
   // Send prompt via stdin
@@ -765,6 +830,40 @@ export function spawnAgent(
     getHeartbeatManager()?.unregisterTask(task.id);
     activeProcesses.delete(task.id);
     logStream.end();
+
+    // AO Phase 3: the parallel tester never drives task status. It only
+    // records a [PARALLEL_TEST:DONE] marker so stage-pipeline can skip
+    // the serial test_generation stage, flips its agent back to idle,
+    // and exits. The implementer's own close handler remains the
+    // authoritative source of status transitions.
+    if (isParallelTester) {
+      const finishTime = Date.now();
+      const verdict: "pass" | "fail" = code === 0 ? "pass" : "fail";
+      try {
+        recordParallelTestCompletion(db, task.id, verdict);
+      } catch (err) {
+        insertLogStmt.run(
+          task.id,
+          "system",
+          `Parallel tester completion logging failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      insertLogStmt.run(
+        task.id,
+        "system",
+        `Parallel tester process exited with code ${code}. Verdict: ${verdict}`,
+      );
+      db.prepare(
+        "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+      ).run(finishTime, agent.id);
+      invalidateCaches(cache);
+      ws.broadcast("agent_status", {
+        id: agent.id,
+        status: "idle",
+        current_task_id: null,
+      });
+      return;
+    }
 
     // Check for pending interactive prompt — keep task in_progress, don't finalize.
     // The process was killed when we detected the prompt, so the user can respond via UI.
