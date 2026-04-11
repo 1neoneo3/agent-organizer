@@ -15,6 +15,7 @@ import { startTelegramControlPoller } from "./notify/telegram-control.js";
 import { startAutoDispatchScheduler } from "./dispatch/auto-dispatcher.js";
 import { startGithubIssueSync } from "./integrations/github-sync.js";
 import { isPerfLogEnabled, startPerfReporter } from "./perf/metrics.js";
+import { initHeartbeatManager } from "./spawner/heartbeat-manager.js";
 import {
   PORT,
   IS_DEV,
@@ -79,6 +80,8 @@ wss.on("connection", (ws: WebSocket) => {
 
 // Restore interactive prompts from DB and start lifecycle jobs
 restorePendingInteractivePrompts(db);
+const heartbeatManager = initHeartbeatManager(db);
+heartbeatManager.start();
 startOrphanRecovery(db, wsHub, cache);
 startGithubIssueSync(db, wsHub, cache);
 startAutoDispatchScheduler(db, wsHub, cache);

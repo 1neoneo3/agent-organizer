@@ -23,7 +23,8 @@ import {
 } from "../config/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
-import { recordDbLogInsertMs, recordHeartbeatWrite, recordStdoutChunkMs } from "../perf/metrics.js";
+import { recordDbLogInsertMs, recordStdoutChunkMs } from "../perf/metrics.js";
+import { getHeartbeatManager } from "./heartbeat-manager.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
@@ -366,24 +367,15 @@ export function spawnAgent(
     }, TASK_RUN_IDLE_TIMEOUT_MS);
   }
 
-  // Heartbeat: update tasks.last_heartbeat_at every 30s while this process is
-  // alive. Orphan recovery uses this column (instead of updated_at) to decide
-  // whether a task is genuinely stuck vs. still being processed. An initial
-  // stamp is written immediately so a task that is about to transition into
-  // pr_review / qa_testing / etc. does not look stuck during the short gap
-  // between spawn and the first heartbeat tick.
-  const HEARTBEAT_INTERVAL_MS = 30_000;
-  const heartbeatStmt = db.prepare("UPDATE tasks SET last_heartbeat_at = ? WHERE id = ?");
-  const writeHeartbeat = (): void => {
-    try {
-      heartbeatStmt.run(Date.now(), task.id);
-      recordHeartbeatWrite();
-    } catch {
-      // Ignore — DB may be shutting down
-    }
-  };
-  writeHeartbeat();
-  const heartbeatTimer = setInterval(writeHeartbeat, HEARTBEAT_INTERVAL_MS);
+  // Heartbeat: register with the shared scheduler instead of starting a
+  // per-process setInterval. The scheduler consolidates all active tasks
+  // into a single periodic UPDATE wrapped in one transaction, so the
+  // writer lock is acquired once per tick regardless of how many agents
+  // are running in parallel. registerTask also stamps `last_heartbeat_at`
+  // immediately, covering the gap between spawn and the first scheduled
+  // tick. In tests the singleton is sometimes not initialized; we treat
+  // that as a no-op.
+  getHeartbeatManager()?.registerTask(task.id);
 
   // stdout handler
   child.stdout?.on("data", (data: Buffer) => {
@@ -549,7 +541,7 @@ export function spawnAgent(
 
     clearTimeout(idleTimer);
     clearTimeout(hardTimer);
-    clearInterval(heartbeatTimer);
+    getHeartbeatManager()?.unregisterTask(task.id);
     activeProcesses.delete(task.id);
 
     const finishTime = Date.now();
@@ -586,7 +578,7 @@ export function spawnAgent(
 
     clearTimeout(idleTimer);
     clearTimeout(hardTimer);
-    clearInterval(heartbeatTimer);
+    getHeartbeatManager()?.unregisterTask(task.id);
     activeProcesses.delete(task.id);
     logStream.end();
 
