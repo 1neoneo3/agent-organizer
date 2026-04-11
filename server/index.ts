@@ -57,7 +57,32 @@ app.get("/{*splat}", (_req, res) => {
 const server = createServer(app);
 
 // WebSocket
-const wss = new WebSocketServer({ server, path: "/ws" });
+//
+// `perMessageDeflate` turns on RFC-7692 per-message compression. For our
+// workload (JSON-encoded task updates + log batches, typically 2–300KB
+// per broadcast and occasionally much larger on initial task sync) this
+// typically saves 50–70% of wire bytes at the cost of a small CPU spike
+// per message. We deliberately tune away from the library defaults:
+//
+//   - `threshold: 1024` so scalar status pings stay uncompressed (the
+//     deflate overhead actually makes tiny messages *larger*)
+//   - `level: 1` for zlib, which is the fastest compression setting and
+//     already captures the bulk of the savings on JSON. Levels 6+ give
+//     only a few percent extra while burning many times the CPU.
+//   - `concurrencyLimit: 10` to bound the number of parallel deflate
+//     operations across connected clients, so a flood of broadcasts to
+//     N clients can never stall the event loop.
+//
+// Clients need no changes — browsers negotiate deflate transparently.
+const wss = new WebSocketServer({
+  server,
+  path: "/ws",
+  perMessageDeflate: {
+    zlibDeflateOptions: { level: 1 },
+    threshold: 1024,
+    concurrencyLimit: 10,
+  },
+});
 wss.on("connection", (ws: WebSocket) => {
   wsHub.addClient(ws);
   ws.on("message", (message) => {
