@@ -114,6 +114,32 @@ function looksLikeCompletionSummary(text: string): boolean {
 }
 
 /**
+ * Strong signal: the message ends with (or contains near the end) an
+ * explicit question mark followed by a numbered list of two or more
+ * options. This is unambiguously "the agent is asking the user to
+ * pick" and overrides the completion-summary guard, because agents
+ * sometimes post a long status report (including a `[REVIEW:PASS]`
+ * bullet) AND a final "what next?" decision prompt in the same
+ * message — the summary guard would otherwise swallow the prompt.
+ *
+ * Match shape:
+ *   "...どうしますか？\n\n1. ...\n2. ..."
+ *   "...What next?\n1) ...\n2) ..."
+ *
+ * Punctuation is intentionally generous to cover JP/CJK conventions
+ * (。．、) alongside ASCII `.` and `)`.
+ */
+function hasExplicitOptionsPrompt(text: string): boolean {
+  // Require the question mark to be followed (within a reasonable
+  // distance) by two numbered items. Using [\s\S] so the regex spans
+  // newlines. The `\d+` on the second marker makes sure any two
+  // distinct items qualify even if option "1" has multi-line content.
+  return /[?？][\s\S]{0,600}?\n\s*1[.．)、:][\s\S]{0,600}?\n\s*[2-9][.．)、:]/.test(
+    text,
+  );
+}
+
+/**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
  *
@@ -126,7 +152,23 @@ export function detectTextInteractivePrompt(
   // Skip very short messages — unlikely to be a genuine input request.
   // Threshold is low (10) because CJK languages pack more meaning per character.
   if (assistantText.length < 10) return null;
-  if (looksLikeCompletionSummary(assistantText)) return null;
+
+  // Strong override: an explicit "question + 2+ numbered options" block
+  // is unambiguously a prompt. It wins over the completion-summary
+  // guard because agents sometimes finish their report with a verdict
+  // tag AND a final "what next?" decision list in the same message.
+  const explicitOptions = hasExplicitOptionsPrompt(assistantText);
+
+  if (!explicitOptions && looksLikeCompletionSummary(assistantText)) return null;
+
+  if (explicitOptions) {
+    return {
+      promptType: "text_input_request",
+      toolUseId: "",
+      detectedText: assistantText,
+      questions: [{ question: assistantText }],
+    };
+  }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
     if (pattern.test(assistantText)) {
