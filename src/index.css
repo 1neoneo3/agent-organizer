@@ -61,6 +61,150 @@
   --flavor-accent-subtle: #e0eef0;
 }
 
+/* --- Palette: Denim --- */
+/*
+ * Alternate palette: denim blue hero color with peach + lavender accents
+ * on a cool off-white background. Light-mode overrides; the `.dark`
+ * companion block below adapts the same hues for night use.
+ */
+[data-palette="denim"] {
+  --bg-primary: #f5f7fb;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e8edf4;
+  --bg-hover: rgba(30, 47, 76, 0.04);
+
+  --border-default: rgba(30, 47, 76, 0.10);
+  --border-subtle: rgba(30, 47, 76, 0.05);
+
+  --text-primary: #1e2f4c;
+  --text-secondary: #5a6b86;
+  --text-tertiary: #a3aec2;
+
+  --accent-primary: #5978b8;
+  --accent-hover: #486299;
+  --accent-subtle: #e3e9f5;
+  --accent-glow: rgba(89, 120, 184, 0.30);
+
+  --status-inbox: #a3aec2;
+  --status-progress: #e8b8a0;
+  --status-review: #9b8fc6;
+  --status-test-gen: #88a8b9;
+  --status-done: #5978b8;
+  --status-qa: #8ba4d4;
+  --status-human-review: #dcab91;
+  --status-pre-deploy: #9b8fc6;
+  --status-cancelled: #c88787;
+
+  --terminal-bg: #f7f9fc;
+  --terminal-header-bg: #eef1f7;
+  --terminal-text: #1e2f4c;
+  --terminal-text-dim: #5a6b86;
+
+  --shadow-sm: 0 1px 2px rgba(30, 47, 76, 0.05);
+  --shadow-md: 0 2px 8px rgba(30, 47, 76, 0.07), 0 1px 2px rgba(30, 47, 76, 0.04);
+  --shadow-lg: 0 8px 24px rgba(30, 47, 76, 0.09), 0 2px 8px rgba(30, 47, 76, 0.04);
+  --shadow-card: 0 1px 3px rgba(30, 47, 76, 0.05), 0 0 0 1px rgba(30, 47, 76, 0.04);
+
+  --flavor-accent: #5978b8;
+  --flavor-accent-subtle: #e3e9f5;
+}
+
+/* --- Palette: Forest --- */
+/*
+ * Alternate palette: deep emerald / forest teal with pale sage accents.
+ * Richer and darker than the default `teal` palette, closer to an ink
+ * color than a pastel.
+ */
+[data-palette="forest"] {
+  --bg-primary: #f3f6f5;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #dde8e5;
+  --bg-hover: rgba(13, 82, 78, 0.05);
+
+  --border-default: rgba(13, 82, 78, 0.12);
+  --border-subtle: rgba(13, 82, 78, 0.06);
+
+  --text-primary: #0d3834;
+  --text-secondary: #527873;
+  --text-tertiary: #98b5b0;
+
+  --accent-primary: #0d524e;
+  --accent-hover: #074340;
+  --accent-subtle: #dde8e5;
+  --accent-glow: rgba(13, 82, 78, 0.30);
+
+  --status-inbox: #98b5b0;
+  --status-progress: #d4a876;
+  --status-review: #9b8cc4;
+  --status-test-gen: #5a9c84;
+  --status-done: #0d524e;
+  --status-qa: #6ba39d;
+  --status-human-review: #d9a68d;
+  --status-pre-deploy: #9b8cc4;
+  --status-cancelled: #c88787;
+
+  --terminal-bg: #f7faf9;
+  --terminal-header-bg: #ecf2f0;
+  --terminal-text: #0d3834;
+  --terminal-text-dim: #527873;
+
+  --shadow-sm: 0 1px 2px rgba(13, 82, 78, 0.06);
+  --shadow-md: 0 2px 8px rgba(13, 82, 78, 0.08), 0 1px 2px rgba(13, 82, 78, 0.04);
+  --shadow-lg: 0 8px 24px rgba(13, 82, 78, 0.10), 0 2px 8px rgba(13, 82, 78, 0.05);
+  --shadow-card: 0 1px 3px rgba(13, 82, 78, 0.06), 0 0 0 1px rgba(13, 82, 78, 0.05);
+
+  --flavor-accent: #0d524e;
+  --flavor-accent-subtle: #dde8e5;
+}
+
+/* --- Palette: Aqua --- */
+/*
+ * Alternate palette: vibrant jewel teal with emerald and sky-blue pops.
+ * More saturated than `teal` or `forest`; the hero color leans toward
+ * a tropical cyan while secondary accents drive from emerald + sky.
+ */
+[data-palette="aqua"] {
+  --bg-primary: #f2f8f8;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #dcecef;
+  --bg-hover: rgba(11, 139, 139, 0.05);
+
+  --border-default: rgba(11, 139, 139, 0.12);
+  --border-subtle: rgba(11, 139, 139, 0.06);
+
+  --text-primary: #1b4a5e;
+  --text-secondary: #4e7a8a;
+  --text-tertiary: #95b5bf;
+
+  --accent-primary: #0b8b8b;
+  --accent-hover: #067272;
+  --accent-subtle: #dcecef;
+  --accent-glow: rgba(11, 139, 139, 0.30);
+
+  --status-inbox: #95b5bf;
+  --status-progress: #d4a876;
+  --status-review: #9b8cc4;
+  --status-test-gen: #1ca47a;
+  --status-done: #0b8b8b;
+  --status-qa: #6dbfe3;
+  --status-human-review: #d9a68d;
+  --status-pre-deploy: #1b4a5e;
+  --status-cancelled: #c88787;
+
+  --terminal-bg: #f6fafb;
+  --terminal-header-bg: #e8f1f3;
+  --terminal-text: #1b4a5e;
+  --terminal-text-dim: #4e7a8a;
+
+  --shadow-sm: 0 1px 2px rgba(11, 139, 139, 0.06);
+  --shadow-md: 0 2px 8px rgba(11, 139, 139, 0.08), 0 1px 2px rgba(11, 139, 139, 0.04);
+  --shadow-lg: 0 8px 24px rgba(11, 139, 139, 0.10), 0 2px 8px rgba(11, 139, 139, 0.05);
+  --shadow-card: 0 1px 3px rgba(11, 139, 139, 0.06), 0 0 0 1px rgba(11, 139, 139, 0.05);
+
+  --flavor-accent: #0b8b8b;
+  --flavor-accent-subtle: #dcecef;
+}
+
 /* --- Flavor accents (all tuned to the pastel palette) --- */
 [data-flavor="mint"] {
   --flavor-accent: #7fb5a6;
@@ -121,6 +265,96 @@
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(168, 208, 210, 0.05);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.55);
   --shadow-card: 0 0 0 1px rgba(168, 208, 210, 0.08), 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* --- Dark mode override for Aqua palette --- */
+.dark[data-palette="aqua"] {
+  --bg-primary: #052124;
+  --bg-secondary: #0a2f33;
+  --bg-tertiary: #103e42;
+  --bg-hover: rgba(149, 181, 191, 0.06);
+
+  --border-default: rgba(149, 181, 191, 0.12);
+  --border-subtle: rgba(149, 181, 191, 0.06);
+
+  --text-primary: #e3f0f2;
+  --text-secondary: #95b5bf;
+  --text-tertiary: #4e7a8a;
+
+  --accent-primary: #3db5b5;
+  --accent-hover: #6dcaca;
+  --accent-subtle: rgba(61, 181, 181, 0.18);
+  --accent-glow: rgba(61, 181, 181, 0.35);
+
+  --terminal-bg: #052124;
+  --terminal-header-bg: #0a2f33;
+  --terminal-text: #e3f0f2;
+  --terminal-text-dim: #7a959f;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.50), 0 0 0 1px rgba(149, 181, 191, 0.05);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.60);
+  --shadow-card: 0 0 0 1px rgba(149, 181, 191, 0.08), 0 1px 2px rgba(0, 0, 0, 0.30);
+}
+
+/* --- Dark mode override for Forest palette --- */
+.dark[data-palette="forest"] {
+  --bg-primary: #061a18;
+  --bg-secondary: #0b2623;
+  --bg-tertiary: #0f3331;
+  --bg-hover: rgba(181, 206, 200, 0.06);
+
+  --border-default: rgba(181, 206, 200, 0.12);
+  --border-subtle: rgba(181, 206, 200, 0.06);
+
+  --text-primary: #e3edea;
+  --text-secondary: #98b5b0;
+  --text-tertiary: #527873;
+
+  --accent-primary: #6ba39d;
+  --accent-hover: #8bb8b3;
+  --accent-subtle: rgba(107, 163, 157, 0.18);
+  --accent-glow: rgba(107, 163, 157, 0.35);
+
+  --terminal-bg: #061a18;
+  --terminal-header-bg: #0b2623;
+  --terminal-text: #e3edea;
+  --terminal-text-dim: #7a9591;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.50), 0 0 0 1px rgba(181, 206, 200, 0.05);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.60);
+  --shadow-card: 0 0 0 1px rgba(181, 206, 200, 0.08), 0 1px 2px rgba(0, 0, 0, 0.30);
+}
+
+/* --- Dark mode override for Denim palette --- */
+.dark[data-palette="denim"] {
+  --bg-primary: #0e1a2f;
+  --bg-secondary: #152339;
+  --bg-tertiary: #1e3350;
+  --bg-hover: rgba(163, 174, 194, 0.06);
+
+  --border-default: rgba(163, 174, 194, 0.12);
+  --border-subtle: rgba(163, 174, 194, 0.06);
+
+  --text-primary: #e8eef8;
+  --text-secondary: #a3aec2;
+  --text-tertiary: #5a6b86;
+
+  --accent-primary: #8ba4d4;
+  --accent-hover: #a8bee0;
+  --accent-subtle: rgba(139, 164, 212, 0.18);
+  --accent-glow: rgba(139, 164, 212, 0.35);
+
+  --terminal-bg: #0e1a2f;
+  --terminal-header-bg: #152339;
+  --terminal-text: #e8eef8;
+  --terminal-text-dim: #7b8aa3;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(163, 174, 194, 0.05);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-card: 0 0 0 1px rgba(163, 174, 194, 0.08), 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 .dark[data-flavor="mint"] {

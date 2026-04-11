@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Outlet } from "react-router";
 import { PanelLeftOpen } from "lucide-react";
 import { Sidebar } from "./Sidebar.js";
-import type { Flavor, TimeOfDay } from "../../hooks/useTheme.js";
+import type { Flavor, Palette, PaletteMeta, TimeOfDay } from "../../hooks/useTheme.js";
 
 interface AppLayoutProps {
   connected: boolean;
@@ -10,6 +10,9 @@ interface AppLayoutProps {
   toggleTheme: () => void;
   flavor: Flavor;
   setFlavor: (f: Flavor) => void;
+  palette: Palette;
+  setPalette: (p: Palette) => void;
+  palettes: ReadonlyArray<PaletteMeta>;
   timeOfDay: TimeOfDay;
   toggleTimeOfDay: () => void;
   flavors: readonly Flavor[];
@@ -25,7 +28,7 @@ function loadCollapsed(): boolean {
   return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
 }
 
-export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, timeOfDay, toggleTimeOfDay, flavors }: AppLayoutProps) {
+export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, palette, setPalette, palettes, timeOfDay, toggleTimeOfDay, flavors }: AppLayoutProps) {
   const [collapsed, setCollapsedState] = useState<boolean>(loadCollapsed);
   const [nearLeftEdge, setNearLeftEdge] = useState(false);
   const [revealButtonFocused, setRevealButtonFocused] = useState(false);
@@ -76,6 +79,9 @@ export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, ti
           toggleTheme={toggleTheme}
           flavor={flavor}
           setFlavor={setFlavor}
+          palette={palette}
+          setPalette={setPalette}
+          palettes={palettes}
           timeOfDay={timeOfDay}
           toggleTimeOfDay={toggleTimeOfDay}
           flavors={flavors}

@@ -11,7 +11,7 @@ import { useTheme } from "./hooks/useTheme.js";
 
 function AppRoutes() {
   const { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on, subscribeTask } = useAppData();
-  const { theme, toggleTheme, flavor, setFlavor, timeOfDay, toggleTimeOfDay, flavors } = useTheme();
+  const { theme, toggleTheme, flavor, setFlavor, palette, setPalette, palettes, timeOfDay, toggleTimeOfDay, flavors } = useTheme();
   const navigate = useNavigate();
 
   const handleNavigateToTask = (taskId: string) => {
@@ -36,6 +36,9 @@ function AppRoutes() {
             toggleTheme={toggleTheme}
             flavor={flavor}
             setFlavor={setFlavor}
+            palette={palette}
+            setPalette={setPalette}
+            palettes={palettes}
             timeOfDay={timeOfDay}
             toggleTimeOfDay={toggleTimeOfDay}
             flavors={flavors}

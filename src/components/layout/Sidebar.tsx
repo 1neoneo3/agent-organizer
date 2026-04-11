@@ -1,7 +1,7 @@
 import { NavLink } from "react-router";
 import type { ReactNode } from "react";
 import { CheckSquare, Compass, Building2, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose } from "lucide-react";
-import type { Flavor, TimeOfDay } from "../../hooks/useTheme.js";
+import type { Flavor, Palette, PaletteMeta, TimeOfDay } from "../../hooks/useTheme.js";
 
 type NavItem = { to: string; label: string; icon: ReactNode };
 
@@ -19,13 +19,16 @@ interface SidebarProps {
   toggleTheme: () => void;
   flavor: Flavor;
   setFlavor: (f: Flavor) => void;
+  palette: Palette;
+  setPalette: (p: Palette) => void;
+  palettes: ReadonlyArray<PaletteMeta>;
   timeOfDay: TimeOfDay;
   toggleTimeOfDay: () => void;
   flavors: readonly Flavor[];
   onCollapse?: () => void;
 }
 
-export function Sidebar({ connected, timeOfDay, toggleTimeOfDay, onCollapse }: SidebarProps) {
+export function Sidebar({ connected, palette, setPalette, palettes, timeOfDay, toggleTimeOfDay, onCollapse }: SidebarProps) {
   return (
     <aside
       className="flex flex-col h-full"
@@ -173,8 +176,69 @@ export function Sidebar({ connected, timeOfDay, toggleTimeOfDay, onCollapse }: S
         </button>
       </div>
 
+      {/* Theme picker */}
+      <div style={{ padding: "12px 16px 0", borderTop: "1px solid var(--border-subtle)" }}>
+        <div style={{
+          fontSize: "10px",
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          color: "var(--text-tertiary)",
+          marginBottom: "8px",
+        }}>
+          Theme
+        </div>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {palettes.map((p) => {
+            const active = palette === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => setPalette(p.id)}
+                title={p.label}
+                aria-label={`Use ${p.label} theme`}
+                aria-pressed={active}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "4px 8px 4px 4px",
+                  background: active ? "var(--bg-tertiary)" : "transparent",
+                  border: "1px solid " + (active ? "var(--accent-primary)" : "var(--border-subtle)"),
+                  borderRadius: "999px",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    display: "inline-block",
+                    width: "16px",
+                    height: "16px",
+                    borderRadius: "50%",
+                    // Two-tone split circle: left half = primary, right half = secondary
+                    background: `linear-gradient(90deg, ${p.primary} 0 50%, ${p.secondary} 50% 100%)`,
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    flexShrink: 0,
+                  }}
+                />
+                <span style={{
+                  fontSize: "11px",
+                  fontWeight: active ? 600 : 500,
+                  color: active ? "var(--text-primary)" : "var(--text-secondary)",
+                }}>
+                  {p.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Day/Night Toggle */}
-      <div style={{ padding: "12px 16px 20px", borderTop: "1px solid var(--border-subtle)" }}>
+      <div style={{ padding: "12px 16px 20px" }}>
         <button
           onClick={toggleTimeOfDay}
           style={{
