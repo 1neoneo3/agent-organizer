@@ -305,9 +305,14 @@ function TerminalView({
         return;
       }
 
-      startTransition(() => {
-        setLogs((prev) => appendLiveLogs(prev, relevant));
-      });
+      // Update eagerly (no startTransition). Live log streaming is the
+      // user-visible point of the Terminal tab — any deferral makes the
+      // output feel laggy even though the server is delivering chunks
+      // sub-100ms after they appear. React 18 batches multiple setLogs
+      // calls inside the same macrotask automatically, so we still get
+      // the benefits of batching without the concurrent-mode defer that
+      // startTransition adds on top.
+      setLogs((prev) => appendLiveLogs(prev, relevant));
     });
   }, [taskId, on, currentStage, currentAgentId]);
 
@@ -583,9 +588,10 @@ export function TerminalPanel({
           agent_id: d.agent_id ?? currentAgentIdRef.current,
         }));
       if (relevant.length > 0) {
-        startTransition(() => {
-          setLogs((prev) => appendLiveLogs(prev, relevant));
-        });
+        // See the matching note in TerminalView above — live streaming
+        // should not be deferred through startTransition. React 18
+        // still batches synchronously-enqueued updates.
+        setLogs((prev) => appendLiveLogs(prev, relevant));
       }
     });
   }, [taskId, on]);
