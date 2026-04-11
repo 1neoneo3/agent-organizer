@@ -25,9 +25,16 @@ export interface ProjectWorkflow {
   includeTask: boolean;
   includeReview: boolean;
   includeDecompose: boolean;
-  enableTestGeneration: boolean;
-  enableHumanReview: boolean;
-  enablePreDeploy: boolean;
+  /**
+   * Stage toggles are tri-state:
+   *   - `true`  — explicitly enabled in WORKFLOW.md
+   *   - `false` — explicitly disabled in WORKFLOW.md
+   *   - `null`  — not specified; `resolveActiveStages` will fall back to
+   *              the global `default_enable_*` setting
+   */
+  enableTestGeneration: boolean | null;
+  enableHumanReview: boolean | null;
+  enablePreDeploy: boolean | null;
   projectType: ProjectType;
 }
 
@@ -46,9 +53,10 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   includeTask: true,
   includeReview: true,
   includeDecompose: true,
-  enableTestGeneration: false,
-  enableHumanReview: false,
-  enablePreDeploy: false,
+  // null → fall back to the global default_enable_* setting at resolve time
+  enableTestGeneration: null,
+  enableHumanReview: null,
+  enablePreDeploy: null,
   projectType: "generic",
 };
 

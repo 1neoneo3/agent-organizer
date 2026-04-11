@@ -103,6 +103,88 @@ describe("resolveActiveStages", () => {
     const stages = resolveActiveStages(db, null);
     assert.deepStrictEqual(stages, ["in_progress", "pr_review", "done"]);
   });
+
+  // --- Global default settings fallback ---
+
+  it("falls back to default_enable_test_generation setting when workflow is null", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      default_enable_test_generation: "true",
+    });
+    const stages = resolveActiveStages(db, null, "medium");
+    assert.deepStrictEqual(stages, ["in_progress", "test_generation", "done"]);
+  });
+
+  it("skips test_generation for small tasks even when global default is enabled", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      default_enable_test_generation: "true",
+    });
+    const stages = resolveActiveStages(db, null, "small");
+    assert.deepStrictEqual(stages, ["in_progress", "done"]);
+  });
+
+  it("falls back to default_enable_human_review setting when workflow is null", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      default_enable_human_review: "true",
+    });
+    const stages = resolveActiveStages(db, null);
+    assert.deepStrictEqual(stages, ["in_progress", "human_review", "done"]);
+  });
+
+  it("falls back to default_enable_pre_deploy setting when workflow is null", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      default_enable_pre_deploy: "true",
+    });
+    const stages = resolveActiveStages(db, null);
+    assert.deepStrictEqual(stages, ["in_progress", "pre_deploy", "done"]);
+  });
+
+  it("workflow null flag falls back to settings default", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      default_enable_human_review: "true",
+    });
+    const workflow = { ...baseWorkflow, enableHumanReview: null };
+    const stages = resolveActiveStages(db, workflow);
+    assert.deepStrictEqual(stages, ["in_progress", "human_review", "done"]);
+  });
+
+  it("workflow explicit false wins over settings default (per-project opt-out)", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      default_enable_human_review: "true",
+    });
+    const workflow = { ...baseWorkflow, enableHumanReview: false };
+    const stages = resolveActiveStages(db, workflow);
+    assert.deepStrictEqual(stages, ["in_progress", "done"]);
+  });
+
+  it("workflow explicit true wins over settings default=false", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      // default_enable_human_review not set → defaults to false
+    });
+    const workflow = { ...baseWorkflow, enableHumanReview: true };
+    const stages = resolveActiveStages(db, workflow);
+    assert.deepStrictEqual(stages, ["in_progress", "human_review", "done"]);
+  });
+
+  it("unset settings default to false (fail-closed, backward compatible)", () => {
+    // No default_enable_* settings set, no workflow.
+    const db = createMockDb({ qa_mode: "disabled", review_mode: "none" });
+    const stages = resolveActiveStages(db, null, "medium");
+    assert.deepStrictEqual(stages, ["in_progress", "done"]);
+  });
 });
 
 describe("nextStage", () => {

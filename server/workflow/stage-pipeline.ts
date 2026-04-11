@@ -73,6 +73,31 @@ function getSetting(db: DatabaseSync, key: string): string | undefined {
  * Resolve which stages are active based on workflow config and settings.
  * Stages that are disabled are skipped in the pipeline.
  */
+/**
+ * Resolve an on/off decision for an optional workflow stage toggle.
+ *
+ * Precedence:
+ *   1. If `WORKFLOW.md` explicitly set the flag (true / false), respect it.
+ *   2. Otherwise, fall back to the global settings key (e.g.
+ *      `default_enable_test_generation`). The setting is stored as a
+ *      string and anything other than `"true"` is treated as false.
+ *   3. If the setting row is missing, default to `false` so existing
+ *      installations keep their pre-change behavior.
+ *
+ * This fail-safe cascade lets operators enable a stage globally
+ * without having to add a WORKFLOW.md to every repository, while still
+ * allowing per-project opt-outs via the file.
+ */
+function resolveWorkflowToggle(
+  db: DatabaseSync,
+  workflowValue: boolean | null | undefined,
+  settingKey: string,
+): boolean {
+  if (workflowValue === true) return true;
+  if (workflowValue === false) return false;
+  return getSetting(db, settingKey) === "true";
+}
+
 export function resolveActiveStages(
   db: DatabaseSync,
   workflow: ProjectWorkflow | null,
@@ -83,8 +108,15 @@ export function resolveActiveStages(
 
   const stages: WorkflowStage[] = ["in_progress"];
 
-  // test_generation: controlled by workflow config, skipped for small tasks
-  if (workflow?.enableTestGeneration && taskSize !== "small") {
+  // test_generation: workflow override → settings default → false.
+  // Small tasks always skip this stage regardless of the toggle so the
+  // pipeline stays short for trivial work.
+  const testGenEnabled = resolveWorkflowToggle(
+    db,
+    workflow?.enableTestGeneration,
+    "default_enable_test_generation",
+  );
+  if (testGenEnabled && taskSize !== "small") {
     stages.push("test_generation");
   }
 
@@ -98,13 +130,13 @@ export function resolveActiveStages(
     stages.push("pr_review");
   }
 
-  // human_review: controlled by workflow config
-  if (workflow?.enableHumanReview) {
+  // human_review: workflow override → settings default → false
+  if (resolveWorkflowToggle(db, workflow?.enableHumanReview, "default_enable_human_review")) {
     stages.push("human_review");
   }
 
-  // pre_deploy: controlled by workflow config
-  if (workflow?.enablePreDeploy) {
+  // pre_deploy: workflow override → settings default → false
+  if (resolveWorkflowToggle(db, workflow?.enablePreDeploy, "default_enable_pre_deploy")) {
     stages.push("pre_deploy");
   }
 

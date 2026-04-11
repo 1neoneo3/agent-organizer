@@ -114,7 +114,7 @@ Custom workflow body
     rmSync(tmpDir, { recursive: true });
   });
 
-  it("defaults enable_* to false when not specified", () => {
+  it("leaves enable_* as null when not specified (falls back to settings at resolve time)", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "ao-test-"));
     writeFileSync(join(tmpDir, "WORKFLOW.md"), `---
 git_workflow: none
@@ -124,9 +124,9 @@ Body
 
     const result = loadProjectWorkflow(tmpDir);
     assert.ok(result);
-    assert.equal(result.enableTestGeneration, false);
-    assert.equal(result.enableHumanReview, false);
-    assert.equal(result.enablePreDeploy, false);
+    assert.equal(result.enableTestGeneration, null);
+    assert.equal(result.enableHumanReview, null);
+    assert.equal(result.enablePreDeploy, null);
 
     rmSync(tmpDir, { recursive: true });
   });
