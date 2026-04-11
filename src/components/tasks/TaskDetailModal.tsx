@@ -75,7 +75,7 @@ export function TaskDetailModal({
   layoutMode = "modal",
   onLayoutModeChange,
 }: TaskDetailModalProps) {
-  const [showTerminal, setShowTerminal] = useState(false);
+  const [activeTab, setActiveTab] = useState<"description" | "activity">("description");
   const [feedbackText, setFeedbackText] = useState("");
   const [sendingFeedback, setSendingFeedback] = useState(false);
   const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
@@ -236,7 +236,67 @@ export function TaskDetailModal({
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, minWidth: 0, overflowY: "auto", overflowX: "hidden", padding: "0 24px 20px" }}>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto", overflowX: "hidden", padding: "0 24px 20px" }}>
+          {/* Tab bar: switch the main area between the task's Description
+              content (default) and the live Activity terminal. */}
+          <div
+            role="tablist"
+            aria-label="Task detail view"
+            style={{
+              display: "flex",
+              gap: "4px",
+              padding: "4px",
+              marginBottom: "16px",
+              background: "var(--bg-tertiary)",
+              borderRadius: "8px",
+              border: "1px solid var(--border-subtle)",
+              alignSelf: "flex-start",
+            }}
+          >
+            {(["description", "activity"] as const).map((tab) => {
+              const isActive = activeTab === tab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveTab(tab)}
+                  style={{
+                    padding: "5px 12px",
+                    fontSize: "12px",
+                    fontWeight: isActive ? 600 : 500,
+                    color: isActive ? "var(--accent-primary)" : "var(--text-secondary)",
+                    background: isActive ? "var(--bg-secondary)" : "transparent",
+                    border: "1px solid " + (isActive ? "var(--border-default)" : "transparent"),
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                    boxShadow: isActive ? "var(--shadow-sm)" : "none",
+                    transition: "all 0.15s ease",
+                    textTransform: "none",
+                    letterSpacing: "0.01em",
+                  }}
+                >
+                  {tab === "description" ? "Description" : "Activity"}
+                </button>
+              );
+            })}
+          </div>
+
+          {activeTab === "activity" ? (
+            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+              <TerminalPanel
+                taskId={task.id}
+                on={on}
+                subscribeTask={subscribeTask}
+                onClose={() => setActiveTab("description")}
+                agents={agents}
+                currentStage={task.status}
+                currentAgentId={task.assigned_agent_id}
+              />
+            </div>
+          ) : (
+            <>
           {/* Description */}
           {task.description ? (
             <div style={{ marginBottom: "16px" }}>
@@ -393,15 +453,6 @@ export function TaskDetailModal({
                 Stop Task
               </button>
             )}
-            {(task.status === "in_progress" || task.status === "done" || task.status === "self_review" || task.status === "test_generation" || task.status === "qa_testing" || task.status === "pr_review" || task.status === "human_review" || task.status === "pre_deploy") && (
-              <button
-                onClick={() => setShowTerminal((v) => !v)}
-                className="eb-btn"
-                style={{ fontSize: "12px" }}
-              >
-                {showTerminal ? "Hide Activity" : "Activity"}
-              </button>
-            )}
           </div>
 
           {/* Interactive Prompt */}
@@ -447,17 +498,7 @@ export function TaskDetailModal({
             </div>
           )}
 
-          {/* Terminal */}
-          {showTerminal && (
-            <TerminalPanel
-              taskId={task.id}
-              on={on}
-              subscribeTask={subscribeTask}
-              onClose={() => setShowTerminal(false)}
-              agents={agents}
-              currentStage={task.status}
-              currentAgentId={task.assigned_agent_id}
-            />
+            </>
           )}
         </div>
     </>
