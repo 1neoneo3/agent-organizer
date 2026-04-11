@@ -156,6 +156,23 @@ describe("hasParallelTestCompletion", () => {
     assert.strictEqual(hasParallelTestCompletion(db, "task-a"), true);
     assert.strictEqual(hasParallelTestCompletion(db, "task-b"), false);
   });
+
+  // Regression: hasParallelTestCompletion is used by both triggerParallelTester
+  // (idempotency guard — "don't spawn twice") and resolveActiveStages ("drop
+  // the serial test_generation stage — the parallel tester already ran").
+  // In BOTH callers we deliberately treat pass and fail as equivalent: a
+  // failed tester run has still produced a result, and re-running the serial
+  // stage would just be a no-op generator loop. Lock this in so a future
+  // refactor that branches on verdict can't silently regress the guard.
+  it("returns true even when the recorded verdict is fail (verdict-agnostic)", () => {
+    const { db } = createMockDb();
+    recordParallelTestCompletion(db, "task-verdict-fail", "fail");
+    assert.strictEqual(
+      hasParallelTestCompletion(db, "task-verdict-fail"),
+      true,
+      "a fail-verdict marker must still count as completion for idempotency",
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

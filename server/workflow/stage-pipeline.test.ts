@@ -304,6 +304,114 @@ describe("resolveActiveStages", () => {
     ]);
   });
 
+  // Design intent: the [PARALLEL_TEST:DONE] marker is verdict-agnostic for
+  // pipeline routing. A failing parallel tester still produced output — the
+  // fix is for a human to inspect the generated tests, not for the serial
+  // test_generation stage to overwrite them with a second round. This test
+  // locks in that behavior so a future refactor can't silently re-add a
+  // serial fallback for fail verdicts (which would defeat the point of the
+  // opt-in speedup by running test generation twice on every failure).
+  it("also drops test_generation when the parallel DONE marker has a fail verdict", () => {
+    const logs: Array<{ task_id: string; kind: string; message: string }> = [
+      {
+        task_id: "task-parallel-fail",
+        kind: "system",
+        message: "[PARALLEL_TEST:DONE] fail",
+      },
+    ];
+    const db = {
+      prepare: (sql: string) => ({
+        get: (...args: any[]) => {
+          if (sql.includes("settings")) {
+            const key = args[0] as string;
+            const settings: Record<string, string> = {
+              qa_mode: "disabled",
+              review_mode: "none",
+              default_enable_test_generation: "true",
+              enable_parallel_impl_test: "true",
+            };
+            return settings[key] ? { value: settings[key] } : undefined;
+          }
+          if (sql.includes("task_logs")) {
+            const taskId = args[0] as string;
+            const match = logs.find(
+              (l) =>
+                l.task_id === taskId &&
+                l.message.includes("[PARALLEL_TEST:DONE]"),
+            );
+            return match ? { message: match.message } : undefined;
+          }
+          return undefined;
+        },
+        all: () => [],
+        run: () => {},
+      }),
+      exec: () => {},
+    } as any;
+
+    const stages = resolveActiveStages(
+      db,
+      { ...baseWorkflow, enableTestGeneration: true },
+      "medium",
+      "task-parallel-fail",
+    );
+    assert.deepStrictEqual(stages, ["in_progress", "done"]);
+  });
+
+  // Safety net for callers that don't know a specific task id — most
+  // notably validateStatusTransition at task creation time. They omit the
+  // 4th arg, so the parallel-mode branch must never fire and must not even
+  // attempt to read task_logs (doing so would throw `undefined` into LIKE).
+  // Returning the serial default here is the correct backwards-compatible
+  // behavior.
+  it("ignores parallel-mode DONE marker lookup when taskId is undefined", () => {
+    let taskLogsQueried = false;
+    const db = {
+      prepare: (sql: string) => ({
+        get: (...args: any[]) => {
+          if (sql.includes("settings")) {
+            const key = args[0] as string;
+            const settings: Record<string, string> = {
+              qa_mode: "disabled",
+              review_mode: "none",
+              default_enable_test_generation: "true",
+              enable_parallel_impl_test: "true",
+            };
+            return settings[key] ? { value: settings[key] } : undefined;
+          }
+          if (sql.includes("task_logs")) {
+            taskLogsQueried = true;
+            return undefined;
+          }
+          return undefined;
+        },
+        all: () => [],
+        run: () => {},
+      }),
+      exec: () => {},
+    } as any;
+
+    const stages = resolveActiveStages(
+      db,
+      { ...baseWorkflow, enableTestGeneration: true },
+      "medium",
+      // no taskId — simulate validateStatusTransition call site
+    );
+
+    // Without a taskId the parallel check must short-circuit before
+    // touching task_logs, so the serial fallback pipeline stays intact.
+    assert.deepStrictEqual(stages, [
+      "in_progress",
+      "test_generation",
+      "done",
+    ]);
+    assert.strictEqual(
+      taskLogsQueried,
+      false,
+      "task_logs must not be queried when taskId is undefined",
+    );
+  });
+
   it("keeps test_generation when parallel mode is disabled (DONE marker irrelevant)", () => {
     const logs: Array<{ task_id: string; kind: string; message: string }> = [
       {

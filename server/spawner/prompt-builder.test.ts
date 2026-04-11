@@ -98,6 +98,32 @@ describe("buildTaskPrompt", () => {
     // Serial mode prompts must stay unchanged — no scope boundary marker.
     assert.doesNotMatch(prompt, /IMPL_SCOPE/);
   });
+
+  // The earlier IMPL_SCOPE test only checks for a generic "tests/" token.
+  // That's not strict enough: in practice our repos have test files that
+  // live OUTSIDE `tests/` (e.g. `foo.test.ts` next to `foo.ts`, or
+  // `__tests__/` directories in React code). The implementer prompt must
+  // enumerate those glob patterns by name so the agent can't "sneak" an
+  // edit into a colocated `.test.ts` file and collide with the parallel
+  // tester. Lock the exact patterns into the test so a prompt rewrite
+  // can't silently drop them.
+  it("IMPL_SCOPE enumerates colocated test patterns (*.test.*, *.spec.*, __tests__/)", () => {
+    const prompt = buildTaskPrompt(
+      {
+        id: "task-scope-patterns",
+        title: "Add feature X",
+        description: "Implement the feature.",
+        project_path: "/tmp/project",
+      } as never,
+      { parallelScope: "implementer" },
+    );
+
+    assert.match(prompt, /\*\.test\.\*/);
+    assert.match(prompt, /\*\.spec\.\*/);
+    assert.match(prompt, /__tests__/);
+    // Python-style test files too, since parallel mode is language-agnostic.
+    assert.match(prompt, /test_\*\.py/);
+  });
 });
 
 describe("buildTestGenerationPrompt", () => {
@@ -144,6 +170,48 @@ describe("buildTestGenerationPrompt", () => {
 
     assert.doesNotMatch(prompt, /TEST_SCOPE/);
     assert.doesNotMatch(prompt, /PARALLEL_TEST:DONE/);
+  });
+
+  // The earlier TEST_SCOPE test only checks `src/|lib/|app/`. In practice
+  // the worst collision targets in this repo are `server/` and `client/`
+  // (multi-package layouts), so spell those out too. Without them, the
+  // tester could silently patch `server/workflow/*.ts` while the
+  // implementer is editing the same file, corrupting the worktree.
+  it("TEST_SCOPE forbids editing server/ and client/ trees in multi-package layouts", () => {
+    const prompt = buildTestGenerationPrompt(
+      {
+        id: "task-multi-pkg",
+        title: "Add feature X",
+        description: "Write tests for feature X.",
+        project_path: "/tmp/project",
+      } as never,
+      "generic",
+      { parallel: true },
+    );
+
+    assert.match(prompt, /server\//);
+    assert.match(prompt, /client\//);
+  });
+
+  // The parallel tester emits one of two verdict markers so the pipeline
+  // can distinguish "tests generated and passing" from "tests generated
+  // but failing". Both variants must be documented in the prompt or the
+  // agent will guess a format that stage-pipeline's LIKE matcher won't
+  // recognize, and the serial fallback stage will re-run needlessly.
+  it("TEST_SCOPE documents BOTH [PARALLEL_TEST:DONE] pass and fail completion markers", () => {
+    const prompt = buildTestGenerationPrompt(
+      {
+        id: "task-verdicts",
+        title: "Add feature X",
+        description: "Write tests.",
+        project_path: "/tmp/project",
+      } as never,
+      "generic",
+      { parallel: true },
+    );
+
+    assert.match(prompt, /\[PARALLEL_TEST:DONE\]\s+pass/);
+    assert.match(prompt, /\[PARALLEL_TEST:DONE\]\s+fail/);
   });
 });
 
