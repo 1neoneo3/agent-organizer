@@ -15,9 +15,30 @@ export function getDb(): DatabaseSync {
 export function initializeDb(): DatabaseSync {
   mkdirSync(dirname(DB_PATH), { recursive: true });
   db = new DatabaseSync(DB_PATH);
+
+  // Core safety settings
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
+
+  // Write-path tuning: with WAL, synchronous = NORMAL is corruption-safe
+  // per https://www.sqlite.org/pragma.html#pragma_synchronous and cuts the
+  // fsync cost of each COMMIT dramatically. This is the single biggest
+  // write-throughput win for an agent-organizer-sized workload.
+  db.exec("PRAGMA synchronous = NORMAL");
+
+  // Read-path tuning:
+  //   cache_size = -32000      → 32MB page cache (negative = KB). The
+  //                              full working set of tasks / task_logs /
+  //                              agents fits in this at typical scale.
+  //   temp_store = MEMORY      → keep ORDER BY / GROUP BY temp tables in
+  //                              RAM instead of spilling to disk.
+  //   mmap_size  = 64 * 1024^2 → memory-map 64MB of the DB file so read
+  //                              paths can skip per-page read() syscalls.
+  db.exec("PRAGMA cache_size = -32000");
+  db.exec("PRAGMA temp_store = MEMORY");
+  db.exec("PRAGMA mmap_size = 67108864");
+
   db.exec(SCHEMA_SQL);
   migrateAddRoleColumn(db);
   migrateAddAgentType(db);

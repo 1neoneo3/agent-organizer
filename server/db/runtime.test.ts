@@ -61,6 +61,39 @@ describe("initializeDb", () => {
     assert.ok(heartbeat, "tasks.last_heartbeat_at should exist");
   });
 
+  it("applies performance-oriented PRAGMAs", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    // journal_mode is returned as a bare string, the rest as numeric codes.
+    const jm = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
+    assert.equal(jm.journal_mode, "wal");
+
+    const sync = db.prepare("PRAGMA synchronous").get() as { synchronous: number };
+    // synchronous: 0 = OFF, 1 = NORMAL, 2 = FULL, 3 = EXTRA
+    assert.equal(sync.synchronous, 1, "synchronous should be NORMAL (1)");
+
+    const cache = db.prepare("PRAGMA cache_size").get() as { cache_size: number };
+    // Negative value means the argument is in KB rather than pages.
+    assert.equal(cache.cache_size, -32000, "cache_size should be -32000 (32MB)");
+
+    const temp = db.prepare("PRAGMA temp_store").get() as { temp_store: number };
+    // temp_store: 0 = DEFAULT, 1 = FILE, 2 = MEMORY
+    assert.equal(temp.temp_store, 2, "temp_store should be MEMORY (2)");
+
+    const mmap = db.prepare("PRAGMA mmap_size").get() as { mmap_size: number };
+    // 64MB expressed in bytes. Some platforms may clamp mmap_size to a
+    // lower value if mmap is unavailable, so accept >= 0 but at least
+    // assert we attempted the requested value by reading it back.
+    assert.equal(mmap.mmap_size, 67108864, "mmap_size should be 64MB");
+
+    const busy = db.prepare("PRAGMA busy_timeout").get() as { timeout: number };
+    assert.equal(busy.timeout, 5000, "busy_timeout should be 5000ms");
+
+    const fk = db.prepare("PRAGMA foreign_keys").get() as { foreign_keys: number };
+    assert.equal(fk.foreign_keys, 1, "foreign_keys should be ON");
+  });
+
   it("creates the composite status/priority/created index on tasks", async () => {
     const { initializeDb } = await import("./runtime.js");
     const db = initializeDb();
