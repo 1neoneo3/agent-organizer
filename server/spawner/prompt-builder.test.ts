@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildQaPrompt, buildReviewPrompt, buildTaskPrompt } from "./prompt-builder.js";
+import {
+  buildQaPrompt,
+  buildReviewPrompt,
+  buildTaskPrompt,
+  buildTestGenerationPrompt,
+} from "./prompt-builder.js";
 
 describe("buildTaskPrompt", () => {
   it("includes runtime constraints and workflow guidance for delegated e2e", () => {
@@ -52,6 +57,93 @@ describe("buildTaskPrompt", () => {
     assert.match(prompt, /Delegate E2E to host execution/);
     assert.match(prompt, /pnpm test:e2e/);
     assert.match(prompt, /Keep changes focused/);
+  });
+
+  // --- AO Phase 3: parallel impl/test scope injection ---
+  // When the implementer runs concurrently with a parallel tester, the
+  // prompt must warn it not to touch test files so the two agents don't
+  // clobber each other's work in the shared worktree.
+  it("injects IMPL_SCOPE boundary when parallelScope='implementer'", () => {
+    const prompt = buildTaskPrompt(
+      {
+        id: "task-parallel-impl",
+        title: "Add feature X",
+        description: "Implement the feature.",
+        project_path: "/tmp/project",
+      } as never,
+      { parallelScope: "implementer" },
+    );
+
+    // Must clearly identify this as parallel mode and name the boundary.
+    assert.match(prompt, /IMPL_SCOPE/);
+    assert.match(prompt, /並列/); // "parallel" in Japanese
+    // Must forbid the implementer from editing test files.
+    assert.match(prompt, /tests?\//);
+    assert.match(
+      prompt,
+      /(テストファイル|test files?).*(編集しない|do not (touch|edit))/i,
+    );
+  });
+
+  it("does NOT inject IMPL_SCOPE boundary by default (serial mode)", () => {
+    const prompt = buildTaskPrompt(
+      {
+        id: "task-serial",
+        title: "Add feature X",
+        description: "Implement the feature.",
+        project_path: "/tmp/project",
+      } as never,
+    );
+
+    // Serial mode prompts must stay unchanged — no scope boundary marker.
+    assert.doesNotMatch(prompt, /IMPL_SCOPE/);
+  });
+});
+
+describe("buildTestGenerationPrompt", () => {
+  // Parallel tester is spawned while the implementer is still writing code.
+  // The prompt must warn the tester not to touch source files so its edits
+  // can't collide with the implementer's work in the shared worktree.
+  it("injects TEST_SCOPE boundary when parallel=true", () => {
+    const prompt = buildTestGenerationPrompt(
+      {
+        id: "task-parallel-tester",
+        title: "Add feature X",
+        description: "Write tests for feature X.",
+        project_path: "/tmp/project",
+      } as never,
+      "generic",
+      { parallel: true },
+    );
+
+    assert.match(prompt, /TEST_SCOPE/);
+    assert.match(prompt, /並列/);
+    // Tester must not edit implementation/source trees.
+    assert.match(
+      prompt,
+      /(src\/|lib\/|app\/|実装ファイル|source files?)/i,
+    );
+    assert.match(
+      prompt,
+      /(編集しない|do not (touch|edit))/i,
+    );
+    // Must emit the completion marker so stage-pipeline can skip
+    // test_generation later.
+    assert.match(prompt, /PARALLEL_TEST:DONE/);
+  });
+
+  it("does NOT inject TEST_SCOPE boundary by default (serial test_generation stage)", () => {
+    const prompt = buildTestGenerationPrompt(
+      {
+        id: "task-serial-testgen",
+        title: "Add feature X",
+        description: "Write tests.",
+        project_path: "/tmp/project",
+      } as never,
+    );
+
+    assert.doesNotMatch(prompt, /TEST_SCOPE/);
+    assert.doesNotMatch(prompt, /PARALLEL_TEST:DONE/);
   });
 });
 

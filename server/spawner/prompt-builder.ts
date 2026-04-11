@@ -241,6 +241,15 @@ export function buildTaskPrompt(
     selfReview?: boolean;
     workflow?: ProjectWorkflow | null;
     runtimePolicy?: AgentRuntimePolicy | null;
+    /**
+     * AO Phase 3: directory boundary injection for parallel implementer +
+     * tester execution. When set to "implementer", the prompt tells the
+     * agent that a tester is running concurrently in the same worktree and
+     * that it must NOT touch any test files/directories. This keeps the
+     * two agents' file edits from colliding. Defaults to undefined — the
+     * historical serial behavior — when parallel mode is disabled.
+     */
+    parallelScope?: "implementer" | "tester";
   },
 ): string {
   // Prompt is built in two halves and joined at the end:
@@ -337,6 +346,55 @@ export function buildTaskPrompt(
   staticParts.push("- Agent Organizerに新しいタスクを作成しない（ao-cli.sh、POST /api/tasks 禁止）");
   staticParts.push("- AO APIエンドポイントを呼び出さない — あなたの仕事は現在のタスクの実装のみ");
   staticParts.push("");
+
+  // AO Phase 3: parallel implementer + tester mode.
+  //
+  // When `parallelScope === "implementer"`, a tester agent is running
+  // *concurrently* in the same worktree. We inject an explicit directory
+  // boundary so the two agents can't stomp on each other's files. The
+  // choice is "single worktree + prompt scope" (Option A in the design
+  // doc) rather than spawning a second worktree — cheaper to wire up and
+  // matches how `auto-test-gen.ts` already shares the worktree for serial
+  // test generation.
+  if (opts?.parallelScope === "implementer") {
+    staticParts.push("## IMPL_SCOPE（並列モード: 実装担当の作業範囲）");
+    staticParts.push("");
+    staticParts.push(
+      "このタスクは **並列 implementer + tester モード** で実行されています。",
+    );
+    staticParts.push(
+      "別の tester エージェントが同じ worktree で並行してテストを生成しています。",
+    );
+    staticParts.push("");
+    staticParts.push("### あなた（implementer）の作業範囲");
+    staticParts.push(
+      "- **実装ファイルのみ** を編集する: `src/`, `lib/`, `app/`, `server/`, `client/`, ルート配下のプロダクションコード",
+    );
+    staticParts.push(
+      "- **テストファイルは絶対に編集しない** (do not edit test files):",
+    );
+    staticParts.push(
+      "  - `tests/`, `test/`, `spec/`, `__tests__/` 配下のファイル",
+    );
+    staticParts.push(
+      "  - `*.test.*`, `*.spec.*`, `*_test.py`, `test_*.py` にマッチするファイル",
+    );
+    staticParts.push(
+      "- 既存のテストが壊れた場合も、自分で直さず `[TEST_BREAK] <理由>` とログに書き残して tester に引き継ぐ",
+    );
+    staticParts.push("");
+    staticParts.push("### 衝突回避ルール");
+    staticParts.push(
+      "- tester が先に触ったファイルを上書きしない（git status で未ステージの変更を尊重する）",
+    );
+    staticParts.push(
+      "- 新規ファイルは自分のスコープ（実装ディレクトリ）内にのみ作成する",
+    );
+    staticParts.push(
+      "- コミット粒度は細かく刻み、テストとの競合が起きたら rebase ではなく追加コミットで解決する",
+    );
+    staticParts.push("");
+  }
 
   // Per-workflow static context (sandbox mode, localhost allowance, e2e
   // policy). Stable across tasks that share a workflow.
@@ -930,7 +988,21 @@ function appendGenericQaProcess(parts: string[]): void {
   parts.push("");
 }
 
-export function buildTestGenerationPrompt(task: Task, projectType: ProjectType = "generic"): string {
+export function buildTestGenerationPrompt(
+  task: Task,
+  projectType: ProjectType = "generic",
+  opts?: {
+    /**
+     * AO Phase 3: when true, the tester is running concurrently with the
+     * implementer in the same worktree. Inject a TEST_SCOPE boundary and
+     * instruct the agent to emit `[PARALLEL_TEST:DONE] pass|fail` on
+     * completion so `stage-pipeline.ts` can skip the now-redundant
+     * sequential `test_generation` stage. Defaults to false (historical
+     * serial behavior: runs after implementer, no scope restriction).
+     */
+    parallel?: boolean;
+  },
+): string {
   const parts: string[] = [];
 
   parts.push("## Language");
@@ -945,6 +1017,61 @@ export function buildTestGenerationPrompt(task: Task, projectType: ProjectType =
   parts.push("");
   parts.push("あなたはテストエンジニアです。このタスクの実装に対するテストを生成してください。");
   parts.push("");
+
+  if (opts?.parallel) {
+    parts.push("## TEST_SCOPE（並列モード: テスト担当の作業範囲）");
+    parts.push("");
+    parts.push(
+      "このタスクは **並列 implementer + tester モード** で実行されています。",
+    );
+    parts.push(
+      "別の implementer エージェントが同じ worktree で並行して実装を進めています。",
+    );
+    parts.push("");
+    parts.push("### あなた（tester）の作業範囲");
+    parts.push(
+      "- **テストファイルのみ** を編集・作成する: `tests/`, `test/`, `spec/`, `__tests__/`, `*.test.*`, `*.spec.*`, `test_*.py`, `*_test.py`",
+    );
+    parts.push(
+      "- **実装ファイル (src/, lib/, app/, server/, client/) は絶対に編集しない** (do not touch source files)",
+    );
+    parts.push(
+      "- テストから参照する実装が未完成でも構わない — 最新の spec / task description / CLAUDE.md を参考にテストを先に書く",
+    );
+    parts.push(
+      "- 実装側が壊れている場合も自分で直さず、`[IMPL_BREAK] <理由>` とログに書き残して implementer に引き継ぐ",
+    );
+    parts.push("");
+    parts.push("### 衝突回避ルール");
+    parts.push(
+      "- implementer が触っている実装ファイルを read-only で参照するのは OK、編集は不可",
+    );
+    parts.push(
+      "- 新規ファイルは自分のスコープ（テストディレクトリ）内にのみ作成する",
+    );
+    parts.push(
+      "- コミット粒度は細かく刻み、マージ競合は rebase ではなく追加コミットで解決する",
+    );
+    parts.push("");
+    parts.push("### 完了時の出力（必須）");
+    parts.push(
+      "作業が終わったら、以下のいずれかのマーカーをログ末尾に必ず出力してください。",
+    );
+    parts.push(
+      "このマーカーを stage-pipeline が検知して serial `test_generation` ステージをスキップします。",
+    );
+    parts.push("");
+    parts.push("- テスト生成・実行すべて成功: `[PARALLEL_TEST:DONE] pass`");
+    parts.push(
+      "- テスト生成はできたが失敗している / 実装未完成でスキップが必要: `[PARALLEL_TEST:DONE] fail`",
+    );
+    parts.push("");
+    parts.push(
+      "マーカーが出力されない場合、pipeline は従来通り serial `test_generation` を追加で実行します（冪等）。",
+    );
+    parts.push("");
+  }
+
   parts.push("## テスト対象タスク");
   parts.push(`**タイトル**: ${task.title}`);
   parts.push(`**説明**: ${task.description ?? "説明なし"}`);
