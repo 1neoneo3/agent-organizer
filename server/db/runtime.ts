@@ -28,6 +28,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddReviewArtifactFields(db);
   migrateAddQaTestingStatus(db);
   migrateAddWorkflowStages(db);
+  migrateAddLogStageAgent(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -147,6 +148,62 @@ function migrateAddWorkflowStages(db: DatabaseSync): void {
     db.exec("ROLLBACK");
     throw e;
   }
+}
+
+function migrateAddLogStageAgent(db: DatabaseSync): void {
+  // Add stage/agent_id columns to task_logs so every log entry records
+  // which workflow stage (tasks.status) and which agent was active at insert time.
+  const cols = db.prepare("PRAGMA table_info(task_logs)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "stage")) {
+    db.exec("ALTER TABLE task_logs ADD COLUMN stage TEXT");
+  }
+  if (!cols.some((c) => c.name === "agent_id")) {
+    db.exec("ALTER TABLE task_logs ADD COLUMN agent_id TEXT");
+  }
+
+  // AFTER INSERT trigger: auto-populate stage/agent_id from tasks when caller did not set them.
+  // This avoids having to touch 29 task_logs INSERT sites across the codebase.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS task_logs_fill_metadata
+    AFTER INSERT ON task_logs
+    FOR EACH ROW
+    WHEN NEW.stage IS NULL OR NEW.agent_id IS NULL
+    BEGIN
+      UPDATE task_logs
+      SET stage = COALESCE(NEW.stage, (SELECT status FROM tasks WHERE id = NEW.task_id)),
+          agent_id = COALESCE(NEW.agent_id, (SELECT assigned_agent_id FROM tasks WHERE id = NEW.task_id))
+      WHERE id = NEW.id;
+    END;
+  `);
+
+  // AFTER UPDATE trigger on tasks: emit a synthetic system log on every status change,
+  // so the terminal/timeline always shows a clear "stage transition" marker
+  // without having to modify the 21 status-update call sites.
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS tasks_log_stage_transition
+    AFTER UPDATE OF status ON tasks
+    FOR EACH ROW
+    WHEN NEW.status IS NOT OLD.status
+    BEGIN
+      INSERT INTO task_logs (task_id, kind, message, stage, agent_id)
+      VALUES (
+        NEW.id,
+        'system',
+        '__STAGE_TRANSITION__:' || COALESCE(OLD.status, 'null') || '→' || NEW.status,
+        NEW.status,
+        NEW.assigned_agent_id
+      );
+    END;
+  `);
+
+  // Backfill stage/agent_id for existing rows using current task state
+  // (best-effort — historical accuracy is not required).
+  db.exec(`
+    UPDATE task_logs
+    SET stage = COALESCE(stage, (SELECT status FROM tasks WHERE tasks.id = task_logs.task_id)),
+        agent_id = COALESCE(agent_id, (SELECT assigned_agent_id FROM tasks WHERE tasks.id = task_logs.task_id))
+    WHERE stage IS NULL OR agent_id IS NULL;
+  `);
 }
 
 function backfillTaskNumbers(db: DatabaseSync): void {

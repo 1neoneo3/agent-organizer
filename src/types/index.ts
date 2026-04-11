@@ -43,6 +43,8 @@ export interface TaskLog {
   task_id: string;
   kind: "stdout" | "stderr" | "system" | "thinking" | "assistant" | "tool_call" | "tool_result";
   message: string;
+  stage: string | null;
+  agent_id: string | null;
   created_at: number;
 }
 

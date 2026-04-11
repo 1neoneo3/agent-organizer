@@ -1,15 +1,26 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { TaskLog } from "../../types/index.js";
-import { appendLiveLogs, appendTerminalText, countLogsByTab, MAX_LIVE_LOGS } from "./log-state.js";
+import {
+  appendLiveLogs,
+  appendTerminalText,
+  countLogsByTab,
+  groupLogsByStage,
+  MAX_LIVE_LOGS,
+  parseStageTransition,
+  STAGE_TRANSITION_PREFIX,
+} from "./log-state.js";
 
-function createLog(id: number): TaskLog {
+function createLog(id: number, overrides: Partial<TaskLog> = {}): TaskLog {
   return {
     id,
     task_id: "task-1",
-    kind: "stdout",
+    kind: "assistant",
     message: `log-${id}`,
+    stage: null,
+    agent_id: null,
     created_at: id,
+    ...overrides,
   };
 }
 
@@ -23,6 +34,15 @@ describe("appendLiveLogs", () => {
     assert.equal(result.length, 3);
     assert.equal(result[1]?.message, "next");
     assert.equal(result[2]?.kind, "stderr");
+  });
+
+  it("preserves stage and agent metadata on incoming entries", () => {
+    const result = appendLiveLogs([], [
+      { task_id: "task-1", kind: "stdout", message: "line", stage: "in_progress", agent_id: "agent-a" },
+    ], 100);
+
+    assert.equal(result[0]?.stage, "in_progress");
+    assert.equal(result[0]?.agent_id, "agent-a");
   });
 
   it("caps retained entries to the live log limit", () => {
@@ -50,32 +70,185 @@ describe("countLogsByTab", () => {
   });
 });
 
-describe("appendTerminalText", () => {
-  it("appends stdout and assistant output as plain terminal text", () => {
-    const result = appendTerminalText("existing\n", [
-      { kind: "stdout", message: "next line" },
-      { kind: "assistant", message: "assistant reply" },
-    ]);
-
-    assert.equal(result, "existing\nnext line\nassistant reply\n");
+describe("parseStageTransition", () => {
+  it("parses a stage transition marker", () => {
+    const parsed = parseStageTransition(`${STAGE_TRANSITION_PREFIX}in_progress→self_review`);
+    assert.deepEqual(parsed, { from: "in_progress", to: "self_review" });
   });
 
-  it("prefixes stderr and system messages for terminal display", () => {
-    const result = appendTerminalText("", [
-      { kind: "stderr", message: "warning" },
-      { kind: "system", message: "task paused" },
+  it("returns null for normal messages", () => {
+    assert.equal(parseStageTransition("regular log line"), null);
+  });
+});
+
+describe("appendTerminalText", () => {
+  it("keeps assistant output and drops stdout in terminal display", () => {
+    const result = appendTerminalText("existing\n", [
+      { task_id: "task-1", kind: "stdout", message: "next line" },
+      { task_id: "task-1", kind: "assistant", message: "assistant reply" },
     ]);
 
-    assert.equal(result, "[stderr] warning\n[system] task paused\n");
+    assert.equal(result.text, "existing\nassistant reply\n");
+    assert.equal(result.lastStage, null);
+    assert.equal(result.lastAgentId, null);
+  });
+
+  it("drops stderr and system messages from terminal display", () => {
+    const result = appendTerminalText("", [
+      { task_id: "task-1", kind: "stderr", message: "warning" },
+      { task_id: "task-1", kind: "system", message: "task paused" },
+    ]);
+
+    assert.equal(result.text, "");
   });
 
   it("skips thinking and tool events in terminal display", () => {
     const result = appendTerminalText("base\n", [
-      { kind: "thinking", message: "hidden reasoning" },
-      { kind: "tool_call", message: "run shell" },
-      { kind: "tool_result", message: "done" },
+      { task_id: "task-1", kind: "thinking", message: "hidden reasoning" },
+      { task_id: "task-1", kind: "tool_call", message: "run shell" },
+      { task_id: "task-1", kind: "tool_result", message: "done" },
     ]);
 
-    assert.equal(result, "base\n");
+    assert.equal(result.text, "base\n");
+  });
+
+  it("renders stage transition markers with a header", () => {
+    const result = appendTerminalText("", [
+      {
+        task_id: "task-1",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→self_review`,
+        stage: "self_review",
+      },
+    ]);
+
+    assert.match(result.text, /━━━ STAGE: in_progress → self_review ━━━/);
+  });
+
+  it("injects a synthetic header when stage changes between consecutive entries", () => {
+    // First batch sets the context (in_progress / agent-a)
+    const step1 = appendTerminalText("", [
+      { task_id: "task-1", kind: "assistant", message: "first", stage: "in_progress", agent_id: "agent-a" },
+    ]);
+    assert.equal(step1.lastStage, "in_progress");
+    assert.equal(step1.lastAgentId, "agent-a");
+
+    // Second batch has a different stage — expect a header line before the new chunk
+    const step2 = appendTerminalText(step1.text, [
+      { task_id: "task-1", kind: "assistant", message: "second", stage: "self_review", agent_id: "agent-a" },
+    ], { lastStage: step1.lastStage, lastAgentId: step1.lastAgentId });
+
+    assert.match(step2.text, /── \[self_review\] agent:agent-a ──/);
+    assert.equal(step2.lastStage, "self_review");
+  });
+
+  it("does not inject a header before the very first entry", () => {
+    const result = appendTerminalText("", [
+      { task_id: "task-1", kind: "assistant", message: "first", stage: "in_progress", agent_id: "agent-a" },
+    ]);
+
+    assert.doesNotMatch(result.text, /──/);
+    assert.equal(result.text, "first\n");
+  });
+
+});
+
+describe("groupLogsByStage", () => {
+  it("returns an empty array for empty input", () => {
+    assert.deepEqual(groupLogsByStage([]), []);
+  });
+
+  it("groups contiguous logs with the same stage into a single segment", () => {
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", agent_id: "agent-a", message: "a" }),
+      createLog(2, { stage: "in_progress", agent_id: "agent-a", message: "b" }),
+      createLog(3, { stage: "in_progress", agent_id: "agent-a", message: "c" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 1);
+    assert.equal(segments[0]?.stage, "in_progress");
+    assert.equal(segments[0]?.entryCount, 3);
+    assert.match(segments[0]?.text ?? "", /a[\s\S]*b[\s\S]*c/);
+  });
+
+  it("splits into separate segments on stage transition markers", () => {
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", message: "working" }),
+      createLog(2, {
+        stage: "self_review",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→self_review`,
+      }),
+      createLog(3, { stage: "self_review", message: "reviewing" }),
+      createLog(4, {
+        stage: "qa_testing",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}self_review→qa_testing`,
+      }),
+      createLog(5, { stage: "qa_testing", message: "testing" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 3);
+    assert.equal(segments[0]?.stage, "in_progress");
+    assert.match(segments[0]?.text ?? "", /working/);
+    assert.equal(segments[1]?.stage, "self_review");
+    assert.match(segments[1]?.text ?? "", /reviewing/);
+    assert.equal(segments[2]?.stage, "qa_testing");
+    assert.match(segments[2]?.text ?? "", /testing/);
+  });
+
+  it("splits segments when stage changes without an explicit marker", () => {
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", message: "line-a" }),
+      createLog(2, { stage: "self_review", message: "line-b" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 2);
+    assert.equal(segments[0]?.stage, "in_progress");
+    assert.equal(segments[1]?.stage, "self_review");
+  });
+
+  it("preserves the agent id on the first log of each segment", () => {
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", agent_id: "agent-a", message: "a" }),
+      createLog(2, {
+        stage: "self_review",
+        kind: "system",
+        agent_id: "agent-b",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→self_review`,
+      }),
+      createLog(3, { stage: "self_review", agent_id: "agent-b", message: "b" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 2);
+    assert.equal(segments[0]?.agentId, "agent-a");
+    assert.equal(segments[1]?.agentId, "agent-b");
+  });
+
+  it("drops non-assistant kinds from the grouped segment text", () => {
+    // Only assistant messages should survive formatting; stdout / stderr /
+    // system are dropped wholesale so raw CLI noise cannot reach the terminal.
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", message: "real assistant reply" }),
+      createLog(2, {
+        stage: "in_progress",
+        kind: "stdout",
+        message: "raw cli noise that should be dropped",
+      }),
+      createLog(3, { stage: "in_progress", message: "another assistant reply" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 1);
+    const text = segments[0]?.text ?? "";
+    assert.match(text, /real assistant reply/);
+    assert.match(text, /another assistant reply/);
+    assert.doesNotMatch(text, /raw cli noise/);
+    // Dropped entries must not inflate the counter either.
+    assert.equal(segments[0]?.entryCount, 2);
   });
 });

@@ -1,7 +1,32 @@
 import { startTransition, useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { fetchTaskLogs, fetchTerminal } from "../../api/endpoints.js";
-import type { TaskLog, WSEventType } from "../../types/index.js";
-import { appendLiveLogs, appendTerminalText, countLogsByTab } from "./log-state.js";
+import { fetchTaskLogs } from "../../api/endpoints.js";
+import type { TaskLog, WSEventType, Agent } from "../../types/index.js";
+import { getRoleLabel } from "../agents/roles.js";
+import {
+  appendLiveLogs,
+  countLogsByTab,
+  groupLogsByStage,
+  parseStageTransition,
+  type StageSegment,
+} from "./log-state.js";
+
+const STAGE_STYLES: Record<string, { bg: string; border: string; text: string; label: string }> = {
+  inbox: { bg: "#e0e7ff", border: "#6366f1", text: "#3730a3", label: "inbox" },
+  in_progress: { bg: "#dbeafe", border: "#3b82f6", text: "#1e40af", label: "in_progress" },
+  self_review: { bg: "#fef3c7", border: "#f59e0b", text: "#92400e", label: "self_review" },
+  test_generation: { bg: "#f3e8ff", border: "#a855f7", text: "#6b21a8", label: "test_gen" },
+  qa_testing: { bg: "#fce7f3", border: "#ec4899", text: "#9d174d", label: "qa_testing" },
+  pr_review: { bg: "#cffafe", border: "#06b6d4", text: "#155e75", label: "pr_review" },
+  human_review: { bg: "#ffedd5", border: "#f97316", text: "#9a3412", label: "human_review" },
+  pre_deploy: { bg: "#e0f2fe", border: "#0ea5e9", text: "#075985", label: "pre_deploy" },
+  done: { bg: "#dcfce7", border: "#22c55e", text: "#166534", label: "done" },
+  cancelled: { bg: "#f3f4f6", border: "#9ca3af", text: "#374151", label: "cancelled" },
+};
+
+function stageStyle(stage: string | null | undefined): { bg: string; border: string; text: string; label: string } {
+  if (!stage) return { bg: "var(--bg-tertiary)", border: "var(--border-default)", text: "var(--text-secondary)", label: "—" };
+  return STAGE_STYLES[stage] ?? { bg: "var(--bg-tertiary)", border: "var(--border-default)", text: "var(--text-secondary)", label: stage };
+}
 
 type TabKey = "terminal" | "all" | "output";
 
@@ -24,6 +49,12 @@ interface TerminalPanelProps {
   on: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
   subscribeTask?: (taskId: string) => () => void;
   onClose: () => void;
+  agents?: Agent[];
+  // Parent supplies current stage/agent so live WS logs that lack metadata
+  // can be tagged for display. Historical logs already have these fields
+  // filled by the AFTER INSERT DB trigger.
+  currentStage?: string | null;
+  currentAgentId?: string | null;
 }
 
 function classifyLog(_kind: TaskLog["kind"]): TabKey {
@@ -67,7 +98,7 @@ function useIsDark(): boolean {
   return dark;
 }
 
-function LogEntry({ log, isDark }: { log: TaskLog; isDark: boolean }) {
+function LogEntry({ log, isDark, agents }: { log: TaskLog; isDark: boolean; agents: Agent[] }) {
   const [collapsed, setCollapsed] = useState(true);
   const isLong = log.message.length > 300;
 
@@ -76,15 +107,49 @@ function LogEntry({ log, isDark }: { log: TaskLog; isDark: boolean }) {
   const isThinking = log.kind === "thinking";
   const isAssistant = log.kind === "assistant";
 
+  // Stage transition markers get a distinctive full-width rendering instead of the regular log layout.
+  const transition = parseStageTransition(log.message);
+  if (transition) {
+    const toStageStyle = stageStyle(transition.to);
+    return (
+      <div
+        data-testid="stage-transition-marker"
+        style={{
+          margin: "8px 0",
+          padding: "4px 8px",
+          background: toStageStyle.bg,
+          borderTop: `1px dashed ${toStageStyle.border}`,
+          borderBottom: `1px dashed ${toStageStyle.border}`,
+          color: toStageStyle.text,
+          fontSize: "11px",
+          fontWeight: 600,
+          textAlign: "center",
+          fontFamily: "var(--font-mono)",
+          letterSpacing: "0.05em",
+        }}
+      >
+        ━━━ STAGE: {transition.from} → {transition.to} ━━━
+      </div>
+    );
+  }
+
   const displayMessage = isLong && collapsed ? log.message.slice(0, 300) + "\u2026" : log.message;
 
+  const agentName = log.agent_id ? agents.find((a) => a.id === log.agent_id)?.name ?? log.agent_id.slice(0, 8) : null;
+  const currentStageStyle = stageStyle(log.stage);
+
   return (
-    <div style={{
-      background: style.bg,
-      borderLeft: `2px solid ${style.border}`,
-      borderRadius: "4px",
-      marginBottom: "4px",
-    }}>
+    <div
+      data-testid="log-entry"
+      data-stage={log.stage ?? ""}
+      data-agent-id={log.agent_id ?? ""}
+      style={{
+        background: style.bg,
+        borderLeft: `2px solid ${style.border}`,
+        borderRadius: "4px",
+        marginBottom: "4px",
+      }}
+    >
       <div style={{ display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 8px" }}>
         <span style={{ fontSize: "10px", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", flexShrink: 0, marginTop: "2px", width: "52px" }}>
           {formatTime(log.created_at)}
@@ -93,6 +158,42 @@ function LogEntry({ log, isDark }: { log: TaskLog; isDark: boolean }) {
           {style.icon} {style.label}
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "2px" }}>
+            {log.stage && (
+              <span
+                data-testid="stage-badge"
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 600,
+                  padding: "1px 6px",
+                  borderRadius: "3px",
+                  background: currentStageStyle.bg,
+                  color: currentStageStyle.text,
+                  border: `1px solid ${currentStageStyle.border}`,
+                  lineHeight: 1.4,
+                }}
+              >
+                {currentStageStyle.label}
+              </span>
+            )}
+            {agentName && (
+              <span
+                data-testid="agent-badge"
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 500,
+                  padding: "1px 6px",
+                  borderRadius: "3px",
+                  background: "var(--bg-tertiary)",
+                  color: "var(--text-secondary)",
+                  border: "1px solid var(--border-subtle)",
+                  lineHeight: 1.4,
+                }}
+              >
+                @{agentName}
+              </span>
+            )}
+          </div>
           {isThinking ? (
             <div style={{ fontSize: "12px", color: style.text, fontStyle: "italic" }}>
               <span style={{ whiteSpace: "pre-wrap" }}>{displayMessage}</span>
@@ -134,19 +235,32 @@ const PAUSE_SCROLL_THRESHOLD = 50;
 function TerminalView({
   taskId,
   on,
+  currentStage,
+  currentAgentId,
+  agents,
 }: {
   taskId: string;
   on: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
+  currentStage: string | null;
+  currentAgentId: string | null;
+  agents: Agent[];
 }) {
-  const [text, setText] = useState("");
+  const [logs, setLogs] = useState<TaskLog[]>([]);
   const [follow, setFollow] = useState(true);
-  const preRef = useRef<HTMLPreElement>(null);
+  const [expandedOverride, setExpandedOverride] = useState<Record<string, boolean>>({});
   const containerRef = useRef<HTMLDivElement>(null);
 
   const doFetch = useCallback(async () => {
     try {
-      const resp = await fetchTerminal(taskId);
-      setText(resp.text || "");
+      // Fetch up to 300 rows. Server truncates each message at 4KB to keep
+      // the response payload bounded (some rows contain raw tool-result JSON
+      // blobs tens of KB each, which would otherwise freeze the browser when
+      // rendering the Activity panel). task_logs carries stage/agent_id via
+      // the AFTER INSERT trigger, so grouping is done on the client.
+      const rows = await fetchTaskLogs(taskId, 300);
+      // Server returns rows in reverse chronological order; flip to chronological.
+      const chronological = [...rows].reverse();
+      setLogs(chronological);
     } catch {
       // ignore fetch errors
     }
@@ -159,32 +273,39 @@ function TerminalView({
   useEffect(() => {
     return on("cli_output", (payload) => {
       const data = payload as
-        | { task_id: string; kind: string; message: string }
-        | Array<{ task_id: string; kind: string; message: string }>;
+        | { task_id: string; kind: string; message: string; stage?: string | null; agent_id?: string | null }
+        | Array<{ task_id: string; kind: string; message: string; stage?: string | null; agent_id?: string | null }>;
       const items = Array.isArray(data) ? data : [data];
-      const relevant = items.filter((entry) => entry.task_id === taskId) as Array<{
-        task_id: string;
-        kind: TaskLog["kind"];
-        message: string;
-      }>;
+      const relevant = items
+        .filter((entry) => entry.task_id === taskId)
+        .map((entry) => ({
+          task_id: entry.task_id,
+          kind: entry.kind as TaskLog["kind"],
+          message: entry.message,
+          stage: entry.stage ?? currentStage,
+          agent_id: entry.agent_id ?? currentAgentId,
+        }));
 
       if (relevant.length === 0) {
         return;
       }
 
       startTransition(() => {
-        setText((current) => appendTerminalText(current, relevant));
+        setLogs((prev) => appendLiveLogs(prev, relevant));
       });
     });
-  }, [taskId, on]);
+  }, [taskId, on, currentStage, currentAgentId]);
 
+  const segments = useMemo(() => groupLogsByStage(logs), [logs]);
+
+  // Auto-scroll the latest segment into view when follow mode is active.
   useEffect(() => {
     if (follow && containerRef.current) {
       requestAnimationFrame(() => {
         containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight });
       });
     }
-  }, [text, follow]);
+  }, [segments, follow]);
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -200,34 +321,49 @@ function TerminalView({
     containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
   };
 
+  const toggleSegment = (id: string, defaultOpen: boolean) => {
+    setExpandedOverride((prev) => {
+      const currentlyOpen = prev[id] ?? defaultOpen;
+      return { ...prev, [id]: !currentlyOpen };
+    });
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        style={{ flex: "1 1 0", overflowY: "auto", background: "var(--terminal-bg)" }}
+        style={{ flex: "1 1 0", overflowY: "auto", background: "var(--terminal-bg)", padding: "8px" }}
       >
-        {text ? (
-          <pre
-            ref={preRef}
+        {segments.length === 0 ? (
+          <div
             style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "100%",
+              color: "var(--text-tertiary)",
               fontSize: "12px",
-              lineHeight: "1.6",
-              color: "var(--terminal-text)",
-              padding: "12px",
-              fontFamily: "var(--font-mono)",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              margin: 0,
-              paddingBottom: "24px",
             }}
           >
-            {text}
-          </pre>
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-tertiary)", fontSize: "12px" }}>
             Waiting for output...
           </div>
+        ) : (
+          segments.map((segment, index) => {
+            const isLast = index === segments.length - 1;
+            const defaultOpen = isLast;
+            const isOpen = expandedOverride[segment.id] ?? defaultOpen;
+            return (
+              <StageSegmentBlock
+                key={segment.id}
+                segment={segment}
+                isOpen={isOpen}
+                onToggle={() => toggleSegment(segment.id, defaultOpen)}
+                agents={agents}
+                previousStage={index > 0 ? segments[index - 1]?.stage ?? null : null}
+              />
+            );
+          })
         )}
       </div>
       {!follow && (
@@ -253,12 +389,146 @@ function TerminalView({
   );
 }
 
-export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPanelProps) {
+function StageSegmentBlock({
+  segment,
+  isOpen,
+  onToggle,
+  agents,
+  previousStage,
+}: {
+  segment: StageSegment;
+  isOpen: boolean;
+  onToggle: () => void;
+  agents: Agent[];
+  previousStage: string | null;
+}) {
+  const style = stageStyle(segment.stage);
+  const agent = segment.agentId ? agents.find((a) => a.id === segment.agentId) ?? null : null;
+  const agentName = agent ? agent.name : segment.agentId ? segment.agentId.slice(0, 8) : null;
+  const roleLabel = agent?.role ? getRoleLabel(agent.role) ?? agent.role : null;
+  const modelLabel = agent?.cli_model ?? null;
+  const providerLabel = agent?.cli_provider ?? null;
+  const transitionLabel = previousStage !== null && previousStage !== segment.stage
+    ? `${previousStage} → ${segment.stage ?? "—"}`
+    : segment.stage ?? "—";
+  const startedAtLabel = new Date(segment.startedAt).toLocaleTimeString("ja-JP", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+  const chipStyle = {
+    fontSize: "10px",
+    fontWeight: 500,
+    padding: "1px 6px",
+    borderRadius: "3px",
+    background: "rgba(255,255,255,0.35)",
+    lineHeight: 1.4,
+  } as const;
+
+  return (
+    <div
+      data-testid="stage-segment"
+      data-stage={segment.stage ?? ""}
+      data-open={isOpen ? "true" : "false"}
+      style={{
+        marginBottom: "8px",
+        border: `1px solid ${style.border}`,
+        borderRadius: "6px",
+        overflow: "hidden",
+      }}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        data-testid="stage-segment-toggle"
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          width: "100%",
+          padding: "6px 10px",
+          background: style.bg,
+          color: style.text,
+          border: "none",
+          cursor: "pointer",
+          fontFamily: "var(--font-mono)",
+          fontSize: "11px",
+          fontWeight: 600,
+          textAlign: "left",
+          gap: "12px",
+        }}
+      >
+        <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: "10px" }}>{isOpen ? "▼" : "▶"}</span>
+          <span>━━━ STAGE: {transitionLabel} ━━━</span>
+          {agentName && (
+            <span data-testid="segment-agent-chip" style={chipStyle}>
+              @{agentName}
+            </span>
+          )}
+          {roleLabel && (
+            <span data-testid="segment-role-chip" style={chipStyle}>
+              {roleLabel}
+            </span>
+          )}
+          {(providerLabel || modelLabel) && (
+            <span data-testid="segment-model-chip" style={chipStyle}>
+              {providerLabel ? `${providerLabel}` : ""}
+              {providerLabel && modelLabel ? " / " : ""}
+              {modelLabel ?? ""}
+            </span>
+          )}
+        </span>
+        <span style={{ fontSize: "10px", fontWeight: 400, opacity: 0.8, flexShrink: 0, whiteSpace: "nowrap" }}>
+          {segment.entryCount} entries · {startedAtLabel}
+        </span>
+      </button>
+      {isOpen && (
+        <pre
+          data-testid="stage-segment-body"
+          style={{
+            fontSize: "12px",
+            lineHeight: 1.6,
+            color: "var(--terminal-text)",
+            background: "var(--terminal-bg)",
+            padding: "10px 12px",
+            fontFamily: "var(--font-mono)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            margin: 0,
+            maxHeight: "500px",
+            overflowY: "auto",
+          }}
+        >
+          {segment.text || "(empty)"}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+export function TerminalPanel({
+  taskId,
+  on,
+  subscribeTask,
+  onClose,
+  agents = [],
+  currentStage = null,
+  currentAgentId = null,
+}: TerminalPanelProps) {
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("terminal");
   const [autoScroll, setAutoScroll] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isDark = useIsDark();
+  // Keep a ref in sync so the WS handler closure always sees the latest values.
+  const currentStageRef = useRef<string | null>(currentStage);
+  const currentAgentIdRef = useRef<string | null>(currentAgentId);
+  useEffect(() => {
+    currentStageRef.current = currentStage;
+    currentAgentIdRef.current = currentAgentId;
+  }, [currentStage, currentAgentId]);
 
   const logsFetched = useRef(false);
   useEffect(() => {
@@ -282,10 +552,20 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
   useEffect(() => {
     return on("cli_output", (payload) => {
       const data = payload as
-        | { task_id: string; kind: string; message: string }
-        | Array<{ task_id: string; kind: string; message: string }>;
+        | { task_id: string; kind: string; message: string; stage?: string | null; agent_id?: string | null }
+        | Array<{ task_id: string; kind: string; message: string; stage?: string | null; agent_id?: string | null }>;
       const items = Array.isArray(data) ? data : [data];
-      const relevant = items.filter((d) => d.task_id === taskId) as Array<{ task_id: string; kind: TaskLog["kind"]; message: string }>;
+      const relevant = items
+        .filter((d) => d.task_id === taskId)
+        .map((d) => ({
+          task_id: d.task_id,
+          kind: d.kind as TaskLog["kind"],
+          message: d.message,
+          // Fall back to parent-supplied current stage/agent when the WS payload
+          // did not include them. Historical records get these from the DB trigger.
+          stage: d.stage ?? currentStageRef.current,
+          agent_id: d.agent_id ?? currentAgentIdRef.current,
+        }));
       if (relevant.length > 0) {
         startTransition(() => {
           setLogs((prev) => appendLiveLogs(prev, relevant));
@@ -405,7 +685,13 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
 
       {/* Content */}
       {isTerminalTab ? (
-        <TerminalView taskId={taskId} on={on} />
+        <TerminalView
+          taskId={taskId}
+          on={on}
+          currentStage={currentStage}
+          currentAgentId={currentAgentId}
+          agents={agents}
+        />
       ) : (
         <div ref={scrollRef} onScroll={handleScroll} style={{ flex: "1 1 0", minHeight: 0, overflowY: "auto", padding: "8px", paddingBottom: "24px", background: "var(--terminal-bg)" }}>
           {timeline.length === 0 && (
@@ -414,7 +700,7 @@ export function TerminalPanel({ taskId, on, subscribeTask, onClose }: TerminalPa
             </div>
           )}
           {timeline.map((entry) => (
-            <LogEntry key={`log-${entry.data.id}`} log={entry.data} isDark={isDark} />
+            <LogEntry key={`log-${entry.data.id}`} log={entry.data} isDark={isDark} agents={agents} />
           ))}
         </div>
       )}

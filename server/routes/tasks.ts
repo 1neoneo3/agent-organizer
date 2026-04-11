@@ -344,8 +344,23 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const offset = Number(req.query.offset ?? 0);
     const logs = db.prepare(
       "SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ? OFFSET ?"
-    ).all(req.params.id, limit, offset);
-    res.json(logs);
+    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { message: string }>;
+
+    // Cap per-message length to keep the response payload bounded. Some rows
+    // contain full tool-result JSON blobs (tens of KB each), which can push
+    // the aggregated response to tens of megabytes and freeze the browser
+    // when rendered in the Activity panel.
+    const MAX_MESSAGE_LEN = 4000;
+    const truncated = logs.map((row) => {
+      if (typeof row.message === "string" && row.message.length > MAX_MESSAGE_LEN) {
+        return {
+          ...row,
+          message: `${row.message.slice(0, MAX_MESSAGE_LEN)}... [truncated ${row.message.length - MAX_MESSAGE_LEN} bytes]`,
+        };
+      }
+      return row;
+    });
+    res.json(truncated);
   });
 
   // Terminal view: pretty-printed log file + DB logs
@@ -375,10 +390,34 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Also fetch recent task_logs from DB for system/stderr entries
     const taskLogs = db.prepare(
-      "SELECT kind, message, created_at FROM task_logs WHERE task_id = ? AND kind IN ('system', 'stderr') ORDER BY id DESC LIMIT 50"
-    ).all(req.params.id) as Array<{ kind: string; message: string; created_at: number }>;
+      "SELECT kind, message, stage, agent_id, created_at FROM task_logs WHERE task_id = ? AND kind IN ('system', 'stderr') ORDER BY id DESC LIMIT 50"
+    ).all(req.params.id) as Array<{ kind: string; message: string; stage: string | null; agent_id: string | null; created_at: number }>;
 
-    res.json({ ok: true, exists: fileExists, text, task_logs: taskLogs });
+    // Fetch stage transitions (synthetic markers emitted by the tasks_log_stage_transition trigger)
+    // so the terminal view can overlay stage boundaries on the raw log text.
+    const stageTransitions = db.prepare(
+      "SELECT stage, agent_id, message, created_at FROM task_logs " +
+      "WHERE task_id = ? AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' " +
+      "ORDER BY created_at ASC"
+    ).all(req.params.id) as Array<{ stage: string; agent_id: string | null; message: string; created_at: number }>;
+
+    res.json({
+      ok: true,
+      exists: fileExists,
+      text,
+      task_logs: taskLogs,
+      stage_transitions: stageTransitions.map((row) => {
+        // message format: "__STAGE_TRANSITION__:<from>→<to>"
+        const match = row.message.match(/^__STAGE_TRANSITION__:(.+?)→(.+)$/);
+        return {
+          from: match ? match[1] : null,
+          to: match ? match[2] : row.stage,
+          stage: row.stage,
+          agent_id: row.agent_id,
+          created_at: row.created_at,
+        };
+      }),
+    });
   });
 
   // CEO Feedback: send directive to a task (in_progress or finished)

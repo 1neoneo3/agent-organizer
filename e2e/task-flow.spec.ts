@@ -140,6 +140,49 @@ test.describe("Task Flow (Agent + Task integration)", () => {
     await expect(page.locator("text=Task with description for detail view")).toBeVisible();
   });
 
+  test("task description renders markdown (headings, lists, code)", async ({ page, request }) => {
+    const markdown = [
+      "## 背景",
+      "BigQuery の `oripaone.coins` カラムの乖離検証。",
+      "",
+      "### やってほしいこと",
+      "- charge が複数回あるユーザー",
+      "- gacha 回数が多いユーザー",
+      "- withdraw を含むユーザー",
+      "",
+      "```sql",
+      "SELECT coins FROM users_history",
+      "```",
+    ].join("\n");
+
+    await apiCall(request, "post", "/tasks", {
+      title: "Markdown Rendering Task",
+      description: markdown,
+      task_size: "small",
+    });
+
+    await page.goto("/");
+    await page.waitForSelector("text=Agent Organizer");
+    await page.click("text=Markdown Rendering Task");
+
+    const container = page.getByTestId("markdown-content");
+    await expect(container).toBeVisible();
+
+    // Heading is rendered as <h2> (not raw "## ")
+    await expect(container.locator("h2", { hasText: "背景" })).toBeVisible();
+    await expect(container.locator("h3", { hasText: "やってほしいこと" })).toBeVisible();
+
+    // List items are rendered as <li>
+    await expect(container.locator("li", { hasText: "charge が複数回あるユーザー" })).toBeVisible();
+
+    // Inline code + code block render as <code>
+    await expect(container.locator("code", { hasText: "oripaone.coins" })).toBeVisible();
+    await expect(container.locator("code", { hasText: "SELECT coins FROM users_history" })).toBeVisible();
+
+    // Raw markdown syntax must NOT appear as visible text
+    await expect(container.getByText(/^## 背景$/)).toHaveCount(0);
+  });
+
   test("API validation rejects invalid task data", async ({ request }) => {
     // Empty title should fail
     const res = await apiCall(request, "post", "/tasks", {

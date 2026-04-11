@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS task_logs (
   task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
   kind TEXT NOT NULL DEFAULT 'stdout' CHECK(kind IN ('stdout','stderr','system','thinking','assistant','tool_call','tool_result')),
   message TEXT NOT NULL,
+  stage TEXT,
+  agent_id TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
 );
 

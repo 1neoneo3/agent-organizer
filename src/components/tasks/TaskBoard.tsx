@@ -279,24 +279,30 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
         />
       )}
 
-      {logTaskId && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
-          onClick={() => setLogTaskId(null)}
-        >
+      {logTaskId && (() => {
+        const logTask = tasks.find((t) => t.id === logTaskId);
+        return (
           <div
-            className="w-full max-w-4xl max-h-[85vh] mx-4"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+            onClick={() => setLogTaskId(null)}
           >
-            <TerminalPanel
-              taskId={logTaskId}
-              on={on}
-              subscribeTask={onSubscribeTask}
-              onClose={() => setLogTaskId(null)}
-            />
+            <div
+              className="w-full max-w-4xl max-h-[85vh] mx-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <TerminalPanel
+                taskId={logTaskId}
+                on={on}
+                subscribeTask={onSubscribeTask}
+                onClose={() => setLogTaskId(null)}
+                agents={agents}
+                currentStage={logTask?.status ?? null}
+                currentAgentId={logTask?.assigned_agent_id ?? null}
+              />
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

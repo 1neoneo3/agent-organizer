@@ -42,4 +42,66 @@ describe("initializeDb", () => {
     assert.ok(reviewSyncError);
     assert.equal(autoDispatch?.value, "all_inbox");
   });
+
+  it("adds stage and agent_id columns to task_logs", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const columns = db.prepare("PRAGMA table_info(task_logs)").all() as Array<{ name: string }>;
+    assert.ok(columns.find((c) => c.name === "stage"), "task_logs.stage should exist");
+    assert.ok(columns.find((c) => c.name === "agent_id"), "task_logs.agent_id should exist");
+  });
+
+  it("auto-populates stage and agent_id on log insert via trigger", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    // Use a unique agent name since DB_PATH is frozen at module load and this
+    // db may be shared with other test cases.
+    const now = Date.now();
+    const agentName = `test-agent-trigger-${now}`;
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("agent-trigger", agentName, "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run("task-trigger", "Test Task", "in_progress", "agent-trigger", "small", now, now);
+
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'stdout', ?)"
+    ).run("task-trigger", "hello");
+
+    const row = db.prepare(
+      "SELECT stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT 1"
+    ).get("task-trigger") as { stage: string | null; agent_id: string | null };
+
+    assert.equal(row.stage, "in_progress", "stage should be populated from tasks.status");
+    assert.equal(row.agent_id, "agent-trigger", "agent_id should be populated from tasks.assigned_agent_id");
+  });
+
+  it("emits a stage transition marker when task status changes", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    const agentName = `test-agent-transition-${now}`;
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("agent-transition", agentName, "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run("task-transition", "Test Task 2", "in_progress", "agent-transition", "small", now, now);
+
+    db.prepare("UPDATE tasks SET status = 'self_review' WHERE id = ?").run("task-transition");
+
+    const marker = db.prepare(
+      "SELECT kind, message, stage, agent_id FROM task_logs WHERE task_id = ? AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC LIMIT 1"
+    ).get("task-transition") as { kind: string; message: string; stage: string; agent_id: string } | undefined;
+
+    assert.ok(marker, "stage transition marker should be inserted by trigger");
+    assert.equal(marker.kind, "system");
+    assert.equal(marker.message, "__STAGE_TRANSITION__:in_progress→self_review");
+    assert.equal(marker.stage, "self_review");
+    assert.equal(marker.agent_id, "agent-transition");
+  });
 });

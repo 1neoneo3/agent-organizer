@@ -4,6 +4,7 @@ import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
 import { sendTaskFeedback } from "../../api/endpoints.js";
 import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
+import { MarkdownContent } from "./MarkdownContent.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
 import { buildAgentViewState } from "./agent-view.js";
 
@@ -180,15 +181,12 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
                 Description
               </h3>
               <div style={{
-                fontSize: "13px",
-                color: "var(--text-primary)",
-                whiteSpace: "pre-wrap",
-                background: "var(--bg-tertiary)",
+                background: "var(--bg-primary)",
                 borderRadius: "8px",
                 padding: "12px",
                 border: "1px solid var(--border-subtle)",
               }}>
-                {task.description}
+                <MarkdownContent content={task.description} />
               </div>
             </div>
           ) : (
@@ -388,6 +386,9 @@ export function TaskDetailModal({ task, agents, interactivePrompt, on, subscribe
               on={on}
               subscribeTask={subscribeTask}
               onClose={() => setShowTerminal(false)}
+              agents={agents}
+              currentStage={task.status}
+              currentAgentId={task.assigned_agent_id}
             />
           )}
         </div>
