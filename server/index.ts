@@ -14,6 +14,7 @@ import { restorePendingInteractivePrompts } from "./spawner/process-manager.js";
 import { startTelegramControlPoller } from "./notify/telegram-control.js";
 import { startAutoDispatchScheduler } from "./dispatch/auto-dispatcher.js";
 import { startGithubIssueSync } from "./integrations/github-sync.js";
+import { isPerfLogEnabled, startPerfReporter } from "./perf/metrics.js";
 import {
   PORT,
   IS_DEV,
@@ -88,5 +89,9 @@ server.listen(PORT, () => {
   startTelegramControlPoller();
   if (IS_DEV) {
     console.log(`Auth token: ${SESSION_AUTH_TOKEN}`);
+  }
+  if (isPerfLogEnabled()) {
+    startPerfReporter();
+    console.log(`[perf] perf logging enabled (AO_PERF_LOG=1, interval 5s)`);
   }
 });

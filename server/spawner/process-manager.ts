@@ -23,6 +23,7 @@ import {
 } from "../config/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
+import { recordDbLogInsertMs, recordHeartbeatWrite, recordStdoutChunkMs } from "../perf/metrics.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
@@ -339,6 +340,7 @@ export function spawnAgent(
       return;
     }
 
+    const t0 = performance.now();
     db.exec("BEGIN");
     try {
       for (const entry of entries) {
@@ -349,6 +351,7 @@ export function spawnAgent(
       db.exec("ROLLBACK");
       throw error;
     }
+    recordDbLogInsertMs(performance.now() - t0);
   }
 
   // Timeout management
@@ -374,6 +377,7 @@ export function spawnAgent(
   const writeHeartbeat = (): void => {
     try {
       heartbeatStmt.run(Date.now(), task.id);
+      recordHeartbeatWrite();
     } catch {
       // Ignore — DB may be shutting down
     }
@@ -383,6 +387,8 @@ export function spawnAgent(
 
   // stdout handler
   child.stdout?.on("data", (data: Buffer) => {
+    const chunkStart = performance.now();
+
     // Skip processing if we already killed the process for an interactive prompt
     if (interactivePromptKilled) return;
 
@@ -507,6 +513,8 @@ export function spawnAgent(
     if (selfReview && text.includes("[SELF_REVIEW:PASS]")) {
       db.prepare("UPDATE tasks SET review_count = review_count + 1, updated_at = ? WHERE id = ?").run(Date.now(), task.id);
     }
+
+    recordStdoutChunkMs(performance.now() - chunkStart);
   });
 
   // stderr handler

@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import { WS_BATCH_INTERVALS, WS_MAX_BATCH_QUEUE } from "../config/runtime.js";
+import { recordWsBroadcast } from "../perf/metrics.js";
 
 const PING_INTERVAL_MS = 30_000;
 
@@ -72,10 +73,18 @@ export function createWsHub(): WsHub {
 
   function sendRaw(type: string, payload: unknown, taskId?: string): void {
     const message = JSON.stringify({ type, payload, ts: Date.now() });
+    const byteLength = Buffer.byteLength(message);
+    let delivered = 0;
     for (const ws of clients) {
       if (ws.readyState === WebSocket.OPEN && shouldReceive(ws, taskId)) {
         ws.send(message);
+        delivered += 1;
       }
+    }
+    // Only count an actual broadcast if at least one client received it,
+    // so idle-but-connected-less intervals don't bloat the counter.
+    if (delivered > 0) {
+      recordWsBroadcast(byteLength * delivered);
     }
   }
 
