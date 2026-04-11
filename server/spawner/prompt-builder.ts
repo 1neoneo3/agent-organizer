@@ -496,9 +496,35 @@ export function buildReviewPrompt(task: Task): string {
     parts.push("## 元のタスク説明");
     parts.push(task.description);
     parts.push("");
+    parts.push("### ⚠️ タスク説明のメタ情報について");
+    parts.push("タスク説明には `## 検証対象機能`, `## 検証方法`, `## 検証対象` のようなメタ情報セクションが含まれる場合があります。");
+    parts.push("これらは **agent-organizer システム本体を運用者が確認するためのメタ情報** であり、");
+    parts.push("**この実装リポジトリとは無関係** です。以下の点に注意してください:");
+    parts.push("");
+    parts.push("- メタ情報で言及される「commit XXXXX」や「別リポジトリの機能」は、この実装リポジトリには **存在しません**。");
+    parts.push("- 実装リポジトリで `git rev-parse --verify <commit-sha>` が失敗しても、それは欠陥ではありません。");
+    parts.push("- レビューは **実際に作られた成果物 (リポジトリ内のコード)** が **SPRINT CONTRACT の成果物と受け入れ基準** を満たしているかだけで判断してください。");
+    parts.push("- メタ情報だけを理由に `[REVIEW:NEEDS_CHANGES]` を出さないこと。");
+    parts.push("");
   }
   if (task.project_path) {
-    parts.push(`プロジェクトパス: ${task.project_path}`);
+    parts.push(`プロジェクトパス (親 workspace): ${task.project_path}`);
+    parts.push("");
+  }
+  if (task.repository_url) {
+    // Guess the repo's local directory inside project_path from the last
+    // URL path segment. Reviewers cannot rely on `project_path` alone
+    // because agents often create a NEW repo as a subdirectory inside
+    // it (e.g. `/home/mk/workspace/verify4-tempconv-cli`). Running
+    // `npm run lint` from the parent walks up and picks up an unrelated
+    // project's config — that was the exact failure mode we saw with
+    // the verify1-12 batch.
+    const repoName = task.repository_url.split("/").pop()?.replace(/\.git$/, "") ?? null;
+    parts.push(`リポジトリ URL: ${task.repository_url}`);
+    if (repoName) {
+      parts.push(`**想定ローカル作業ディレクトリ**: \`${task.project_path}/${repoName}\``);
+      parts.push(`レビューコマンドは必ず \`cd ${task.project_path}/${repoName}\` してから実行してください。親ディレクトリの無関係な設定を拾わないこと。`);
+    }
     parts.push("");
   }
 
@@ -507,22 +533,36 @@ export function buildReviewPrompt(task: Task): string {
   parts.push("実装が記載された成果物と受け入れ基準を満たしているか検証してください。");
   parts.push("");
 
-  parts.push("## レビュー手順");
+  parts.push("## 実作業ディレクトリの特定（必須・最初）");
   parts.push("");
-  parts.push("1. `git diff HEAD~1` と `git log --oneline -5` で最近の変更を確認");
-  parts.push("2. 実行可能なコードであれば、実際に実行してテストで正確性を検証");
+  parts.push("レビュー開始前に **必ず** 以下を実行して、コマンドの実行場所を確定してください:");
+  parts.push("");
+  parts.push("1. `git -C <候補ディレクトリ> rev-parse --show-toplevel` で git 管理下のリポジトリ root を特定");
+  parts.push("2. project_path そのものは agent-organizer の workspace 親ディレクトリの可能性が高いので、そのままでは **使わない**");
+  parts.push("3. エージェントが新規作成したリポジトリは、task_logs の `gh repo create` / `git init` / `cd <path>` コマンドから特定可能");
+  parts.push("4. 特定した作業ディレクトリに `cd` してから以下のゲートを実行");
   parts.push("");
 
   parts.push("## 必須ビルド/Lintゲート（最初にチェック）");
   parts.push("");
-  parts.push("採点前に以下を確認。いずれかの失敗 = 自動的に [REVIEW:NEEDS_CHANGES]:");
-  parts.push("1. `npm run lint` — エラー・警告ゼロ");
-  parts.push("2. `npm run build` — エラーゼロで成功");
-  parts.push("3. TypeScriptの場合 `npx tsc --noEmit` — 型エラーゼロ");
-  parts.push("4. アプリを実行してランタイム/コンソールエラーを確認");
+  parts.push("**実際の作業ディレクトリ** (上で特定した git toplevel) にいる前提で、プロジェクトの言語を自動検出して適切なコマンドを実行してください:");
   parts.push("");
-  parts.push("ゲートが失敗した場合、即座に [REVIEW:NEEDS_CHANGES:<失敗したゲート>] を出力。");
-  parts.push("ビルドやlintが通らないコードに合格スコアを付けないこと。");
+  parts.push("| 設定ファイル存在 | プロジェクト種別 | 実行するゲート |");
+  parts.push("|------|------|------|");
+  parts.push("| `pyproject.toml` | Python | `ruff check .` (あれば) / `pytest` / `mypy src` (あれば) |");
+  parts.push("| `package.json` (+ `tsconfig.json`) | TypeScript | `npm run lint` / `npm run build` / `npx tsc --noEmit` |");
+  parts.push("| `package.json` のみ | Node.js | `npm run lint` (あれば) / `npm test` |");
+  parts.push("| `go.mod` | Go | `go vet ./...` / `go build ./...` / `go test ./...` |");
+  parts.push("| `Cargo.toml` | Rust | `cargo clippy` / `cargo build` / `cargo test` |");
+  parts.push("| `dbt_project.yml` | dbt | `dbt compile` / `dbt test --select <model>` |");
+  parts.push("| 上記のいずれも無し | Generic | ゲートをスキップして、README や実行可能ファイルの存在確認のみ |");
+  parts.push("");
+  parts.push("**重要ルール**:");
+  parts.push("- スクリプトが**定義されていない**ゲート (例: Python プロジェクトで `npm run lint`) は **実行しないこと**。未定義を理由に NEEDS_CHANGES にしない。");
+  parts.push("- 親ディレクトリの設定を拾って別プロジェクトのコマンドを実行したことによる失敗は、`NEEDS_CHANGES` の理由にしない (そもそもゲート対象外)。");
+  parts.push("- 定義されたゲートが失敗した場合のみ `[REVIEW:NEEDS_CHANGES:<失敗したゲート>]` を出力。");
+  parts.push("");
+  parts.push("4. 最後にアプリを実行してランタイム/コンソールエラーを確認 (可能な場合)");
   parts.push("");
 
   parts.push("## レビューチェックリスト");
