@@ -468,6 +468,25 @@ export function TaskDetailModal({
             </div>
           )}
 
+          {/* Refinement Plan */}
+          {task.refinement_plan && (
+            <div style={{ marginBottom: "16px" }}>
+              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
+                Refinement Plan
+              </h3>
+              <div style={{
+                background: "var(--bg-primary)",
+                borderRadius: "8px",
+                padding: "12px",
+                border: "1px solid var(--border-subtle)",
+                maxHeight: "400px",
+                overflow: "auto",
+              }}>
+                <MarkdownContent content={task.refinement_plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")} />
+              </div>
+            </div>
+          )}
+
           {/* Result */}
           {task.result && (
             <div style={{ marginBottom: "16px" }}>
