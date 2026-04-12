@@ -58,11 +58,12 @@ export function recoverInProgressOrphans(
   cache: CacheService | undefined,
   active: Map<string, unknown> | Set<string>,
 ): void {
-  const inProgress = db.prepare(
-    "SELECT id, assigned_agent_id FROM tasks WHERE status = 'in_progress'",
-  ).all() as Array<{ id: string; assigned_agent_id: string | null }>;
+  // Recover both in_progress and refinement orphans
+  const orphanCandidates = db.prepare(
+    "SELECT id, status, assigned_agent_id, refinement_plan FROM tasks WHERE status IN ('in_progress', 'refinement')",
+  ).all() as Array<{ id: string; status: string; assigned_agent_id: string | null; refinement_plan: string | null }>;
 
-  for (const task of inProgress) {
+  for (const task of orphanCandidates) {
     if (hasActive(active, task.id)) continue;
 
     // Skip tasks awaiting interactive prompt (unless timed out)
@@ -81,16 +82,41 @@ export function recoverInProgressOrphans(
     }
 
     const now = Date.now();
-    // Atomic UPDATE: only act when the task is still in_progress. If another
-    // path already transitioned it, the UPDATE is a no-op.
+
+    // Refinement orphan with a plan: stamp completed_at so UI shows
+    // approve/reject buttons. The plan is already saved; only the
+    // process died before finalization could run.
+    if (task.status === "refinement" && task.refinement_plan) {
+      const result = db.prepare(
+        "UPDATE tasks SET completed_at = ?, updated_at = ? WHERE id = ? AND status = 'refinement' AND completed_at IS NULL",
+      ).run(now, now, task.id);
+      if (result.changes === 0) continue;
+
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+      ).run(task.id, "Refinement plan ready (recovered by orphan recovery — agent process exited before finalization).");
+
+      if (task.assigned_agent_id) {
+        db.prepare(
+          "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+        ).run(now, task.assigned_agent_id);
+        ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+      }
+
+      if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
+      ws.broadcast("task_update", { id: task.id, status: "refinement", completed_at: now });
+      continue;
+    }
+
+    // in_progress or refinement without plan: return to inbox
     const result = db.prepare(
-      "UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ? AND status = 'in_progress'",
-    ).run(now, task.id);
+      "UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ? AND status = ?",
+    ).run(now, task.id, task.status);
     if (result.changes === 0) continue;
 
     db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'Task returned to inbox by orphan recovery (no active process). Will be re-dispatched automatically.')",
-    ).run(task.id);
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+    ).run(task.id, `Task returned to inbox by orphan recovery (no active process, was ${task.status}). Will be re-dispatched automatically.`);
 
     if (task.assigned_agent_id) {
       db.prepare(
@@ -99,10 +125,7 @@ export function recoverInProgressOrphans(
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
-    if (cache) {
-      cache.invalidatePattern("tasks:*");
-      cache.del("agents:all");
-    }
+    if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
     ws.broadcast("task_update", { id: task.id, status: "inbox" });
   }
 }
