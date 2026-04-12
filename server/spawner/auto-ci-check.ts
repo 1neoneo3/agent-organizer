@@ -4,13 +4,13 @@ import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
 
 /**
- * Trigger automatic pre-deploy verification when a task transitions to "pre_deploy".
+ * Trigger automatic ci-check verification when a task transitions to "ci_check".
  *
  * Guards:
- *  - pre_deploy iteration count must be below max (prevents infinite loops)
+ *  - ci_check iteration count must be below max (prevents infinite loops)
  *  - an idle devops agent must be available
  */
-export async function triggerAutoPreDeploy(
+export async function triggerAutoCiCheck(
   db: DatabaseSync,
   ws: WsHub,
   task: Task,
@@ -22,38 +22,38 @@ export async function triggerAutoPreDeploy(
   const currentTask = existingTask;
 
   // Loop prevention
-  const deployCount = countPreDeployIterations(db, currentTask.id);
+  const deployCount = countCiCheckIterations(db, currentTask.id);
   const maxDeployCount = 2;
   if (deployCount >= maxDeployCount) {
     const now = Date.now();
     db.prepare("UPDATE tasks SET status = 'pr_review', updated_at = ? WHERE id = ?").run(now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto pre-deploy stopped: iterations (${deployCount}) reached max (${maxDeployCount}). Returning to pr_review for manual action.`);
+    logSystem(db, currentTask.id, `Auto ci-check stopped: iterations (${deployCount}) reached max (${maxDeployCount}). Returning to pr_review for manual action.`);
     ws.broadcast("task_update", { id: currentTask.id, status: "pr_review" });
     return;
   }
 
   // Find a suitable agent (prefer "devops" role)
-  const agent = findPreDeployAgent(db, currentTask.assigned_agent_id);
+  const agent = findCiCheckAgent(db, currentTask.assigned_agent_id);
   if (!agent) {
-    logSystem(db, currentTask.id, "Auto pre-deploy skipped: no idle devops agent available");
+    logSystem(db, currentTask.id, "Auto ci-check skipped: no idle devops agent available");
     return;
   }
 
-  logSystem(db, currentTask.id, `Auto pre-deploy started: agent="${agent.name}" (${agent.id})`);
-  ws.broadcast("cli_output", [{ task_id: currentTask.id, kind: "system", message: `[Auto Pre-Deploy] Starting pre-deploy verification with agent: ${agent.name}` }], { taskId: currentTask.id });
+  logSystem(db, currentTask.id, `Auto ci-check started: agent="${agent.name}" (${agent.id})`);
+  ws.broadcast("cli_output", [{ task_id: currentTask.id, kind: "system", message: `[Auto Pre-Deploy] Starting ci-check verification with agent: ${agent.name}` }], { taskId: currentTask.id });
 
   const { spawnAgent } = await import("./process-manager.js");
   spawnAgent(db, ws, agent, currentTask, { cache });
 }
 
-function countPreDeployIterations(db: DatabaseSync, taskId: string): number {
+function countCiCheckIterations(db: DatabaseSync, taskId: string): number {
   const row = db.prepare(
-    "SELECT COUNT(*) AS cnt FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '%Auto pre-deploy started%'"
+    "SELECT COUNT(*) AS cnt FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '%Auto ci-check started%'"
   ).get(taskId) as { cnt: number };
   return row.cnt;
 }
 
-function findPreDeployAgent(
+function findCiCheckAgent(
   db: DatabaseSync,
   implementerAgentId: string | null,
 ): Agent | undefined {

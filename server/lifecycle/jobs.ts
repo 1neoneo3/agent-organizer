@@ -7,7 +7,7 @@ import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 // Orphan recovery thresholds for stages where an auto-agent should always be
-// running (auto-reviewer, auto-qa, auto-test-gen, auto-pre-deploy). Tasks
+// running (auto-reviewer, auto-qa, auto-test-gen, auto-ci-check). Tasks
 // whose last_heartbeat_at is older than this are treated as stuck.
 const AUTO_STAGE_STALE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -31,7 +31,7 @@ interface AutoStageRow {
 /**
  * Orphan recovery: find tasks marked as in_progress but with no active process,
  * and find tasks stuck in an auto-stage (pr_review / qa_testing /
- * test_generation / pre_deploy) whose heartbeat has gone stale.
+ * test_generation / ci_check) whose heartbeat has gone stale.
  *
  * Runs periodically to handle crashes or unclean shutdowns.
  * Skips tasks with a pending interactive prompt (unless timed out).

@@ -143,12 +143,12 @@ describe("recoverStuckAutoStages", () => {
     assert.ok(ws.events.some((e) => e.type === "task_update"));
   });
 
-  it("promotes stuck qa_testing / test_generation / pre_deploy tasks", () => {
+  it("promotes stuck qa_testing / test_generation / ci_check tasks", () => {
     const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
     for (const [id, status] of [
       ["qa", "qa_testing"],
       ["tg", "test_generation"],
-      ["pd", "pre_deploy"],
+      ["pd", "ci_check"],
     ] as const) {
       insertTask(db, { id, status, assigned_agent_id: "agent-1", last_heartbeat_at: elevenMinutesAgo });
     }

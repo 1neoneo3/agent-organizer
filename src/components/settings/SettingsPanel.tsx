@@ -199,14 +199,14 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
               <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Pre-Deploy Stage</span>
               <select
                 style={inputStyle}
-                value={local.default_enable_pre_deploy ?? "false"}
-                onChange={(e) => update("default_enable_pre_deploy", e.target.value)}
+                value={local.default_enable_ci_check ?? "false"}
+                onChange={(e) => update("default_enable_ci_check", e.target.value)}
               >
                 <option value="false">Disabled (default)</option>
                 <option value="true">Enabled by default</option>
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                Run an auto pre-deploy agent between human review and done.
+                Run an auto ci-check agent between human review and done.
               </p>
             </label>
           </div>

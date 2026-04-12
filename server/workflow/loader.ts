@@ -34,7 +34,7 @@ export interface ProjectWorkflow {
    */
   enableTestGeneration: boolean | null;
   enableHumanReview: boolean | null;
-  enablePreDeploy: boolean | null;
+  enableCiCheck: boolean | null;
   projectType: ProjectType;
   /**
    * Per-project auto-check commands. Each of these is a bash shell
@@ -76,7 +76,7 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   // null → fall back to the global default_enable_* setting at resolve time
   enableTestGeneration: null,
   enableHumanReview: null,
-  enablePreDeploy: null,
+  enableCiCheck: null,
   projectType: "generic",
   checkTypesCmd: null,
   checkLintCmd: null,
@@ -215,10 +215,10 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
         }
         break;
       }
-      case "enable_pre_deploy": {
+      case "enable_ci_check": {
         const parsed = parseBoolean(value);
         if (parsed !== null) {
-          workflow.enablePreDeploy = parsed;
+          workflow.enableCiCheck = parsed;
         }
         break;
       }

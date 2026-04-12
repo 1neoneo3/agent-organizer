@@ -137,7 +137,7 @@ function migrateAddQaTestingStatus(_db: DatabaseSync): void {
 }
 
 function migrateAddWorkflowStages(db: DatabaseSync): void {
-  // Add test_generation, human_review, pre_deploy to the status CHECK constraint.
+  // Add test_generation, human_review, ci_check to the status CHECK constraint.
   // SQLite doesn't support ALTER CHECK, so we rebuild the table.
   const checkInfo = db.prepare(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"

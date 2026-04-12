@@ -56,7 +56,7 @@ const baseWorkflow: ProjectWorkflow = {
   includeDecompose: true,
   enableTestGeneration: false,
   enableHumanReview: false,
-  enablePreDeploy: false,
+  enableCiCheck: false,
           projectType: "generic" as const,
           checkTypesCmd: null,
           checkLintCmd: null,
@@ -89,16 +89,16 @@ describe("resolveActiveStages", () => {
       ...baseWorkflow,
       enableTestGeneration: true,
       enableHumanReview: true,
-      enablePreDeploy: true,
+      enableCiCheck: true,
     };
     const stages = resolveActiveStages(db, workflow);
     assert.deepStrictEqual(stages, [
       "in_progress",
       "test_generation",
+      "ci_check",
       "qa_testing",
       "pr_review",
       "human_review",
-      "pre_deploy",
       "done",
     ]);
   });
@@ -109,7 +109,7 @@ describe("resolveActiveStages", () => {
       ...baseWorkflow,
       enableTestGeneration: false,
       enableHumanReview: true,
-      enablePreDeploy: false,
+      enableCiCheck: false,
           projectType: "generic" as const,
           checkTypesCmd: null,
           checkLintCmd: null,
@@ -163,14 +163,14 @@ describe("resolveActiveStages", () => {
     assert.deepStrictEqual(stages, ["in_progress", "human_review", "done"]);
   });
 
-  it("falls back to default_enable_pre_deploy setting when workflow is null", () => {
+  it("falls back to default_enable_ci_check setting when workflow is null", () => {
     const db = createMockDb({
       qa_mode: "disabled",
       review_mode: "none",
-      default_enable_pre_deploy: "true",
+      default_enable_ci_check: "true",
     });
     const stages = resolveActiveStages(db, null);
-    assert.deepStrictEqual(stages, ["in_progress", "pre_deploy", "done"]);
+    assert.deepStrictEqual(stages, ["in_progress", "ci_check", "done"]);
   });
 
   it("workflow null flag falls back to settings default", () => {

@@ -83,7 +83,7 @@ describe("shouldIncludeWorkflow", () => {
       includeDecompose: false,
       enableTestGeneration: false,
       enableHumanReview: false,
-      enablePreDeploy: false,
+      enableCiCheck: false,
       projectType: "generic" as const,
       checkTypesCmd: null,
       checkLintCmd: null,
@@ -98,12 +98,12 @@ describe("shouldIncludeWorkflow", () => {
 });
 
 describe("loadProjectWorkflow — enable_* fields", () => {
-  it("parses enable_test_generation, enable_human_review, enable_pre_deploy from frontmatter", () => {
+  it("parses enable_test_generation, enable_human_review, enable_ci_check from frontmatter", () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "ao-test-"));
     writeFileSync(join(tmpDir, "WORKFLOW.md"), `---
 enable_test_generation: true
 enable_human_review: true
-enable_pre_deploy: false
+enable_ci_check: false
 ---
 Custom workflow body
 `);
@@ -112,7 +112,7 @@ Custom workflow body
     assert.ok(result);
     assert.equal(result.enableTestGeneration, true);
     assert.equal(result.enableHumanReview, true);
-    assert.equal(result.enablePreDeploy, false);
+    assert.equal(result.enableCiCheck, false);
     assert.equal(result.body, "Custom workflow body");
 
     rmSync(tmpDir, { recursive: true });
@@ -130,7 +130,7 @@ Body
     assert.ok(result);
     assert.equal(result.enableTestGeneration, null);
     assert.equal(result.enableHumanReview, null);
-    assert.equal(result.enablePreDeploy, null);
+    assert.equal(result.enableCiCheck, null);
 
     rmSync(tmpDir, { recursive: true });
   });

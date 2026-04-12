@@ -456,34 +456,34 @@ describe("determineCompletionStatus", () => {
     assert.equal(status, "in_progress");
   });
 
-  it("returns done when pre_deploy run outputs [PRE_DEPLOY:PASS]", () => {
+  it("returns done when ci_check run outputs [CI_CHECK:PASS]", () => {
     const db = createDb();
-    const task = insertTask(db, { status: "pre_deploy", review_count: 0, started_at: 10_000 });
+    const task = insertTask(db, { status: "ci_check", review_count: 0, started_at: 10_000 });
 
-    insertAssistantLog(db, task.id, "全チェック通過しました\n[PRE_DEPLOY:PASS]", 12_000);
+    insertAssistantLog(db, task.id, "全チェック通過しました\n[CI_CHECK:PASS]", 12_000);
 
     const status = determineCompletionStatus(db, task, false);
     assert.equal(status, "done");
   });
 
-  it("returns pr_review when pre_deploy run outputs [PRE_DEPLOY:FAIL]", () => {
+  it("returns in_progress when ci_check run outputs [CI_CHECK:FAIL]", () => {
     const db = createDb();
-    const task = insertTask(db, { status: "pre_deploy", review_count: 0, started_at: 10_000 });
+    const task = insertTask(db, { status: "ci_check", review_count: 0, started_at: 10_000 });
 
-    insertAssistantLog(db, task.id, "[PRE_DEPLOY:FAIL:migration check failed]", 12_000);
+    insertAssistantLog(db, task.id, "[CI_CHECK:FAIL:no CI workflow found]", 12_000);
 
     const status = determineCompletionStatus(db, task, false);
-    assert.equal(status, "pr_review");
+    assert.equal(status, "in_progress");
   });
 
-  it("returns pr_review when pre_deploy run has no verdict tag (no implicit pass)", () => {
+  it("returns in_progress when ci_check run has no verdict tag (no implicit pass)", () => {
     const db = createDb();
-    const task = insertTask(db, { status: "pre_deploy", review_count: 0, started_at: 10_000 });
+    const task = insertTask(db, { status: "ci_check", review_count: 0, started_at: 10_000 });
 
-    insertAssistantLog(db, task.id, "事前チェックを実施しましたが判定タグ未出力", 12_000);
+    insertAssistantLog(db, task.id, "CI確認を実施しましたが判定タグ未出力", 12_000);
 
     const status = determineCompletionStatus(db, task, false);
-    assert.equal(status, "pr_review");
+    assert.equal(status, "in_progress");
   });
 
   it("ignores old self-review logs from previous runs", () => {

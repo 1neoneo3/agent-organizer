@@ -19,7 +19,7 @@ const STATUS_DISPLAY: Record<string, string> = {
   qa_testing: "QA Testing",
   pr_review: "PR Review",
   human_review: "Human Review",
-  pre_deploy: "Pre Deploy",
+  ci_check: "Pre Deploy",
   done: "Done",
   cancelled: "Cancelled",
 };
@@ -32,7 +32,7 @@ const STATUS_COLORS: Record<string, string> = {
   qa_testing: "var(--status-qa)",
   pr_review: "var(--status-review)",
   human_review: "var(--status-human-review)",
-  pre_deploy: "var(--status-pre-deploy)",
+  ci_check: "var(--status-ci-check)",
   done: "var(--status-done)",
   cancelled: "var(--status-cancelled)",
 };

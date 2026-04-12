@@ -29,7 +29,7 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   qa_testing: { label: "QA Testing", color: "var(--status-qa)" },
   pr_review: { label: "PR Review", color: "var(--status-review)" },
   human_review: { label: "Human Review", color: "var(--status-human-review)" },
-  pre_deploy: { label: "Pre Deploy", color: "var(--status-pre-deploy)" },
+  ci_check: { label: "Pre Deploy", color: "var(--status-ci-check)" },
   done: { label: "Done", color: "var(--status-done)" },
   cancelled: { label: "Cancelled", color: "var(--status-cancelled)" },
 };

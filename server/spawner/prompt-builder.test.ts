@@ -43,7 +43,7 @@ describe("buildTaskPrompt", () => {
           includeDecompose: true,
           enableTestGeneration: false,
           enableHumanReview: false,
-          enablePreDeploy: false,
+          enableCiCheck: false,
           projectType: "generic" as const,
           checkTypesCmd: null,
           checkLintCmd: null,

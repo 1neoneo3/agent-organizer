@@ -18,7 +18,7 @@ const STAGE_STYLES: Record<string, { bg: string; border: string; text: string; l
   qa_testing: { bg: "#fce7f3", border: "#ec4899", text: "#9d174d", label: "qa_testing" },
   pr_review: { bg: "#cffafe", border: "#06b6d4", text: "#155e75", label: "pr_review" },
   human_review: { bg: "#ffedd5", border: "#f97316", text: "#9a3412", label: "human_review" },
-  pre_deploy: { bg: "#e0f2fe", border: "#0ea5e9", text: "#075985", label: "pre_deploy" },
+  ci_check: { bg: "#e0f2fe", border: "#0ea5e9", text: "#075985", label: "ci_check" },
   done: { bg: "#dcfce7", border: "#22c55e", text: "#166534", label: "done" },
   cancelled: { bg: "#f3f4f6", border: "#9ca3af", text: "#374151", label: "cancelled" },
 };

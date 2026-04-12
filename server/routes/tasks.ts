@@ -7,7 +7,7 @@ import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
-import { triggerAutoPreDeploy } from "../spawner/auto-pre-deploy.js";
+import { triggerAutoCiCheck } from "../spawner/auto-ci-check.js";
 import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
 import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransition } from "../workflow/stage-pipeline.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
@@ -167,7 +167,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
-      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review', 'pre_deploy') LIMIT 1"
+      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review', 'ci_check') LIMIT 1"
     ).get(title) as { id: string; task_number: string; status: string } | undefined;
     if (duplicate) {
       return res.status(409).json({
@@ -348,8 +348,8 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("task_update", updatedTask);
 
     // Trigger next stage's auto-agent if applicable
-    if (next === "pre_deploy") {
-      setTimeout(() => triggerAutoPreDeploy(db, ws, updatedTask, cache), 500);
+    if (next === "ci_check") {
+      setTimeout(() => triggerAutoCiCheck(db, ws, updatedTask, cache), 500);
     }
 
     res.json({ approved: true, next_status: next });

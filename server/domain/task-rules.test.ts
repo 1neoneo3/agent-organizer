@@ -37,8 +37,8 @@ describe("isAutoStage", () => {
     assert.equal(isAutoStage("test_generation"), true);
   });
 
-  it("is true for pre_deploy", () => {
-    assert.equal(isAutoStage("pre_deploy"), true);
+  it("is true for ci_check", () => {
+    assert.equal(isAutoStage("ci_check"), true);
   });
 
   it("is false for human_review (terminal for auto flow)", () => {
@@ -63,7 +63,7 @@ describe("shouldStampCompletedAt", () => {
     assert.equal(shouldStampCompletedAt("human_review"), false);
   });
 
-  it("does not stamp for pre_deploy", () => {
-    assert.equal(shouldStampCompletedAt("pre_deploy"), false);
+  it("does not stamp for ci_check", () => {
+    assert.equal(shouldStampCompletedAt("ci_check"), false);
   });
 });

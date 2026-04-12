@@ -5,10 +5,10 @@ export const TASK_BOARD_COLUMNS = [
   { key: "in_progress", label: "IN PROGRESS", town: "In Progress", accentColor: "var(--status-progress)" },
   { key: "self_review", label: "SELF REVIEW", town: "Self Review", accentColor: "var(--status-review)" },
   { key: "test_generation", label: "TEST GEN", town: "Test Generation", accentColor: "var(--status-test-gen)" },
+  { key: "ci_check", label: "CI CHECK", town: "CI Check", accentColor: "var(--status-ci-check)" },
   { key: "qa_testing", label: "QA TESTING", town: "QA Testing", accentColor: "var(--status-qa)" },
   { key: "pr_review", label: "PR REVIEW", town: "PR Review", accentColor: "var(--status-review)" },
   { key: "human_review", label: "HUMAN REVIEW", town: "Human Review", accentColor: "var(--status-human-review)" },
-  { key: "pre_deploy", label: "PRE DEPLOY", town: "Pre Deploy", accentColor: "var(--status-pre-deploy)" },
   { key: "done", label: "DONE", town: "Done", accentColor: "var(--status-done)" },
   { key: "cancelled", label: "CANCELLED", town: "Cancelled", accentColor: "var(--status-cancelled)" },
 ] as const satisfies ReadonlyArray<{
@@ -31,7 +31,7 @@ export function createEmptyTaskColumns(): TaskColumns {
     qa_testing: [],
     pr_review: [],
     human_review: [],
-    pre_deploy: [],
+    ci_check: [],
     done: [],
     cancelled: [],
   };

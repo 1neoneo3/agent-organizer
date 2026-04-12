@@ -1188,7 +1188,7 @@ function appendGenericTestGeneration(parts: string[]): void {
   parts.push("");
 }
 
-export function buildPreDeployPrompt(task: Task): string {
+export function buildCiCheckPrompt(task: Task): string {
   const parts: string[] = [];
 
   parts.push("## Language");
@@ -1199,41 +1199,45 @@ export function buildPreDeployPrompt(task: Task): string {
 
   appendSharedContext(parts, task.project_path);
 
-  parts.push("# Pre-Deploy Verification Task");
+  parts.push("# CI/CD Infrastructure Check");
   parts.push("");
-  parts.push("You are a DevOps engineer performing pre-deploy verification.");
+  parts.push("You are a DevOps engineer verifying that this project has proper CI/CD infrastructure.");
+  parts.push("Your job is NOT to run tests yourself — it is to confirm that automated pipelines exist and are healthy.");
   parts.push("");
-  parts.push("## Task Under Test");
+  parts.push("## Task Under Review");
   parts.push(`**Title**: ${task.title}`);
   parts.push(`**Description**: ${task.description ?? "No description"}`);
   parts.push(`**Project Path**: ${task.project_path ?? "/home/mk/workspace"}`);
   parts.push("");
 
-  parts.push("## Verification Checklist");
+  parts.push("## Checklist");
   parts.push("");
-  parts.push("### Step 1: Build Verification");
-  parts.push("1. Run `npm run build` (or project build command) — must succeed");
-  parts.push("2. Run `npx tsc --noEmit` if TypeScript — must have zero errors");
-  parts.push("3. Run `npm run lint` — must pass");
+  parts.push("### Step 1: CI Workflow Exists");
+  parts.push("1. Check `.github/workflows/` for CI workflow file(s)");
+  parts.push("2. If missing, create a CI workflow that covers the checks below");
   parts.push("");
-  parts.push("### Step 2: Test Verification");
-  parts.push("1. Run all tests — must pass");
-  parts.push("2. Check test coverage is adequate (80%+ on changed files)");
+  parts.push("### Step 2: CI Covers Required Checks");
+  parts.push("The workflow must include ALL of these (or equivalent for the project type):");
+  parts.push("- **Lint**: `npm run lint` / `ruff check` / equivalent");
+  parts.push("- **Type check**: `npx tsc --noEmit` / `mypy` / equivalent");
+  parts.push("- **Unit tests**: `npm test` / `pytest` / equivalent");
+  parts.push("- **Build**: `npm run build` / `python -m build` / equivalent");
+  parts.push("If any check is missing from the workflow, add it.");
   parts.push("");
-  parts.push("### Step 3: Security Check");
-  parts.push("1. No hardcoded secrets (API keys, passwords, tokens)");
-  parts.push("2. No console.log statements in production code");
-  parts.push("3. Dependencies are up to date (no critical vulnerabilities)");
+  parts.push("### Step 3: CI is Passing");
+  parts.push("1. Run `gh run list --branch $(git branch --show-current) --limit 5` to check recent CI runs");
+  parts.push("2. If CI has never run on this branch, push and wait for the first run");
+  parts.push("3. If CI is red, diagnose and fix the failing step");
   parts.push("");
-  parts.push("### Step 4: Deployment Readiness");
-  parts.push("1. All changes are committed");
-  parts.push("2. Branch is up to date with main");
-  parts.push("3. PR is created and reviewable");
+  parts.push("### Step 4: Package Scripts Exist");
+  parts.push("1. `package.json` (or equivalent) must have `test`, `lint`, `build` scripts");
+  parts.push("2. If any are missing, add them");
   parts.push("");
 
   parts.push("## Verdict");
-  parts.push("- If ALL checks pass: output `[PRE_DEPLOY:PASS]`");
-  parts.push("- If ANY check fails: output `[PRE_DEPLOY:FAIL:<brief summary>]`");
+  parts.push("- If ALL checks pass: output `[CI_CHECK:PASS]`");
+  parts.push("- If ANY check fails and you CANNOT fix it: output `[CI_CHECK:FAIL:<brief summary>]`");
+  parts.push("- If you fixed missing CI/tests/scripts during this run, that counts as PASS");
   parts.push("");
 
   return parts.join("\n");

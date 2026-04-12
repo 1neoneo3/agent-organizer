@@ -38,7 +38,7 @@
   --status-done: #6ba4a9;
   --status-qa: #88c3c8;
   --status-human-review: #d9a68d;
-  --status-pre-deploy: #a89bc7;
+  --status-ci-check: #a89bc7;
   --status-cancelled: #c88787;
 
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -92,7 +92,7 @@
   --status-done: #5978b8;
   --status-qa: #8ba4d4;
   --status-human-review: #dcab91;
-  --status-pre-deploy: #9b8fc6;
+  --status-ci-check: #9b8fc6;
   --status-cancelled: #c88787;
 
   --terminal-bg: #f7f9fc;
@@ -140,7 +140,7 @@
   --status-done: #0d524e;
   --status-qa: #6ba39d;
   --status-human-review: #d9a68d;
-  --status-pre-deploy: #9b8cc4;
+  --status-ci-check: #9b8cc4;
   --status-cancelled: #c88787;
 
   --terminal-bg: #f7faf9;
@@ -188,7 +188,7 @@
   --status-done: #0b8b8b;
   --status-qa: #6dbfe3;
   --status-human-review: #d9a68d;
-  --status-pre-deploy: #1b4a5e;
+  --status-ci-check: #1b4a5e;
   --status-cancelled: #c88787;
 
   --terminal-bg: #f6fafb;

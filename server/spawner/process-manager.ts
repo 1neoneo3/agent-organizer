@@ -12,7 +12,7 @@ import {
   buildReviewPrompt,
   buildQaPrompt,
   buildTestGenerationPrompt,
-  buildPreDeployPrompt,
+  buildCiCheckPrompt,
   type ReviewerRole,
 } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
@@ -22,7 +22,7 @@ import {
   isParallelImplTestEnabled,
   recordParallelTestCompletion,
 } from "../workflow/parallel-impl.js";
-import { triggerAutoPreDeploy } from "./auto-pre-deploy.js";
+import { triggerAutoCiCheck } from "./auto-ci-check.js";
 import { triggerAutoChecks, waitForActiveChecks } from "./auto-checks.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
 import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
@@ -518,12 +518,12 @@ export function spawnAgent(
   // the task's status stays in_progress, so treat it as a test-gen run
   // for tool-restrictions, handoff context, and prompt routing.
   const isTestGenRun = task.status === "test_generation" || isParallelTester;
-  const isPreDeployRun = task.status === "pre_deploy";
+  const isCiCheckRun = task.status === "ci_check";
   const parallelImplEnabled =
     !isParallelTester && !isContinue && isParallelImplTestEnabled(db);
 
-  // Restrict tools for review/QA/pre-deploy phases (read-only)
-  const allowedTools = (isReviewRun || isQaRun || isPreDeployRun)
+  // Restrict tools for review/QA/ci-check phases (read-only)
+  const allowedTools = (isReviewRun || isQaRun || isCiCheckRun)
     ? REVIEW_ALLOWED_TOOLS
     : undefined;
 
@@ -538,7 +538,7 @@ export function spawnAgent(
 
   // Extract handoff context for QA/review agents
   let handoffContext = "";
-  if ((isQaRun || isReviewRun || isTestGenRun || isPreDeployRun) && !isContinue) {
+  if ((isQaRun || isReviewRun || isTestGenRun || isCiCheckRun) && !isContinue) {
     const handoffs = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[HANDOFF]%' ORDER BY created_at DESC LIMIT 3"
     ).all(task.id) as Array<{ message: string }>;
@@ -549,7 +549,7 @@ export function spawnAgent(
 
   // Run Explore phase before Implement (if enabled and applicable)
   let exploreContext = "";
-  if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isPreDeployRun) {
+  if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isCiCheckRun) {
     // Check for existing explore result (from previous run)
     const existingExplore = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[EXPLORE]%' ORDER BY created_at DESC LIMIT 1"
@@ -574,8 +574,8 @@ export function spawnAgent(
         }) + handoffContext
       : (isQaRun
         ? buildQaPrompt(task, workflow?.projectType ?? "generic") + handoffContext
-        : (isPreDeployRun
-          ? buildPreDeployPrompt(task) + handoffContext
+        : (isCiCheckRun
+          ? buildCiCheckPrompt(task) + handoffContext
           : (isReviewRun
             ? buildReviewPrompt(task, { reviewerRole: options?.reviewerRole ?? "code" }) + handoffContext
             : buildTaskPrompt(task, {
@@ -626,7 +626,7 @@ export function spawnAgent(
   // Update task and agent status (skip for continue — already in_progress)
   if (!isContinue) {
     const now = Date.now();
-    // Preserve current status for QA/review/test_generation/pre_deploy runs — only set in_progress for inbox tasks
+    // Preserve current status for QA/review/test_generation/ci_check runs — only set in_progress for inbox tasks
     const currentStatus = task.status;
     const shouldSetInProgress = currentStatus === "inbox";
     if (isParallelTester) {
@@ -649,7 +649,7 @@ export function spawnAgent(
 
     // AO Phase 3: if parallel impl/test mode is enabled and this is an
     // implementer spawn (not the parallel tester itself, not a review /
-    // QA / test-gen / pre-deploy run, not a feedback continue), fire a
+    // QA / test-gen / ci-check run, not a feedback continue), fire a
     // parallel tester now so it runs concurrently. `triggerParallelTester`
     // is idempotent and no-ops if the setting is off, no idle tester
     // exists, or a DONE marker is already present.
@@ -658,7 +658,7 @@ export function spawnAgent(
       !isReviewRun &&
       !isQaRun &&
       !isTestGenRun &&
-      !isPreDeployRun
+      !isCiCheckRun
     ) {
       const freshTask = db
         .prepare("SELECT * FROM tasks WHERE id = ?")
@@ -1213,7 +1213,7 @@ export function spawnAgent(
     }
 
     // Artifact-based handoff: log structured context for the next phase agent
-    if (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy") {
+    if (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "ci_check") {
       const handoff = {
         phase: completionTask.status,
         nextPhase: finalStatus,
@@ -1241,7 +1241,7 @@ export function spawnAgent(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
 
-    if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy" || finalStatus === "done")) {
+    if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "ci_check" || finalStatus === "done")) {
       // Extract executed commands from task logs for PR verification section
       const executedCommands = extractExecutedCommands(db, task.id, task.started_at ?? 0);
       const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, { executedCommands });
@@ -1300,7 +1300,7 @@ export function spawnAgent(
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
     // Telegram notification for review/done/cancelled
-    if (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "pre_deploy" || finalStatus === "done" || finalStatus === "cancelled") {
+    if (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "ci_check" || finalStatus === "done" || finalStatus === "cancelled") {
       notifyTaskStatus(task.title, finalStatus, {
         taskNumber: task.task_number ?? undefined,
         prUrl: (finishedTask as Task | undefined)?.pr_url ?? undefined,
@@ -1333,10 +1333,10 @@ export function spawnAgent(
 
     // human_review: no agent trigger — waits for human approval via API
 
-    // Trigger auto-pre-deploy if task landed in pre_deploy
-    if (finalStatus === "pre_deploy") {
+    // Trigger auto-ci-check if task landed in ci_check
+    if (finalStatus === "ci_check") {
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-      setTimeout(() => triggerAutoPreDeploy(db, ws, freshTask, cache), 500);
+      setTimeout(() => triggerAutoCiCheck(db, ws, freshTask, cache), 500);
     }
   }
 

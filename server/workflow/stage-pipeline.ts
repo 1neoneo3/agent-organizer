@@ -186,6 +186,13 @@ export function resolveActiveStages(
     stages.push("test_generation");
   }
 
+  // ci_check: verify CI/CD infrastructure exists and is passing.
+  // Positioned after implementation / test generation but before QA and
+  // review so that CI gaps are caught early.
+  if (resolveWorkflowToggle(db, workflow?.enableCiCheck, "default_enable_ci_check")) {
+    stages.push("ci_check");
+  }
+
   // qa_testing: controlled by settings (qa_mode)
   if (qaMode === "enabled") {
     stages.push("qa_testing");
@@ -196,14 +203,9 @@ export function resolveActiveStages(
     stages.push("pr_review");
   }
 
-  // human_review: workflow override → settings default → false
+  // human_review: settings SSOT → WORKFLOW.md fallback → false
   if (resolveWorkflowToggle(db, workflow?.enableHumanReview, "default_enable_human_review")) {
     stages.push("human_review");
-  }
-
-  // pre_deploy: workflow override → settings default → false
-  if (resolveWorkflowToggle(db, workflow?.enablePreDeploy, "default_enable_pre_deploy")) {
-    stages.push("pre_deploy");
   }
 
   stages.push("done");
@@ -326,31 +328,30 @@ export function determineNextStage(
     return nextStage("test_generation", activeStages);
   }
 
-  // pre_deploy completed — move to done
-  if (task.status === "pre_deploy") {
+  // ci_check completed — verify CI/CD infrastructure is in place
+  if (task.status === "ci_check") {
     const logs = db
       .prepare(
         "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50",
       )
       .all(task.id, runStartedAt) as Array<{ message: string }>;
 
-    const failed = logs.some((l) => l.message.includes("[PRE_DEPLOY:FAIL"));
+    const failed = logs.some((l) => l.message.includes("[CI_CHECK:FAIL"));
     if (failed) {
-      recordFailedStage(db, task.id, "pre_deploy");
-      // Return to pr_review (not inbox) to preserve completed work
-      return "pr_review";
+      recordFailedStage(db, task.id, "ci_check");
+      // Return to in_progress — CI gaps need implementation work, not review
+      return "in_progress";
     }
-    // Require explicit [PRE_DEPLOY:PASS] tag. Absence of the verdict is
-    // treated as failure so that a crashed or forgetful pre-deploy agent
-    // never silently marks a task as ready to ship. Loop protection is
-    // handled by max pre-deploy iterations in auto-pre-deploy.ts.
-    const passed = logs.some((l) => l.message.includes("[PRE_DEPLOY:PASS]"));
+    // Require explicit [CI_CHECK:PASS] tag. Absence of the verdict is
+    // treated as failure so that a crashed or forgetful ci-check agent
+    // never silently advances the task.
+    const passed = logs.some((l) => l.message.includes("[CI_CHECK:PASS]"));
     if (!passed) {
-      recordFailedStage(db, task.id, "pre_deploy");
-      return "pr_review";
+      recordFailedStage(db, task.id, "ci_check");
+      return "in_progress";
     }
     clearFailedStage(db, task.id);
-    return "done";
+    return nextStage("ci_check", activeStages);
   }
 
   // Review run completed (pr_review)

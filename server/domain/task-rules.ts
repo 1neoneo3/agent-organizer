@@ -43,7 +43,7 @@ export function isAutoStage(status: TaskStatus): status is AutoStage {
  * `completed_at` on the row?
  *
  * Rule: only terminal statuses stamp `completed_at`. Transient statuses
- * (including `human_review` and `pre_deploy`) do not.
+ * (including `human_review` and `ci_check`) do not.
  */
 export function shouldStampCompletedAt(newStatus: TaskStatus): boolean {
   return isTerminalStatus(newStatus);
