@@ -172,8 +172,8 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 value={local.default_enable_test_generation ?? "false"}
                 onChange={(e) => update("default_enable_test_generation", e.target.value)}
               >
-                <option value="false">Disabled (default)</option>
-                <option value="true">Enabled by default</option>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 Run a dedicated tester agent before QA for medium/large tasks. Small tasks always skip this stage.
@@ -187,8 +187,8 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 value={local.default_enable_human_review ?? "false"}
                 onChange={(e) => update("default_enable_human_review", e.target.value)}
               >
-                <option value="false">Disabled (default)</option>
-                <option value="true">Enabled by default</option>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 Require explicit human approval after PR review before moving to deploy / done.
@@ -202,11 +202,11 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 value={local.default_enable_ci_check ?? "false"}
                 onChange={(e) => update("default_enable_ci_check", e.target.value)}
               >
-                <option value="false">Disabled (default)</option>
-                <option value="true">Enabled by default</option>
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                Run an auto ci-check agent between human review and done.
+                Verify CI/CD infrastructure (workflows, scripts, passing runs) after implementation, before QA.
               </p>
             </label>
           </div>
