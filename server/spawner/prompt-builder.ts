@@ -162,6 +162,12 @@ function appendSharedContext(
   parts: string[],
   projectPath: string | null,
 ): void {
+  // Critical environment constraints — injected before all other context
+  parts.push("## CRITICAL: Environment Constraints");
+  parts.push("");
+  parts.push("- **`rtk` command does NOT exist.** There is NO `RTK.md` file. Never prefix commands with `rtk`. Use `cat`, `sed`, `rg`, `grep`, `find` directly.");
+  parts.push("");
+
   // Project instructions (CLAUDE.md)
   const projectInstructions = loadProjectInstructions(projectPath);
   if (projectInstructions) {
