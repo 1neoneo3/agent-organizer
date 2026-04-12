@@ -196,7 +196,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
             </label>
 
             <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Pre-Deploy Stage</span>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>CI Check Stage</span>
               <select
                 style={inputStyle}
                 value={local.default_enable_ci_check ?? "false"}
