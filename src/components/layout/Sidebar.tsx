@@ -1,6 +1,7 @@
 import { NavLink } from "react-router";
 import type { ReactNode } from "react";
-import { CheckSquare, Compass, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose } from "lucide-react";
+import { CheckSquare, Compass, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose, Download } from "lucide-react";
+import { exportTasksCsvUrl } from "../../api/endpoints.js";
 import type { Flavor, Palette, PaletteMeta, TimeOfDay } from "../../hooks/useTheme.js";
 
 type NavItem = { to: string; label: string; icon: ReactNode };
@@ -173,6 +174,14 @@ export function Sidebar({ connected, palette, setPalette, palettes, timeOfDay, t
         >
           <UserPlus size={14} /> New Agent
         </button>
+        <a
+          href={exportTasksCsvUrl()}
+          download
+          className="eb-btn"
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", fontSize: "12px", textDecoration: "none" }}
+        >
+          <Download size={14} /> Export CSV
+        </a>
       </div>
 
       {/* Theme picker */}

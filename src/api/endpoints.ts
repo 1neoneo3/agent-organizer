@@ -98,6 +98,10 @@ export const sendInteractiveResponse = (
   }
 ) => api.post<{ sent: boolean; restarted: boolean }>(`/tasks/${taskId}/interactive-response`, payload);
 
+// CSV Export
+export const exportTasksCsvUrl = (status?: string) =>
+  `/api/tasks/export/csv${status ? `?status=${status}` : ""}`;
+
 // CLI Status
 export const fetchCliStatus = () => api.get<CliStatus>("/cli-status");
 export const fetchAgent = (id: string) => api.get<Agent>(`/agents/${id}`);

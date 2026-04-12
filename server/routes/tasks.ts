@@ -18,6 +18,7 @@ import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
+import { tasksToCsv } from "../utils/csv-export.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -151,6 +152,18 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       result.push({ task_id: taskId, ...entry.data });
     }
     res.json(result);
+  });
+
+  router.get("/tasks/export/csv", (req, res) => {
+    const status = req.query.status as string | undefined;
+    const tasks = status
+      ? db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY completed_at DESC, created_at DESC").all(status)
+      : db.prepare("SELECT * FROM tasks WHERE status IN ('done','cancelled') ORDER BY completed_at DESC, created_at DESC").all();
+    const csv = tasksToCsv(tasks as Record<string, unknown>[]);
+    const filename = `tasks-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(csv);
   });
 
   router.get("/tasks/:id", (req, res) => {
