@@ -190,6 +190,10 @@ test.describe("Task Flow (Agent + Task integration)", () => {
       task_size: "small",
     });
     expect(res.status()).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe("validation_error");
+    expect(body.message).toContain("title is required");
+    expect(body.details.fieldErrors.title).toEqual(["title is required"]);
 
     // Invalid task_size should fail
     const res2 = await apiCall(request, "post", "/tasks", {
@@ -197,5 +201,11 @@ test.describe("Task Flow (Agent + Task integration)", () => {
       task_size: "huge",
     });
     expect(res2.status()).toBe(400);
+    const body2 = await res2.json();
+    expect(body2.error).toBe("validation_error");
+    expect(body2.message).toContain("task_size must be one of: small, medium, large");
+    expect(body2.details.fieldErrors.task_size).toEqual([
+      "task_size must be one of: small, medium, large",
+    ]);
   });
 });

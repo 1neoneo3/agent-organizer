@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { z } from "zod";
 import {
   buildContinuePromptFromInteractiveResponse,
   getInteractivePromptTypeMismatch,
 } from "./tasks.js";
+import { buildValidationErrorResponse } from "./validation-errors.js";
 
 describe("getInteractivePromptTypeMismatch", () => {
   it("returns null when the pending prompt type matches the request", () => {
@@ -38,5 +40,35 @@ describe("buildContinuePromptFromInteractiveResponse", () => {
       }),
       "The user has responded to your questions:\n\nQ: scope\nA: full\n\nInclude regression coverage.",
     );
+  });
+});
+
+describe("buildValidationErrorResponse", () => {
+  it("returns descriptive task validation messages", () => {
+    const schema = z.object({
+      title: z.string().min(1),
+      task_size: z.enum(["small", "medium", "large"]),
+    });
+
+    const parsed = schema.safeParse({
+      title: "",
+      task_size: "huge",
+    });
+
+    assert.equal(parsed.success, false);
+    if (parsed.success) return;
+
+    const response = buildValidationErrorResponse("Task validation", parsed.error);
+
+    assert.equal(response.error, "validation_error");
+    assert.equal(
+      response.message,
+      "Task validation failed: title is required; task_size must be one of: small, medium, large.",
+    );
+    assert.deepEqual(response.details.fieldErrors, {
+      title: ["title is required"],
+      task_size: ["task_size must be one of: small, medium, large"],
+    });
+    assert.deepEqual(response.details.formErrors, []);
   });
 });

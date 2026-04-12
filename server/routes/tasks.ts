@@ -18,6 +18,7 @@ import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
+import { buildValidationErrorResponse } from "./validation-errors.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -161,7 +162,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
   router.post("/tasks", async (req, res) => {
     const parsed = CreateTaskSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) {
+      return res.status(400).json(buildValidationErrorResponse("Task validation", parsed.error));
+    }
 
     const { title, description, assigned_agent_id, project_path, priority, task_size, repository_url } = parsed.data;
 
@@ -206,7 +209,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!existing) return res.status(404).json({ error: "not_found" });
 
     const parsed = UpdateTaskSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) {
+      return res.status(400).json(buildValidationErrorResponse("Task validation", parsed.error));
+    }
 
     const updates = parsed.data;
     const existingTask = existing as unknown as Task;
@@ -480,7 +485,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const schema = z.object({ content: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) {
+      return res.status(400).json(buildValidationErrorResponse("Task feedback validation", parsed.error));
+    }
 
     const { content } = parsed.data;
     const now = Date.now();
@@ -553,7 +560,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!pending) return res.status(404).json({ error: "no_pending_prompt" });
 
     const parsed = InteractiveResponseSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    if (!parsed.success) {
+      return res.status(400).json(buildValidationErrorResponse("Task interactive response validation", parsed.error));
+    }
 
     const { promptType, approved, selectedOptions, freeText } = parsed.data;
     const promptTypeMismatch = getInteractivePromptTypeMismatch(promptType, pending.data.promptType);
