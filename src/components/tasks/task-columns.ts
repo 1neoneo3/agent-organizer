@@ -22,6 +22,17 @@ export const TASK_BOARD_COLUMNS = [
 const COLUMN_KEYS = TASK_BOARD_COLUMNS.map((column) => column.key) as ReadonlyArray<Task["status"]>;
 
 export type TaskColumns = Record<(typeof COLUMN_KEYS)[number], Task[]>;
+export const TASK_PRIORITY_BUCKETS = ["high", "medium", "low"] as const;
+
+export type TaskPriorityBucket = (typeof TASK_PRIORITY_BUCKETS)[number];
+export type TaskPriorityBreakdown = Record<TaskPriorityBucket, number>;
+
+export interface TaskColumnSummary {
+  total: number;
+  priorityBreakdown: TaskPriorityBreakdown;
+}
+
+export type TaskColumnSummaries = Record<(typeof COLUMN_KEYS)[number], TaskColumnSummary>;
 
 export function createEmptyTaskColumns(): TaskColumns {
   return {
@@ -36,6 +47,50 @@ export function createEmptyTaskColumns(): TaskColumns {
     ci_check: [],
     done: [],
     cancelled: [],
+  };
+}
+
+export function getTaskPriorityBucket(priority: Task["priority"]): TaskPriorityBucket {
+  if (priority >= 8) {
+    return "high";
+  }
+
+  if (priority >= 4) {
+    return "medium";
+  }
+
+  return "low";
+}
+
+export function summarizeTaskColumn(tasks: readonly Task[]): TaskColumnSummary {
+  const priorityBreakdown = tasks.reduce<TaskPriorityBreakdown>((counts, task) => {
+    const bucket = getTaskPriorityBucket(task.priority);
+
+    return {
+      ...counts,
+      [bucket]: counts[bucket] + 1,
+    };
+  }, createEmptyTaskPriorityBreakdown());
+
+  return {
+    total: tasks.length,
+    priorityBreakdown,
+  };
+}
+
+export function summarizeTaskColumns(columns: TaskColumns): TaskColumnSummaries {
+  return {
+    inbox: summarizeTaskColumn(columns.inbox),
+    refinement: summarizeTaskColumn(columns.refinement),
+    in_progress: summarizeTaskColumn(columns.in_progress),
+    self_review: summarizeTaskColumn(columns.self_review),
+    test_generation: summarizeTaskColumn(columns.test_generation),
+    qa_testing: summarizeTaskColumn(columns.qa_testing),
+    pr_review: summarizeTaskColumn(columns.pr_review),
+    human_review: summarizeTaskColumn(columns.human_review),
+    ci_check: summarizeTaskColumn(columns.ci_check),
+    done: summarizeTaskColumn(columns.done),
+    cancelled: summarizeTaskColumn(columns.cancelled),
   };
 }
 
@@ -95,4 +150,12 @@ function sortTasksByCreatedAtDesc(tasks: Task[]): Task[] {
       return left.index - right.index;
     })
     .map(({ task }) => task);
+}
+
+function createEmptyTaskPriorityBreakdown(): TaskPriorityBreakdown {
+  return {
+    high: 0,
+    medium: 0,
+    low: 0,
+  };
 }
