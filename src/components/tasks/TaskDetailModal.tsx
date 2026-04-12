@@ -401,7 +401,7 @@ export function TaskDetailModal({
               </div>
 
               {/* Approve / Reject / Feedback — only when awaiting review */}
-              {task.status === "refinement" && task.completed_at && (
+              {task.status === "refinement" && task.refinement_plan && (
                 <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
                   <div style={{ display: "flex", gap: "8px" }}>
                     <button
