@@ -53,7 +53,7 @@ function AppRoutes() {
           />
           <Route
             path="agents"
-            element={<AgentList agents={agents} cliStatus={cliStatus} onReload={reload} />}
+            element={<AgentList agents={agents} tasks={tasks} cliStatus={cliStatus} onReload={reload} />}
           />
           <Route
             path="settings"

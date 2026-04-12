@@ -3,17 +3,30 @@ import { AgentForm, type AgentFormData } from "./AgentForm.js";
 import { getRoleLabel, getRoleColorClass } from "./roles.js";
 import { PixelAvatar } from "./PixelAvatar.js";
 import { createAgent, updateAgent, deleteAgent } from "../../api/endpoints.js";
-import type { Agent } from "../../types/index.js";
+import type { Agent, Task } from "../../types/index.js";
+
+const ACTIVE_TASK_STATUSES = new Set([
+  "refinement", "in_progress", "self_review", "test_generation",
+  "qa_testing", "pr_review", "human_review", "ci_check",
+]);
 
 interface AgentListProps {
   agents: Agent[];
+  tasks: Task[];
   cliStatus: Record<string, boolean>;
   onReload: () => void;
 }
 
-export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
+export function AgentList({ agents, tasks, cliStatus, onReload }: AgentListProps) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  const activeTaskCountByAgent = tasks.reduce<Record<string, number>>((acc, task) => {
+    if (task.assigned_agent_id && ACTIVE_TASK_STATUSES.has(task.status)) {
+      acc[task.assigned_agent_id] = (acc[task.assigned_agent_id] ?? 0) + 1;
+    }
+    return acc;
+  }, {});
 
   const handleCreate = async (data: AgentFormData) => {
     await createAgent(data as unknown as Partial<Agent>);
@@ -132,8 +145,23 @@ export function AgentList({ agents, cliStatus, onReload }: AgentListProps) {
                   }} />
                   <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>{agent.status}</span>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
-                  {agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} \u2014 {agent.stats_tasks_done} tasks done
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
+                  <span>{agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} \u2014 {agent.stats_tasks_done} done</span>
+                  {(activeTaskCountByAgent[agent.id] ?? 0) > 0 && (
+                    <span style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "3px",
+                      padding: "1px 6px",
+                      borderRadius: "4px",
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      color: "var(--status-in-progress, #3b82f6)",
+                      background: "rgba(59,130,246,0.12)",
+                    }}>
+                      {activeTaskCountByAgent[agent.id]} active
+                    </span>
+                  )}
                 </div>
               </div>
               <div style={{ display: "flex", gap: "4px" }}>
