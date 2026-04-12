@@ -157,19 +157,40 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
-          {task.depends_on && (() => {
-            try {
-              const deps = JSON.parse(task.depends_on) as string[];
-              if (deps.length > 0) return (
-                <div style={{ fontSize: "10px", color: "var(--text-tertiary)", marginTop: "2px", display: "flex", alignItems: "center", gap: "4px" }}>
-                  <span style={{ color: "var(--status-cancelled)", fontWeight: 600 }}>Blocked by</span>
-                  {deps.map((d) => (
-                    <span key={d} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{d}</span>
-                  ))}
-                </div>
-              );
-            } catch { /* ignore */ }
-            return null;
+          {/* Parent/child relationship + dependency display */}
+          {(() => {
+            const lines: Array<{ label: string; color: string; values: string[] }> = [];
+            // Child → show parent
+            const parentMatch = task.description?.match(/^Step \d+ of (#\d+)/);
+            if (parentMatch) {
+              lines.push({ label: "Parent", color: "var(--status-refinement)", values: [parentMatch[1]] });
+            }
+            // Parent → show children
+            const childMatch = task.result?.match(/^Split into (#[\d, #]+)/);
+            if (childMatch) {
+              const children = childMatch[1].split(", ").map(s => s.trim());
+              lines.push({ label: "Children", color: "var(--status-refinement)", values: children });
+            }
+            // Blocked by
+            if (task.depends_on) {
+              try {
+                const deps = JSON.parse(task.depends_on) as string[];
+                if (deps.length > 0) lines.push({ label: "Blocked by", color: "var(--status-cancelled)", values: deps });
+              } catch { /* ignore */ }
+            }
+            if (lines.length === 0) return null;
+            return (
+              <div style={{ marginTop: "2px", display: "flex", flexDirection: "column", gap: "1px" }}>
+                {lines.map((line) => (
+                  <div key={line.label} style={{ fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
+                    <span style={{ color: line.color, fontWeight: 600 }}>{line.label}</span>
+                    {line.values.map((v) => (
+                      <span key={v} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v}</span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
           })()}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
