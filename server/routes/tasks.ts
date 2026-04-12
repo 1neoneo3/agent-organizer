@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, appendFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
@@ -175,6 +175,27 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
         message: `Active task with same title already exists: ${duplicate.task_number} (${duplicate.status})`,
         existing_task_id: duplicate.id,
       });
+    }
+
+    // Validate assigned_agent_id exists if provided
+    if (assigned_agent_id) {
+      const agent = db.prepare("SELECT id FROM agents WHERE id = ?").get(assigned_agent_id);
+      if (!agent) {
+        return res.status(400).json({ error: "invalid_agent", message: "Agent not found: " + assigned_agent_id });
+      }
+    }
+
+    // Validate project_path is an existing directory if provided
+    if (project_path) {
+      const resolved = resolve(project_path);
+      try {
+        const stat = statSync(resolved);
+        if (!stat.isDirectory()) {
+          return res.status(400).json({ error: "invalid_project_path", message: "project_path must be a directory" });
+        }
+      } catch {
+        // Path doesn't exist — allow it (may be created later)
+      }
     }
 
     const id = randomUUID();
@@ -602,7 +623,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     // 5. Deliver feedback to agent
     const previousStatus = task.status;
 
-    if (task.status === "in_progress") {
+    if (task.status === "in_progress" || (task.status === "refinement" && !task.completed_at)) {
       // Running task: kill + respawn with --resume
       const restarted = queueFeedbackAndRestart(task.id, content, previousStatus);
       return res.json({ sent: true, restarted, feedback_path: feedbackPath });
@@ -617,9 +638,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
     }
 
-    // Set task back to in_progress and respawn
-    db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?").run(now, task.id);
-    ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+    // Set task back to its working status and respawn
+    // Refinement feedback keeps the task in "refinement" so the agent revises the plan
+    const respawnStatus = previousStatus === "refinement" ? "refinement" : "in_progress";
+    db.prepare("UPDATE tasks SET status = ?, completed_at = NULL, updated_at = ? WHERE id = ?").run(respawnStatus, now, task.id);
+    ws.broadcast("task_update", { id: task.id, status: respawnStatus });
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache });
