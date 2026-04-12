@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Task } from "../../types/index.js";
-import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable } from "./task-columns.js";
+import {
+  TASK_BOARD_COLUMNS,
+  createEmptyTaskColumns,
+  getTaskPriorityBucket,
+  groupTasksByStatusStable,
+  summarizeTaskColumn,
+  summarizeTaskColumns,
+} from "./task-columns.js";
 
 function createTask(id: string, status: Task["status"], createdAt = 1): Task {
   return {
@@ -89,5 +96,84 @@ describe("groupTasksByStatusStable", () => {
       middleInboxTask,
       olderInboxTask,
     ]);
+  });
+});
+
+describe("getTaskPriorityBucket", () => {
+  it("maps priority values into fixed buckets", () => {
+    assert.equal(getTaskPriorityBucket(9), "high");
+    assert.equal(getTaskPriorityBucket(8), "high");
+    assert.equal(getTaskPriorityBucket(7), "medium");
+    assert.equal(getTaskPriorityBucket(4), "medium");
+    assert.equal(getTaskPriorityBucket(3), "low");
+    assert.equal(getTaskPriorityBucket(0), "low");
+  });
+});
+
+describe("summarizeTaskColumn", () => {
+  it("returns zero counts for an empty column", () => {
+    assert.deepEqual(summarizeTaskColumn([]), {
+      total: 0,
+      priorityBreakdown: {
+        high: 0,
+        medium: 0,
+        low: 0,
+      },
+    });
+  });
+
+  it("counts total tasks and priority buckets for a column", () => {
+    const summary = summarizeTaskColumn([
+      { ...createTask("high-1", "inbox"), priority: 10 },
+      { ...createTask("high-2", "inbox"), priority: 8 },
+      { ...createTask("medium-1", "inbox"), priority: 5 },
+      { ...createTask("low-1", "inbox"), priority: 1 },
+    ]);
+
+    assert.deepEqual(summary, {
+      total: 4,
+      priorityBreakdown: {
+        high: 2,
+        medium: 1,
+        low: 1,
+      },
+    });
+  });
+});
+
+describe("summarizeTaskColumns", () => {
+  it("returns summaries for every kanban column", () => {
+    const grouped = groupTasksByStatusStable([
+      { ...createTask("inbox-high", "inbox", 100), priority: 10 },
+      { ...createTask("inbox-low", "inbox", 90), priority: 2 },
+      { ...createTask("done-medium", "done", 80), priority: 6 },
+    ]);
+
+    const summaries = summarizeTaskColumns(grouped);
+
+    assert.deepEqual(summaries.inbox, {
+      total: 2,
+      priorityBreakdown: {
+        high: 1,
+        medium: 0,
+        low: 1,
+      },
+    });
+    assert.deepEqual(summaries.done, {
+      total: 1,
+      priorityBreakdown: {
+        high: 0,
+        medium: 1,
+        low: 0,
+      },
+    });
+    assert.deepEqual(summaries.cancelled, {
+      total: 0,
+      priorityBreakdown: {
+        high: 0,
+        medium: 0,
+        low: 0,
+      },
+    });
   });
 });
