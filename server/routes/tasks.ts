@@ -636,12 +636,23 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const previousStatus = task.status;
 
     if (task.status === "in_progress" || (task.status === "refinement" && !task.completed_at)) {
+      // Running refinement: log the inbox round-trip before killing
+      if (task.status === "refinement") {
+        db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+        ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
+        db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
+      }
       // Running task: kill + respawn with --resume
       const restarted = queueFeedbackAndRestart(task.id, content, previousStatus);
-      return res.json({ sent: true, restarted, feedback_path: feedbackPath });
+      if (restarted) {
+        return res.json({ sent: true, restarted, feedback_path: feedbackPath });
+      }
+      // Process already exited — fall through to idle-agent respawn below
     }
 
-    // Finished task: respawn agent with --resume to handle the new directive
+    // Agent process not running: respawn idle agent with --resume
     const agentId = task.assigned_agent_id;
     if (!agentId) return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
 
@@ -650,11 +661,19 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
     }
 
-    // Set task back to its working status and respawn
-    // Refinement feedback keeps the task in "refinement" so the agent revises the plan
-    const respawnStatus = previousStatus === "refinement" ? "refinement" : "in_progress";
-    db.prepare("UPDATE tasks SET status = ?, completed_at = NULL, updated_at = ? WHERE id = ?").run(respawnStatus, now, task.id);
-    ws.broadcast("task_update", { id: task.id, status: respawnStatus });
+    // Refinement revise: transition through inbox so the stage_transition
+    // trigger logs both refinement→inbox and inbox→refinement with timestamps
+    if (previousStatus === "refinement") {
+      db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+      ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
+      db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
+      ws.broadcast("task_update", { id: task.id, status: "refinement" });
+    } else {
+      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+      ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+    }
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache });
