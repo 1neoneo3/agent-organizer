@@ -1,5 +1,6 @@
 import { memo, Profiler, useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router";
+import { Download } from "lucide-react";
 import { TaskCard } from "./TaskCard.js";
 import { CreateTaskModal } from "./CreateTaskModal.js";
 import { TaskDetailModal, PINNED_PANEL_WIDTH_PX, type TaskDetailLayoutMode } from "./TaskDetailModal.js";
@@ -13,6 +14,7 @@ import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { useWebSocket } from "../../hooks/useWebSocket.js";
 import { buildAgentViewState } from "./agent-view.js";
 import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
+import { getCompletedTaskExportState } from "./task-export.js";
 
 interface TaskBoardProps {
   tasks: Task[];
@@ -204,6 +206,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
     columnsRef.current = grouped;
     return grouped;
   }, [tasks]);
+  const completedTaskExport = useMemo(() => getCompletedTaskExportState(tasks), [tasks]);
 
   const handleBoardRender = useCallback((id: string, phase: "mount" | "update" | "nested-update", actualDuration: number) => {
     if (typeof window === "undefined") {
@@ -232,6 +235,59 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
         transition: "padding 150ms ease",
       }}
     >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
+            Task Board
+          </div>
+          <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+            {completedTaskExport.completedCount} completed task{completedTaskExport.completedCount === 1 ? "" : "s"} ready for reporting
+          </div>
+        </div>
+        {completedTaskExport.hasCompletedTasks ? (
+          <a
+            href={completedTaskExport.href}
+            download
+            className="eb-btn"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              textDecoration: "none",
+              fontSize: "12px",
+            }}
+          >
+            <Download size={14} /> Export Completed CSV
+          </a>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="eb-btn"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              fontSize: "12px",
+              opacity: 0.6,
+              cursor: "not-allowed",
+            }}
+          >
+            <Download size={14} /> Export Completed CSV
+          </button>
+        )}
+      </div>
+
 
       {/* Empty state */}
       {agents.length === 0 && tasks.length === 0 && !showAddAgent && (

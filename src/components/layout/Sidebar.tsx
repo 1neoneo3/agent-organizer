@@ -175,12 +175,12 @@ export function Sidebar({ connected, palette, setPalette, palettes, timeOfDay, t
           <UserPlus size={14} /> New Agent
         </button>
         <a
-          href={exportTasksCsvUrl()}
+          href={exportTasksCsvUrl("done")}
           download
           className="eb-btn"
           style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px", fontSize: "12px", textDecoration: "none" }}
         >
-          <Download size={14} /> Export CSV
+          <Download size={14} /> Export Completed CSV
         </a>
       </div>
 
