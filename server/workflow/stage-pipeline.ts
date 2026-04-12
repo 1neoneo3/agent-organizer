@@ -163,11 +163,6 @@ export function resolveActiveStages(
 
   const stages: WorkflowStage[] = ["in_progress"];
 
-  // logic: workflow override → settings default → false
-  if (resolveWorkflowToggle(db, workflow?.enableLogic, "default_enable_logic")) {
-    stages.push("logic");
-  }
-
   // test_generation: workflow override → settings default → false.
   // Small tasks always skip this stage regardless of the toggle so the
   // pipeline stays short for trivial work. When the parallel impl/test
@@ -318,12 +313,6 @@ export function determineNextStage(
     }
     clearFailedStage(db, task.id);
     return nextStage("qa_testing", activeStages);
-  }
-
-  // logic completed — move to next stage
-  if (task.status === "logic") {
-    clearFailedStage(db, task.id);
-    return nextStage("logic", activeStages);
   }
 
   // test_generation completed — move to next stage

@@ -32,7 +32,6 @@ export interface ProjectWorkflow {
    *   - `null`  — not specified; `resolveActiveStages` will fall back to
    *              the global `default_enable_*` setting
    */
-  enableLogic: boolean | null;
   enableTestGeneration: boolean | null;
   enableHumanReview: boolean | null;
   enablePreDeploy: boolean | null;
@@ -75,7 +74,6 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   includeReview: true,
   includeDecompose: true,
   // null → fall back to the global default_enable_* setting at resolve time
-  enableLogic: null,
   enableTestGeneration: null,
   enableHumanReview: null,
   enablePreDeploy: null,
@@ -200,13 +198,6 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
         const parsed = parseBoolean(value);
         if (parsed !== null) {
           workflow.includeDecompose = parsed;
-        }
-        break;
-      }
-      case "enable_logic": {
-        const parsed = parseBoolean(value);
-        if (parsed !== null) {
-          workflow.enableLogic = parsed;
         }
         break;
       }

@@ -54,7 +54,6 @@ const baseWorkflow: ProjectWorkflow = {
   includeTask: true,
   includeReview: true,
   includeDecompose: true,
-  enableLogic: false,
   enableTestGeneration: false,
   enableHumanReview: false,
   enablePreDeploy: false,
@@ -84,37 +83,17 @@ describe("resolveActiveStages", () => {
     assert.deepStrictEqual(stages, ["in_progress", "pr_review", "done"]);
   });
 
-  it("includes logic stage when enableLogic is true", () => {
-    const db = createMockDb({ qa_mode: "disabled", review_mode: "none" });
-    const workflow = { ...baseWorkflow, enableLogic: true };
-    const stages = resolveActiveStages(db, workflow);
-    assert.deepStrictEqual(stages, ["in_progress", "logic", "done"]);
-  });
-
-  it("places logic between in_progress and test_generation when both enabled", () => {
-    const db = createMockDb({ qa_mode: "disabled", review_mode: "none" });
-    const workflow = {
-      ...baseWorkflow,
-      enableLogic: true,
-      enableTestGeneration: true,
-    };
-    const stages = resolveActiveStages(db, workflow, "medium");
-    assert.deepStrictEqual(stages, ["in_progress", "logic", "test_generation", "done"]);
-  });
-
   it("includes all stages when everything enabled", () => {
     const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
     const workflow = {
       ...baseWorkflow,
-      enableLogic: true,
       enableTestGeneration: true,
       enableHumanReview: true,
       enablePreDeploy: true,
     };
-    const stages = resolveActiveStages(db, workflow, "medium");
+    const stages = resolveActiveStages(db, workflow);
     assert.deepStrictEqual(stages, [
       "in_progress",
-      "logic",
       "test_generation",
       "qa_testing",
       "pr_review",
@@ -153,27 +132,6 @@ describe("resolveActiveStages", () => {
   });
 
   // --- Global default settings fallback ---
-
-  it("falls back to default_enable_logic setting when workflow is null", () => {
-    const db = createMockDb({
-      qa_mode: "disabled",
-      review_mode: "none",
-      default_enable_logic: "true",
-    });
-    const stages = resolveActiveStages(db, null);
-    assert.deepStrictEqual(stages, ["in_progress", "logic", "done"]);
-  });
-
-  it("workflow explicit false for logic wins over settings default", () => {
-    const db = createMockDb({
-      qa_mode: "disabled",
-      review_mode: "none",
-      default_enable_logic: "true",
-    });
-    const workflow = { ...baseWorkflow, enableLogic: false };
-    const stages = resolveActiveStages(db, workflow);
-    assert.deepStrictEqual(stages, ["in_progress", "done"]);
-  });
 
   it("falls back to default_enable_test_generation setting when workflow is null", () => {
     const db = createMockDb({
@@ -530,17 +488,6 @@ describe("nextStage", () => {
     assert.strictEqual(nextStage("pr_review", stages), "human_review");
     assert.strictEqual(nextStage("human_review", stages), "done");
   });
-
-  it("advances from in_progress to logic when logic is enabled", () => {
-    const stages = ["in_progress", "logic", "pr_review", "done"] as any;
-    assert.strictEqual(nextStage("in_progress", stages), "logic");
-    assert.strictEqual(nextStage("logic", stages), "pr_review");
-  });
-
-  it("advances from logic to test_generation when both enabled", () => {
-    const stages = ["in_progress", "logic", "test_generation", "pr_review", "done"] as any;
-    assert.strictEqual(nextStage("logic", stages), "test_generation");
-  });
 });
 
 describe("findLastFailedStage / recordFailedStage / clearFailedStage", () => {
@@ -627,26 +574,6 @@ describe("validateStatusTransition", () => {
   it("rejects jumping to done directly", () => {
     const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
     const result = validateStatusTransition(db, "in_progress", "done", baseWorkflow);
-    assert.ok(result);
-    assert.ok(result.includes("Cannot skip"));
-  });
-
-  it("allows in_progress → logic when logic is enabled", () => {
-    const db = createMockDb({ qa_mode: "disabled", review_mode: "pr_only" });
-    const workflow = { ...baseWorkflow, enableLogic: true };
-    assert.strictEqual(validateStatusTransition(db, "in_progress", "logic", workflow), null);
-  });
-
-  it("allows logic → pr_review when test_generation is disabled", () => {
-    const db = createMockDb({ qa_mode: "disabled", review_mode: "pr_only" });
-    const workflow = { ...baseWorkflow, enableLogic: true };
-    assert.strictEqual(validateStatusTransition(db, "logic", "pr_review", workflow), null);
-  });
-
-  it("rejects skipping logic when logic is enabled", () => {
-    const db = createMockDb({ qa_mode: "disabled", review_mode: "pr_only" });
-    const workflow = { ...baseWorkflow, enableLogic: true };
-    const result = validateStatusTransition(db, "in_progress", "pr_review", workflow);
     assert.ok(result);
     assert.ok(result.includes("Cannot skip"));
   });

@@ -14,7 +14,6 @@ const SIZE_LABEL: Record<string, string> = {
 const STATUS_DISPLAY: Record<string, string> = {
   inbox: "Inbox",
   in_progress: "In Progress",
-  logic: "Logic",
   self_review: "Review",
   test_generation: "Test Gen",
   qa_testing: "QA Testing",
@@ -28,7 +27,6 @@ const STATUS_DISPLAY: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   inbox: "var(--status-inbox)",
   in_progress: "var(--status-progress)",
-  logic: "var(--status-logic)",
   self_review: "var(--status-review)",
   test_generation: "var(--status-test-gen)",
   qa_testing: "var(--status-qa)",
