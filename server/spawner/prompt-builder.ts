@@ -618,6 +618,14 @@ export function buildRefinementPrompt(task: Task, activeTasks?: ActiveTaskContex
   parts.push("");
   parts.push("---REFINEMENT PLAN---");
   parts.push("");
+  parts.push("## 背景 (Background)");
+  parts.push("");
+  parts.push("このタスクが必要になった経緯・動機を簡潔に説明する（2-3文程度）:");
+  parts.push("");
+  parts.push("- なぜこの変更が必要なのか");
+  parts.push("- 現状の問題点や不足している点");
+  parts.push("- このタスクが解決する課題");
+  parts.push("");
   parts.push("## 要求 (Business Requirements)");
   parts.push("");
   parts.push("ユーザー・ビジネス視点で「何を実現したいか」を箇条書きで列挙する。技術用語は使わない。");
