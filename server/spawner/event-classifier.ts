@@ -113,7 +113,9 @@ function looksLikeCompletionSummary(text: string): boolean {
     /\[REVIEW:\w+:NEEDS_CHANGES/.test(text) ||
     text.includes("[SELF_REVIEW:PASS]") ||
     text.includes("[SELF_REVIEW:FAIL:") ||
-    (text.includes("レビューサマリー") && text.includes("### 判定"))
+    (text.includes("レビューサマリー") && text.includes("### 判定")) ||
+    // Refinement plan output — not a user prompt
+    (text.includes("---REFINEMENT PLAN---") && text.includes("---END REFINEMENT---"))
   );
 }
 
