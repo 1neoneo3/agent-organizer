@@ -29,6 +29,10 @@ check_e2e_cmd:
 - Git remote (`origin`): `https://github.com/1neoneo3/agent-organizer.git`
 - Default branch: `main`
 
+## Important: Forbidden Commands
+
+- **Do NOT use `rtk` command.** It does not exist in this environment. There is no `RTK.md` file. Use standard shell commands (`cat`, `sed`, `rg`, `grep`, `find`) directly.
+
 ## Execution Rules
 
 - Use a task-specific git worktree under `.ao-worktrees/<task-id>` for task execution.
