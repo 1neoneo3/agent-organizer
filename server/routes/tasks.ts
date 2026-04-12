@@ -379,14 +379,19 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const reason = (req.body as { reason?: string }).reason ?? (isRefinement ? "Refinement plan rejected" : "Rejected by human reviewer");
     const now = Date.now();
 
-    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+    db.prepare("UPDATE tasks SET status = 'inbox', assigned_agent_id = NULL, started_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+    // Release the assigned agent so it can pick up new work
+    if (task.assigned_agent_id) {
+      db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(now, task.assigned_agent_id);
+      ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+    }
     recordFailedStage(db, task.id, task.status as "human_review" | "refinement");
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} rejected: ${reason}. Returning to inbox.`);
 
     await invalidateTaskCaches();
-    ws.broadcast("task_update", { id: task.id, status: "inbox" });
+    ws.broadcast("task_update", { id: task.id, status: "inbox", assigned_agent_id: null, started_at: null });
 
     res.json({ rejected: true, reason });
   });
