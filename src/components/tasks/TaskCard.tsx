@@ -136,16 +136,22 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         border: "1px solid var(--border-default)",
         borderRadius: "8px",
         cursor: "pointer",
-        transition: "border-color 0.15s ease, background 0.15s ease",
+        boxShadow: "var(--shadow-card)",
+        transform: "translateY(0)",
+        transition: "border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease",
       }}
       onClick={() => { play("select"); onSelect?.(task.id); }}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = "var(--text-tertiary)";
         e.currentTarget.style.background = "var(--bg-hover)";
+        e.currentTarget.style.boxShadow = "var(--shadow-md)";
+        e.currentTarget.style.transform = "translateY(-1px)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.borderColor = "var(--border-default)";
         e.currentTarget.style.background = "var(--bg-secondary)";
+        e.currentTarget.style.boxShadow = "var(--shadow-card)";
+        e.currentTarget.style.transform = "translateY(0)";
       }}
     >
       {/* Card header: title + status */}
