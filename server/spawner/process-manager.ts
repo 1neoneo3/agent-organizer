@@ -221,68 +221,222 @@ function extractExecutedCommands(
  *   - A GitHub pull-request URL: `https://github.com/<owner>/<repo>/pull/<n>`
  *   - A GitHub repository URL:  `https://github.com/<owner>/<repo>`
  *
- * Both patterns are scanned across every task_log row (not just stdout):
- * we've observed agents emitting the URL in assistant text, inside
- * tool_result JSON bodies, and as raw stdout from `gh repo view --json`
- * calls. The goal is simply "find any canonical GitHub URL the agent
- * produced" — whichever of those surfaces it uses is fine.
- *
- * Both return values default to null. When a PR url IS found, the repo
- * URL is derived from its `<owner>/<repo>` segment so both fields stay
- * consistent (the PR implies the repo it lives in).
- *
  * This is used as a fallback when `promoteTaskReviewArtifact` cannot
  * run (e.g. the project is `workspaceMode: shared`, or the agent
  * created a brand-new nested repository inside project_path). Those
  * code paths never populate `pr_url` / `repository_url`, so the UI
  * showed neither even when the agent had already pushed a public PR.
+ *
+ * ----------------------------------------------------------------------
+ * Two-stage extraction strategy
+ * ----------------------------------------------------------------------
+ *
+ * Stage 1 (high-trust command-linked candidates):
+ *   Walk task_logs in order. When a `tool_call` row contains
+ *   `gh pr create` or `gh repo create`, the IMMEDIATELY-FOLLOWING
+ *   `tool_result` / `stdout` row (within a short window) is treated as
+ *   that command's output. URLs extracted from that row are recorded as
+ *   high-trust results and short-circuit Stage 2. This is the cleanest
+ *   signal: it's the agent's own created URL, not a reference.
+ *
+ * Stage 2 (noise-filtered conservative fallback):
+ *   When Stage 1 finds nothing, fall back to a scan of all relevant log
+ *   rows, but split by real newlines and reject "transcript noise":
+ *     - lines longer than 500 chars (likely serialised JSON blobs)
+ *     - lines containing `\"` or `\\` or `\n` as literal 2-char
+ *       sequences (doubly-stringified agent session transcripts from
+ *       Codex / Claude Code verbose logs)
+ *   `tool_call` rows are excluded entirely because agents sometimes
+ *   pass URLs into commands they're *reading* (for example
+ *   `gh pr view <url>`), which would be mistaken for a creation.
+ *
+ * Both stages share the same underlying URL regex and ignore well-known
+ * non-repo paths under `github.com` (orgs, search, notifications, etc.).
+ *
+ * When `options.runStartedAt` is supplied, only logs with
+ * `created_at >= runStartedAt` are considered so prior runs cannot
+ * contaminate the current run's detection.
+ *
+ * Historical note: before the two-stage rewrite, this function picked
+ * the "most frequently mentioned" URL across all log rows. That logic
+ * false-matched on tasks where the agent's verbose CLI session logs
+ * (containing references to unrelated sibling directories or prior
+ * work) landed in stdout as large JSON blobs — the URLs mentioned in
+ * those transcripts dominated the frequency count and were mistakenly
+ * recorded as the task's own produced artifact.
  */
+
+const GITHUB_PR_PATTERN = /https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*)\/pull\/(\d+)/g;
+const GITHUB_REPO_PATTERN = /https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*)(?=[^A-Za-z0-9._/-]|$)/g;
+
+const GH_PR_CREATE_CMD = /gh\s+pr\s+create\b/;
+const GH_REPO_CREATE_CMD = /gh\s+repo\s+create\b/;
+
+const NON_REPO_OWNERS = new Set([
+  "orgs",
+  "search",
+  "notifications",
+  "settings",
+  "about",
+  "pricing",
+  "features",
+  "marketplace",
+]);
+
+/**
+ * A line is considered transcript noise when it looks like a serialised
+ * fragment of a verbose CLI session log rather than fresh command
+ * output. Real command output lines have plain quotes and real newlines;
+ * only doubly-stringified transcripts end up with `\"` or `\n` as raw
+ * 2-char sequences inside a single log row.
+ */
+function looksLikeTranscriptNoise(line: string): boolean {
+  if (line.length > 500) return true;
+  // `\"` (backslash followed by quote) — escaped JSON quote in a
+  // re-stringified payload. Real JSON that is NOT a nested string has
+  // plain `"` characters and does not match this check.
+  if (line.includes('\\"')) return true;
+  // `\\` (two backslashes) — escaped backslash in a re-stringified
+  // payload.
+  if (line.includes("\\\\")) return true;
+  // `\n` as a literal 2-char sequence (NOT a real LF). Real newlines are
+  // already split off by the caller; only doubly-escaped transcripts
+  // still contain this.
+  if (line.includes("\\n")) return true;
+  return false;
+}
+
+function derivePrRepoUrl(prUrl: string): string | null {
+  const match = prUrl.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+)/);
+  return match?.[1] ?? null;
+}
+
+function collectUrlsFromText(text: string): { prUrls: string[]; repoUrls: string[] } {
+  const prUrls: string[] = [];
+  const repoUrls: string[] = [];
+
+  for (const match of text.matchAll(GITHUB_PR_PATTERN)) {
+    const owner = match[1];
+    if (NON_REPO_OWNERS.has(owner)) continue;
+    const repo = match[2];
+    prUrls.push(`https://github.com/${owner}/${repo}/pull/${match[3]}`);
+  }
+
+  for (const match of text.matchAll(GITHUB_REPO_PATTERN)) {
+    const owner = match[1];
+    if (NON_REPO_OWNERS.has(owner)) continue;
+    const repo = match[2].replace(/\.git$/, "");
+    repoUrls.push(`https://github.com/${owner}/${repo}`);
+  }
+
+  return { prUrls, repoUrls };
+}
+
 export function extractGithubArtifactsFromLogs(
   db: DatabaseSync,
   taskId: string,
+  options: { runStartedAt?: number | null } = {},
 ): { prUrl: string | null; repositoryUrl: string | null } {
-  const rows = db
-    .prepare(
-      "SELECT message FROM task_logs WHERE task_id = ? ORDER BY id ASC",
-    )
-    .all(taskId) as Array<{ message: string }>;
+  const runStartedAt = options.runStartedAt ?? null;
 
-  // Track counts so the "most frequently mentioned" PR wins over a
-  // stale mention. Agents sometimes reference a past PR in their
-  // reasoning before creating a new one; we want the most-referenced
-  // URL, not the first.
-  const prCounts = new Map<string, number>();
-  const repoCounts = new Map<string, number>();
+  const rows = (runStartedAt !== null
+    ? db
+        .prepare(
+          "SELECT kind, message FROM task_logs WHERE task_id = ? AND created_at >= ? ORDER BY id ASC",
+        )
+        .all(taskId, runStartedAt)
+    : db
+        .prepare(
+          "SELECT kind, message FROM task_logs WHERE task_id = ? ORDER BY id ASC",
+        )
+        .all(taskId)) as Array<{ kind: string; message: string }>;
 
-  const prPattern = /https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*)\/pull\/(\d+)/g;
-  const repoPattern = /https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*)(?=[^A-Za-z0-9._/-]|$)/g;
+  // ---- Stage 1: command-linked high-trust extraction ----
+  // Walk logs sequentially. When a recognised `gh` creation command is
+  // seen as a tool_call, consume the next tool_result/stdout within a
+  // small window (to tolerate interleaved thinking events) and record
+  // any URL from it as the authoritative answer.
+  const COMMAND_WINDOW_ROWS = 8;
+  type Pending = { cmd: "pr_create" | "repo_create"; rowsRemaining: number };
+  let pending: Pending | null = null;
+  let highTrustPrUrl: string | null = null;
+  let highTrustRepoUrl: string | null = null;
 
   for (const row of rows) {
-    const msg = row.message;
+    if (highTrustPrUrl && highTrustRepoUrl) break;
 
-    // 1. Collect PR URLs first. These subsume the repo segment, so when
-    // we later scan for repo URLs we'll still see the /pull/ version —
-    // but the repoPattern (below) deliberately stops at `<owner>/<repo>`
-    // without consuming the `/pull/N` tail, so both patterns coexist.
-    for (const match of msg.matchAll(prPattern)) {
-      const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`;
-      prCounts.set(canonical, (prCounts.get(canonical) ?? 0) + 1);
+    if (row.kind === "tool_call") {
+      // A fresh recognised command replaces any still-pending one —
+      // if the previous command never produced output we give up on it.
+      if (GH_PR_CREATE_CMD.test(row.message)) {
+        pending = { cmd: "pr_create", rowsRemaining: COMMAND_WINDOW_ROWS };
+      } else if (GH_REPO_CREATE_CMD.test(row.message)) {
+        pending = { cmd: "repo_create", rowsRemaining: COMMAND_WINDOW_ROWS };
+      }
+      continue;
     }
 
-    // 2. Collect repo URLs. Filter out well-known non-repo paths that
-    // match the same shape (e.g. `github.com/notifications`, or URLs
-    // into `/orgs/<name>/...` style paths). The set below is small by
-    // design — we only exclude obvious false positives.
-    for (const match of msg.matchAll(repoPattern)) {
-      const owner = match[1];
-      const repo = match[2].replace(/\.git$/, "");
-      if (owner === "orgs" || owner === "search" || owner === "notifications") continue;
-      const canonical = `https://github.com/${owner}/${repo}`;
-      repoCounts.set(canonical, (repoCounts.get(canonical) ?? 0) + 1);
+    if (pending !== null && (row.kind === "tool_result" || row.kind === "stdout")) {
+      const { prUrls, repoUrls } = collectUrlsFromText(row.message);
+      if (pending.cmd === "pr_create" && prUrls.length > 0) {
+        if (!highTrustPrUrl) highTrustPrUrl = prUrls[0];
+        pending = null;
+        continue;
+      }
+      if (pending.cmd === "repo_create") {
+        // `gh repo create` typically prints the new repo URL; accept
+        // either the bare repo URL or a PR URL derived from it.
+        if (repoUrls.length > 0) {
+          if (!highTrustRepoUrl) highTrustRepoUrl = repoUrls[0];
+          pending = null;
+          continue;
+        }
+        if (prUrls.length > 0) {
+          const derived = derivePrRepoUrl(prUrls[0]);
+          if (derived && !highTrustRepoUrl) highTrustRepoUrl = derived;
+          pending = null;
+          continue;
+        }
+      }
+      pending.rowsRemaining -= 1;
+      if (pending.rowsRemaining <= 0) pending = null;
     }
   }
 
-  function pickMostFrequent(counts: Map<string, number>): string | null {
+  if (highTrustPrUrl) {
+    return {
+      prUrl: highTrustPrUrl,
+      repositoryUrl: derivePrRepoUrl(highTrustPrUrl) ?? highTrustRepoUrl,
+    };
+  }
+  if (highTrustRepoUrl) {
+    return { prUrl: null, repositoryUrl: highTrustRepoUrl };
+  }
+
+  // ---- Stage 2: noise-filtered frequency scan ----
+  // Fallback when no recognised creation command was seen. This path
+  // exists for legacy / off-stream signals (assistant summary text,
+  // raw gh stdout that wasn't captured via tool_call). Noise filtering
+  // keeps verbose session-log transcripts from dominating the count.
+  const prCounts = new Map<string, number>();
+  const repoCounts = new Map<string, number>();
+
+  for (const row of rows) {
+    // Skip tool_call rows — they contain URLs the agent is passing IN
+    // (e.g. `gh pr view <url>`), which are references, not creations.
+    if (row.kind === "tool_call") continue;
+    // Skip process-lifecycle messages.
+    if (row.kind === "system") continue;
+
+    for (const line of row.message.split(/\r?\n/)) {
+      if (looksLikeTranscriptNoise(line)) continue;
+      const { prUrls, repoUrls } = collectUrlsFromText(line);
+      for (const url of prUrls) prCounts.set(url, (prCounts.get(url) ?? 0) + 1);
+      for (const url of repoUrls) repoCounts.set(url, (repoCounts.get(url) ?? 0) + 1);
+    }
+  }
+
+  const pickMostFrequent = (counts: Map<string, number>): string | null => {
     let best: string | null = null;
     let bestCount = 0;
     for (const [url, count] of counts) {
@@ -292,17 +446,12 @@ export function extractGithubArtifactsFromLogs(
       }
     }
     return best;
-  }
+  };
 
   const prUrl = pickMostFrequent(prCounts);
-
-  // Prefer a repo URL that matches the winning PR's owner/repo so the
-  // two fields stay consistent. Falling back to the most-frequent repo
-  // mention otherwise.
   let repositoryUrl: string | null = null;
   if (prUrl) {
-    const match = prUrl.match(/^(https:\/\/github\.com\/[^/]+\/[^/]+)/);
-    repositoryUrl = match?.[1] ?? null;
+    repositoryUrl = derivePrRepoUrl(prUrl);
   }
   if (!repositoryUrl) {
     repositoryUrl = pickMostFrequent(repoCounts);
@@ -1105,7 +1254,13 @@ export function spawnAgent(
       // This is also how newly-created repositories end up in the
       // `repository_url` column, since the at-creation-time detection
       // cannot know a path that does not yet exist.
-      const logScan = extractGithubArtifactsFromLogs(db, task.id);
+      //
+      // Scope the scan to the current run (`started_at` onward) so that
+      // URLs mentioned in a previous run of the same task cannot leak
+      // into the current run's detection.
+      const logScan = extractGithubArtifactsFromLogs(db, task.id, {
+        runStartedAt: task.started_at ?? null,
+      });
       const fallbackPrUrl = promotion.prUrl ?? logScan.prUrl;
       const fallbackRepoUrl = logScan.repositoryUrl;
 

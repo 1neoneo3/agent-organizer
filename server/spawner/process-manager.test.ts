@@ -99,7 +99,7 @@ function insertAssistantLog(db: DatabaseSync, taskId: string, message: string, c
 function insertLog(
   db: DatabaseSync,
   taskId: string,
-  kind: "stdout" | "assistant" | "tool_result" | "system",
+  kind: "stdout" | "assistant" | "tool_result" | "tool_call" | "system",
   message: string,
   createdAt: number,
 ): void {
@@ -214,6 +214,183 @@ describe("extractGithubArtifactsFromLogs", () => {
     );
     const result = extractGithubArtifactsFromLogs(db, task.id);
     assert.equal(result.repositoryUrl, "https://github.com/acme/widget");
+  });
+
+  // ---- Stage 1: command-linked extraction ----
+
+  it("stage 1: extracts PR URL from tool_result following gh pr create tool_call", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t7" });
+    insertLog(db, task.id, "tool_call", "shell(gh pr create --title 'feat: widget')", 10);
+    insertLog(
+      db,
+      task.id,
+      "tool_result",
+      "shell(gh pr create ...) → https://github.com/acme/widget/pull/99",
+      11,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, "https://github.com/acme/widget/pull/99");
+    assert.equal(result.repositoryUrl, "https://github.com/acme/widget");
+  });
+
+  it("stage 1: extracts repository URL from tool_result following gh repo create tool_call", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t8" });
+    insertLog(db, task.id, "tool_call", "shell(gh repo create acme/new-lib --public)", 10);
+    insertLog(
+      db,
+      task.id,
+      "tool_result",
+      "shell(gh repo create ...) → https://github.com/acme/new-lib",
+      11,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, null);
+    assert.equal(result.repositoryUrl, "https://github.com/acme/new-lib");
+  });
+
+  it("stage 1: command-linked result wins over frequency-ranked noise elsewhere", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t9" });
+    // Massive stale-reference noise in earlier reasoning — 10 mentions
+    // of an unrelated PR the agent was only reading.
+    for (let i = 0; i < 10; i++) {
+      insertLog(
+        db,
+        task.id,
+        "assistant",
+        "Referencing past work at https://github.com/old/project/pull/1",
+        5 + i,
+      );
+    }
+    // The real creation is a single tool_call → tool_result pair.
+    insertLog(db, task.id, "tool_call", "shell(gh pr create --title 'new')", 100);
+    insertLog(
+      db,
+      task.id,
+      "tool_result",
+      "shell(gh pr create ...) → https://github.com/new/repo/pull/42",
+      101,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, "https://github.com/new/repo/pull/42");
+    assert.equal(result.repositoryUrl, "https://github.com/new/repo");
+  });
+
+  it("stage 1: allows intervening rows within the command window", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t10" });
+    insertLog(db, task.id, "tool_call", "shell(gh pr create --title 'x')", 10);
+    // A couple of intervening thinking/assistant events before the
+    // actual command output.
+    insertLog(db, task.id, "assistant", "Waiting for gh to respond...", 11);
+    insertLog(db, task.id, "stdout", "some unrelated log", 12);
+    insertLog(
+      db,
+      task.id,
+      "tool_result",
+      "shell(gh pr create ...) → https://github.com/acme/widget/pull/77",
+      13,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, "https://github.com/acme/widget/pull/77");
+  });
+
+  // ---- Stage 2: noise filtering ----
+
+  it("stage 2: ignores URLs embedded in doubly-stringified transcript blobs", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t11" });
+    // This is the #355 calculator-task failure mode: agent CLI verbose
+    // logs land in stdout with escape-on-escape JSON that references a
+    // sibling directory / past task. The URL must NOT be picked up.
+    const noise =
+      '{\\"type\\":\\"user\\",\\"message\\":{\\"content\\":[{\\"tool_use_id\\":\\"toolu_1\\",\\"content\\":\\"File created successfully at: /home/mk/workspace/verify2-charcount-cli/.gitignore. See https://github.com/1neoneo3/verify2-charcount-cli/pull/1\\"}]}}';
+    // Insert it 50 times to simulate the real frequency-domination.
+    for (let i = 0; i < 50; i++) {
+      insertLog(db, task.id, "stdout", noise, 100 + i);
+    }
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, null);
+    assert.equal(result.repositoryUrl, null);
+  });
+
+  it("stage 2: ignores URLs appearing only in tool_call rows (e.g. gh pr view)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t12" });
+    // The agent runs `gh pr view <url>` to inspect an existing PR.
+    // That URL must not be recorded as the task's own created artifact.
+    insertLog(
+      db,
+      task.id,
+      "tool_call",
+      "shell(gh pr view https://github.com/acme/other/pull/1 --json title)",
+      10,
+    );
+    insertLog(
+      db,
+      task.id,
+      "tool_result",
+      "shell(gh pr view ...) → {\"title\":\"something\"}",
+      11,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, null);
+    assert.equal(result.repositoryUrl, null);
+  });
+
+  it("stage 2: accepts clean assistant summary when no creation command is visible", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t13" });
+    // Legacy signal path: agent summarises the PR it just created in
+    // plain assistant text without a matching tool_call we can hook.
+    insertLog(
+      db,
+      task.id,
+      "assistant",
+      "PR URL: https://github.com/acme/widget/pull/55",
+      10,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id);
+    assert.equal(result.prUrl, "https://github.com/acme/widget/pull/55");
+    assert.equal(result.repositoryUrl, "https://github.com/acme/widget");
+  });
+
+  // ---- runStartedAt windowing ----
+
+  it("runStartedAt: ignores log rows from before the current run", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t14", started_at: 10_000 });
+    // Stale row from a previous run (before started_at).
+    insertLog(
+      db,
+      task.id,
+      "assistant",
+      "Created pull request: https://github.com/acme/old/pull/1",
+      5_000,
+    );
+    // Current run has no github artefacts.
+    insertLog(db, task.id, "assistant", "Working locally only.", 12_000);
+    const result = extractGithubArtifactsFromLogs(db, task.id, { runStartedAt: 10_000 });
+    assert.equal(result.prUrl, null);
+    assert.equal(result.repositoryUrl, null);
+  });
+
+  it("runStartedAt: accepts log rows from the current run only", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "t15", started_at: 10_000 });
+    insertLog(db, task.id, "assistant", "Old run: https://github.com/acme/old/pull/1", 5_000);
+    insertLog(
+      db,
+      task.id,
+      "assistant",
+      "Created pull request: https://github.com/acme/new/pull/2",
+      12_000,
+    );
+    const result = extractGithubArtifactsFromLogs(db, task.id, { runStartedAt: 10_000 });
+    assert.equal(result.prUrl, "https://github.com/acme/new/pull/2");
+    assert.equal(result.repositoryUrl, "https://github.com/acme/new");
   });
 });
 
