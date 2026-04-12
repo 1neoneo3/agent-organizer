@@ -166,7 +166,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Refinement Stage (調整)</span>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Refinement Stage</span>
               <select
                 style={inputStyle}
                 value={local.default_enable_refinement ?? "false"}
