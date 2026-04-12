@@ -12,7 +12,7 @@ import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { useWebSocket } from "../../hooks/useWebSocket.js";
 import { buildAgentViewState } from "./agent-view.js";
-import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
+import { TASK_BOARD_COLUMNS, TASK_PRIORITY_BUCKETS, createEmptyTaskColumns, filterTasksByPriority, groupTasksByStatusStable, type TaskColumns, type TaskPriorityBucket } from "./task-columns.js";
 
 interface TaskBoardProps {
   tasks: Task[];
@@ -106,6 +106,24 @@ const TaskColumn = memo(function TaskColumn({
   );
 });
 
+const PRIORITY_FILTER_STORAGE_KEY = "ao:priority-filter";
+
+const PRIORITY_FILTER_OPTIONS: ReadonlyArray<{ value: TaskPriorityBucket | null; label: string }> = [
+  { value: null, label: "All" },
+  { value: "high", label: "High" },
+  { value: "medium", label: "Medium" },
+  { value: "low", label: "Low" },
+];
+
+function loadPriorityFilter(): TaskPriorityBucket | null {
+  if (typeof window === "undefined") return null;
+  const stored = window.localStorage.getItem(PRIORITY_FILTER_STORAGE_KEY);
+  if (stored && (TASK_PRIORITY_BUCKETS as readonly string[]).includes(stored)) {
+    return stored as TaskPriorityBucket;
+  }
+  return null;
+}
+
 const DETAIL_LAYOUT_STORAGE_KEY = "ao:task-detail-layout-mode";
 
 function loadDetailLayoutMode(): TaskDetailLayoutMode {
@@ -123,6 +141,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [logTaskId, setLogTaskId] = useState<string | null>(null);
   const [detailLayoutMode, setDetailLayoutModeState] = useState<TaskDetailLayoutMode>(loadDetailLayoutMode);
+  const [priorityFilter, setPriorityFilterState] = useState<TaskPriorityBucket | null>(loadPriorityFilter);
 
   // Persist the pin state so it survives reloads. Modal is the default and
   // does not need to be written explicitly, but we store it so switching
@@ -133,6 +152,22 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
       window.localStorage.setItem(DETAIL_LAYOUT_STORAGE_KEY, mode);
     }
   }, []);
+  const setPriorityFilter = useCallback((bucket: TaskPriorityBucket | null) => {
+    setPriorityFilterState(bucket);
+    if (typeof window !== "undefined") {
+      if (bucket === null) {
+        window.localStorage.removeItem(PRIORITY_FILTER_STORAGE_KEY);
+      } else {
+        window.localStorage.setItem(PRIORITY_FILTER_STORAGE_KEY, bucket);
+      }
+    }
+  }, []);
+
+  const filteredTasks = useMemo(
+    () => filterTasksByPriority(tasks, priorityFilter),
+    [tasks, priorityFilter],
+  );
+
   const { on } = useWebSocket();
   const { play } = useSfx();
   const navigate = useNavigate();
@@ -200,10 +235,10 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
   const columnsRef = useRef<TaskColumns>(createEmptyTaskColumns());
   const tasksByStatus = useMemo(() => {
-    const grouped = groupTasksByStatusStable(tasks, columnsRef.current);
+    const grouped = groupTasksByStatusStable(filteredTasks, columnsRef.current);
     columnsRef.current = grouped;
     return grouped;
-  }, [tasks]);
+  }, [filteredTasks]);
 
   const handleBoardRender = useCallback((id: string, phase: "mount" | "update" | "nested-update", actualDuration: number) => {
     if (typeof window === "undefined") {
@@ -252,6 +287,44 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
           </button>
         </div>
       )}
+
+      {/* Priority filter */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "0 4px",
+      }}>
+        <span style={{
+          fontSize: "12px",
+          fontWeight: 500,
+          color: "var(--text-tertiary)",
+          marginRight: "2px",
+        }}>Priority</span>
+        {PRIORITY_FILTER_OPTIONS.map((opt) => {
+          const isActive = priorityFilter === opt.value;
+          return (
+            <button
+              key={opt.label}
+              onClick={() => setPriorityFilter(opt.value)}
+              style={{
+                fontSize: "12px",
+                fontWeight: 500,
+                padding: "3px 10px",
+                borderRadius: "4px",
+                border: "1px solid",
+                borderColor: isActive ? "var(--accent-primary)" : "var(--border-default)",
+                background: isActive ? "var(--accent-primary)" : "transparent",
+                color: isActive ? "#fff" : "var(--text-secondary)",
+                cursor: "pointer",
+                transition: "all 100ms ease",
+              }}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Kanban columns */}
       <Profiler id="TaskBoardColumns" onRender={handleBoardRender}>

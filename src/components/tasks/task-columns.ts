@@ -62,6 +62,17 @@ export function getTaskPriorityBucket(priority: Task["priority"]): TaskPriorityB
   return "low";
 }
 
+export function filterTasksByPriority(
+  tasks: readonly Task[],
+  bucket: TaskPriorityBucket | null,
+): Task[] {
+  if (bucket === null) {
+    return tasks as Task[];
+  }
+
+  return tasks.filter((task) => getTaskPriorityBucket(task.priority) === bucket);
+}
+
 export function summarizeTaskColumn(tasks: readonly Task[]): TaskColumnSummary {
   const priorityBreakdown = tasks.reduce<TaskPriorityBreakdown>((counts, task) => {
     const bucket = getTaskPriorityBucket(task.priority);

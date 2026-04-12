@@ -4,6 +4,7 @@ import type { Task } from "../../types/index.js";
 import {
   TASK_BOARD_COLUMNS,
   createEmptyTaskColumns,
+  filterTasksByPriority,
   getTaskPriorityBucket,
   groupTasksByStatusStable,
   summarizeTaskColumn,
@@ -190,6 +191,70 @@ describe("summarizeTaskColumn", () => {
     const snapshot = [...tasks];
 
     summarizeTaskColumn(tasks);
+
+    assert.deepEqual(tasks, snapshot);
+  });
+});
+
+describe("filterTasksByPriority", () => {
+  it("returns all tasks when filter is null", () => {
+    const tasks = [
+      { ...createTask("h", "inbox"), priority: 9 },
+      { ...createTask("m", "inbox"), priority: 5 },
+      { ...createTask("l", "inbox"), priority: 1 },
+    ];
+
+    assert.deepEqual(filterTasksByPriority(tasks, null), tasks);
+  });
+
+  it("filters tasks by high priority bucket", () => {
+    const high = { ...createTask("h", "inbox"), priority: 9 };
+    const medium = { ...createTask("m", "inbox"), priority: 5 };
+    const low = { ...createTask("l", "inbox"), priority: 1 };
+
+    const result = filterTasksByPriority([high, medium, low], "high");
+
+    assert.deepEqual(result, [high]);
+  });
+
+  it("filters tasks by medium priority bucket", () => {
+    const high = { ...createTask("h", "inbox"), priority: 9 };
+    const medium = { ...createTask("m", "inbox"), priority: 5 };
+    const low = { ...createTask("l", "inbox"), priority: 1 };
+
+    const result = filterTasksByPriority([high, medium, low], "medium");
+
+    assert.deepEqual(result, [medium]);
+  });
+
+  it("filters tasks by low priority bucket", () => {
+    const high = { ...createTask("h", "inbox"), priority: 9 };
+    const medium = { ...createTask("m", "inbox"), priority: 5 };
+    const low = { ...createTask("l", "inbox"), priority: 1 };
+
+    const result = filterTasksByPriority([high, medium, low], "low");
+
+    assert.deepEqual(result, [low]);
+  });
+
+  it("returns empty array when no tasks match the filter", () => {
+    const tasks = [{ ...createTask("h", "inbox"), priority: 10 }];
+
+    assert.deepEqual(filterTasksByPriority(tasks, "low"), []);
+  });
+
+  it("returns empty array for empty input", () => {
+    assert.deepEqual(filterTasksByPriority([], "high"), []);
+  });
+
+  it("does not mutate the input array", () => {
+    const tasks = [
+      { ...createTask("h", "inbox"), priority: 9 },
+      { ...createTask("l", "inbox"), priority: 1 },
+    ];
+    const snapshot = [...tasks];
+
+    filterTasksByPriority(tasks, "high");
 
     assert.deepEqual(tasks, snapshot);
   });
