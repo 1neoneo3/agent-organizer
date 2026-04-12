@@ -3,7 +3,7 @@ import { PanelLeft, PanelRight } from "lucide-react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
-import { sendTaskFeedback } from "../../api/endpoints.js";
+import { sendTaskFeedback, approveTask, rejectTask } from "../../api/endpoints.js";
 import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
@@ -108,6 +108,8 @@ export function TaskDetailModal({
   const [activeTab, setActiveTab] = useState<"description" | "activity">("description");
   const [feedbackText, setFeedbackText] = useState("");
   const [sendingFeedback, setSendingFeedback] = useState(false);
+  const [refinementFeedback, setRefinementFeedback] = useState("");
+  const [sendingRefinementFeedback, setSendingRefinementFeedback] = useState(false);
   const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
   const agent = task.assigned_agent_id ? agentView.agentById.get(task.assigned_agent_id) : undefined;
   const idleAgents = agentView.idleAgents;
@@ -397,6 +399,64 @@ export function TaskDetailModal({
               }}>
                 <MarkdownContent content={task.refinement_plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")} />
               </div>
+
+              {/* Approve / Reject / Feedback — only when awaiting review */}
+              {task.status === "refinement" && task.completed_at && (
+                <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button
+                      onClick={async () => { await approveTask(task.id); }}
+                      className="eb-btn eb-btn--primary"
+                      style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                    >
+                      Approve Plan
+                    </button>
+                    <button
+                      onClick={async () => { await rejectTask(task.id); }}
+                      className="eb-btn eb-btn--danger"
+                      style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                    >
+                      Reject Plan
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <textarea
+                      value={refinementFeedback}
+                      onChange={(e) => setRefinementFeedback(e.target.value)}
+                      placeholder="Request changes to the plan..."
+                      rows={2}
+                      style={{
+                        flex: 1,
+                        background: "var(--bg-tertiary)",
+                        border: "1px solid var(--border-default)",
+                        borderRadius: "6px",
+                        padding: "8px",
+                        fontSize: "12px",
+                        color: "var(--text-primary)",
+                        resize: "vertical",
+                        outline: "none",
+                      }}
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!refinementFeedback.trim()) return;
+                        setSendingRefinementFeedback(true);
+                        try {
+                          await sendTaskFeedback(task.id, refinementFeedback.trim());
+                          setRefinementFeedback("");
+                        } finally {
+                          setSendingRefinementFeedback(false);
+                        }
+                      }}
+                      disabled={!refinementFeedback.trim() || sendingRefinementFeedback}
+                      className="eb-btn eb-btn--primary"
+                      style={{ alignSelf: "flex-end", fontSize: "12px", padding: "8px 16px", opacity: (!refinementFeedback.trim() || sendingRefinementFeedback) ? 0.5 : 1 }}
+                    >
+                      {sendingRefinementFeedback ? "..." : "Revise"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

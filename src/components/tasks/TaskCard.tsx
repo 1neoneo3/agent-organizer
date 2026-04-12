@@ -229,39 +229,29 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         </div>
       )}
 
-      {/* Refinement Plan Approval */}
+      {/* Refinement Plan — review prompt */}
       {task.status === "refinement" && task.refinement_plan && (
         <div
-          onClick={(e) => e.stopPropagation()}
           style={{
             padding: "8px 12px",
             background: "var(--bg-tertiary)",
             borderTop: "1px solid var(--border-default)",
             borderBottom: "1px solid var(--border-default)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
           }}
         >
-          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
-            Refinement Plan Review
-          </div>
-          <div style={{ fontSize: "10px", color: "var(--text-tertiary)", marginBottom: "6px", maxHeight: "80px", overflow: "auto", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
-            {task.refinement_plan.slice(0, 400)}{task.refinement_plan.length > 400 ? "…" : ""}
-          </div>
-          <div style={{ display: "flex", gap: "6px" }}>
-            <button
-              onClick={async () => { play("confirm"); await approveTask(task.id); }}
-              className="eb-btn eb-btn--primary"
-              style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
-            >
-              Approve Plan
-            </button>
-            <button
-              onClick={async () => { play("select"); await rejectTask(task.id); }}
-              className="eb-btn eb-btn--danger"
-              style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
-            >
-              Reject Plan
-            </button>
-          </div>
+          <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)" }}>
+            Refinement Plan Ready
+          </span>
+          <button
+            onClick={() => { play("select"); onSelect?.(task.id); }}
+            className="eb-btn eb-btn--primary"
+            style={{ fontSize: "11px", padding: "4px 12px" }}
+          >
+            Review
+          </button>
         </div>
       )}
 
