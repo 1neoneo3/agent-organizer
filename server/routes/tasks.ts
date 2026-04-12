@@ -447,6 +447,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       writeFileSync(planPath, content, "utf-8");
     }
 
+    // Build child refinement_plan referencing the parent plan
+    const parentPlanClean = plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "");
+
     // Create child tasks with depends_on
     const now = Date.now();
     const childTasks: Task[] = [];
@@ -464,14 +467,17 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
         if (prevNumber) deps.push(prevNumber);
       }
       const depsJson = deps.length > 0 ? JSON.stringify(deps) : null;
+      const hasDeps = deps.length > 0;
 
       const description = `Step ${step.num} of ${task.task_number}: ${step.text}${planPath ? `\n\nRefinement Plan: ${planPath}` : ""}`;
+      // Inherit parent's refinement plan so child tasks skip refinement stage
+      const childPlan = `Parent ${task.task_number} — Step ${step.num}/${steps.length}: ${step.text}\n\n${parentPlanClean}`;
       const repoUrl = task.repository_url ?? (task.project_path ? detectRepositoryUrl(task.project_path) : null);
 
       db.prepare(
-        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, repository_url, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, repoUrl, now, now);
+        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, refinement_plan, repository_url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, childPlan, repoUrl, now, now);
 
       const child = db.prepare("SELECT * FROM tasks WHERE id = ?").get(childId) as unknown as Task;
       childTasks.push(child);
@@ -498,6 +504,12 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `Task split into ${childNumbers}. Plan saved to ${planPath ?? "(no project path)"}.`);
+
+    // Auto-dispatch the first child (no dependencies) immediately to in_progress
+    const firstChild = childTasks[0];
+    if (firstChild && !firstChild.depends_on) {
+      setTimeout(() => autoDispatchTask(db, ws, firstChild.id, { autoAssign: true, autoRun: true, cache }), 500);
+    }
 
     res.json({ parent: updatedParent, children: childTasks, plan_path: planPath });
   });

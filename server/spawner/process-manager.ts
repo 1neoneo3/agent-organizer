@@ -523,8 +523,11 @@ export function spawnAgent(
   const isCiCheckRun = task.status === "ci_check";
   // Refinement: task is already in refinement status, or dispatching from
   // inbox when refinement is the first active stage in the pipeline.
+  // Skip refinement if the task already has a refinement_plan (e.g. child
+  // tasks created by Split into Tasks inherit the parent's plan).
   const activeStages = resolveActiveStages(db, workflow, task.task_size);
-  const isRefinementRun = task.status === "refinement" || (task.status === "inbox" && activeStages[0] === "refinement");
+  const hasExistingPlan = !!task.refinement_plan;
+  const isRefinementRun = !hasExistingPlan && (task.status === "refinement" || (task.status === "inbox" && activeStages[0] === "refinement"));
   const parallelImplEnabled =
     !isParallelTester && !isContinue && isParallelImplTestEnabled(db);
 
