@@ -1,6 +1,6 @@
 import { NavLink } from "react-router";
 import type { ReactNode } from "react";
-import { CheckSquare, Compass, Building2, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose } from "lucide-react";
+import { CheckSquare, Compass, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose } from "lucide-react";
 import type { Flavor, Palette, PaletteMeta, TimeOfDay } from "../../hooks/useTheme.js";
 
 type NavItem = { to: string; label: string; icon: ReactNode };
@@ -8,7 +8,6 @@ type NavItem = { to: string; label: string; icon: ReactNode };
 const NAV_ITEMS: NavItem[] = [
   { to: "/", label: "Tasks", icon: <CheckSquare size={16} /> },
   { to: "/directives", label: "Directives", icon: <Compass size={16} /> },
-  { to: "/office", label: "Office", icon: <Building2 size={16} /> },
   { to: "/agents", label: "Agents", icon: <Users size={16} /> },
   { to: "/settings", label: "Settings", icon: <Settings size={16} /> },
 ];
