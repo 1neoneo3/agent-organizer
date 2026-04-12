@@ -38,7 +38,6 @@ interface Tab {
 
 const TABS: Tab[] = [
   { key: "terminal", label: "Terminal", icon: ">" },
-  { key: "all", label: "All", icon: "\u26a1" },
   { key: "output", label: "Output", icon: "\ud83d\udcdf" },
 ];
 
@@ -603,7 +602,7 @@ export function TerminalPanel({
 
     for (const log of logs) {
       const tab = classifyLog(log.kind);
-      if (activeTab === "all" || activeTab === tab) {
+      if (activeTab === tab) {
         entries.push({ type: "log", data: log });
       }
     }
