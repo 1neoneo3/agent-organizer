@@ -184,7 +184,7 @@ describe("resolveActiveStages", () => {
     assert.deepStrictEqual(stages, ["in_progress", "human_review", "done"]);
   });
 
-  it("workflow explicit false wins over settings default (per-project opt-out)", () => {
+  it("settings true wins over workflow explicit false (settings is SSOT)", () => {
     const db = createMockDb({
       qa_mode: "disabled",
       review_mode: "none",
@@ -192,14 +192,25 @@ describe("resolveActiveStages", () => {
     });
     const workflow = { ...baseWorkflow, enableHumanReview: false };
     const stages = resolveActiveStages(db, workflow);
-    assert.deepStrictEqual(stages, ["in_progress", "done"]);
+    assert.deepStrictEqual(stages, ["in_progress", "human_review", "done"]);
   });
 
-  it("workflow explicit true wins over settings default=false", () => {
+  it("settings false wins over workflow explicit true (settings is SSOT)", () => {
     const db = createMockDb({
       qa_mode: "disabled",
       review_mode: "none",
-      // default_enable_human_review not set → defaults to false
+      default_enable_human_review: "false",
+    });
+    const workflow = { ...baseWorkflow, enableHumanReview: true };
+    const stages = resolveActiveStages(db, workflow);
+    assert.deepStrictEqual(stages, ["in_progress", "done"]);
+  });
+
+  it("workflow is fallback when settings key is absent", () => {
+    const db = createMockDb({
+      qa_mode: "disabled",
+      review_mode: "none",
+      // default_enable_human_review not set → absent
     });
     const workflow = { ...baseWorkflow, enableHumanReview: true };
     const stages = resolveActiveStages(db, workflow);

@@ -120,26 +120,31 @@ function getSetting(db: DatabaseSync, key: string): string | undefined {
 /**
  * Resolve an on/off decision for an optional workflow stage toggle.
  *
- * Precedence:
- *   1. If `WORKFLOW.md` explicitly set the flag (true / false), respect it.
- *   2. Otherwise, fall back to the global settings key (e.g.
- *      `default_enable_test_generation`). The setting is stored as a
- *      string and anything other than `"true"` is treated as false.
- *   3. If the setting row is missing, default to `false` so existing
- *      installations keep their pre-change behavior.
+ * Precedence (Settings is SSOT):
+ *   1. If the global settings key exists (e.g.
+ *      `default_enable_human_review`), its value wins unconditionally.
+ *      The settings UI is the single source of truth for stage
+ *      enablement.
+ *   2. If the setting row is missing (not "true" or "false", but
+ *      literally absent from the DB), fall back to `WORKFLOW.md`.
+ *   3. If neither source has an opinion, default to `false`.
  *
- * This fail-safe cascade lets operators enable a stage globally
- * without having to add a WORKFLOW.md to every repository, while still
- * allowing per-project opt-outs via the file.
+ * This ensures the settings UI always reflects reality. WORKFLOW.md
+ * serves as a per-project hint only when the operator has not yet
+ * configured the global setting.
  */
 function resolveWorkflowToggle(
   db: DatabaseSync,
   workflowValue: boolean | null | undefined,
   settingKey: string,
 ): boolean {
+  const settingValue = getSetting(db, settingKey);
+  // Settings key exists → it is the SSOT.
+  if (settingValue !== undefined) return settingValue === "true";
+  // Settings key absent → fall back to WORKFLOW.md.
   if (workflowValue === true) return true;
   if (workflowValue === false) return false;
-  return getSetting(db, settingKey) === "true";
+  return false;
 }
 
 export function resolveActiveStages(
