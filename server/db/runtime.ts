@@ -137,6 +137,64 @@ function migrateAddQaTestingStatus(_db: DatabaseSync): void {
   // No-op to avoid repeated table rebuild attempts.
 }
 
+/**
+ * Rebuild the tasks table from SCHEMA_SQL to pick up CHECK constraint
+ * changes. Also rebuilds child tables (task_logs, subtasks, messages)
+ * whose FK references follow the renamed table in SQLite, and drops
+ * triggers so they can be cleanly recreated by migrateAddLogStageAgent.
+ */
+function rebuildTasksTable(db: DatabaseSync): void {
+  // Drop triggers BEFORE renaming so they don't fire during the rebuild
+  db.exec("DROP TRIGGER IF EXISTS task_logs_fill_metadata");
+  db.exec("DROP TRIGGER IF EXISTS tasks_log_stage_transition");
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.exec("BEGIN TRANSACTION");
+  try {
+    // Rebuild tasks
+    db.exec("ALTER TABLE tasks RENAME TO tasks_old");
+    const tasksSchema = SCHEMA_SQL.match(/CREATE TABLE IF NOT EXISTS tasks \([\s\S]*?\);/);
+    if (tasksSchema) db.exec(tasksSchema[0]);
+    const oldCols = (db.prepare("PRAGMA table_info(tasks_old)").all() as Array<{ name: string }>).map(c => c.name);
+    const newCols = (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>).map(c => c.name);
+    const colList = oldCols.filter(c => newCols.includes(c)).join(", ");
+    db.exec(`INSERT INTO tasks (${colList}) SELECT ${colList} FROM tasks_old`);
+    db.exec("DROP TABLE tasks_old");
+
+    // Rebuild child tables whose FK silently followed the rename
+    rebuildChildTable(db, "task_logs", SCHEMA_SQL);
+    rebuildChildTable(db, "subtasks", SCHEMA_SQL);
+    rebuildChildTable(db, "messages", SCHEMA_SQL);
+
+    // Recreate indexes from SCHEMA_SQL
+    const indexMatches = SCHEMA_SQL.matchAll(/CREATE (?:UNIQUE )?INDEX IF NOT EXISTS \S+ ON (?:tasks|task_logs|subtasks|messages)\b[^;]+;/g);
+    for (const m of indexMatches) db.exec(m[0]);
+
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+  db.exec("PRAGMA foreign_keys = ON");
+}
+
+function rebuildChildTable(db: DatabaseSync, tableName: string, schemaSql: string): void {
+  const checkInfo = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?"
+  ).get(tableName) as { sql: string } | undefined;
+  if (!checkInfo || !checkInfo.sql.includes("tasks_old")) return;
+
+  const bakName = `${tableName}_bak`;
+  db.exec(`ALTER TABLE ${tableName} RENAME TO ${bakName}`);
+  const schemaMatch = schemaSql.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${tableName} \\([\\s\\S]*?\\);`));
+  if (schemaMatch) db.exec(schemaMatch[0]);
+  const oldCols = (db.prepare(`PRAGMA table_info(${bakName})`).all() as Array<{ name: string }>).map(c => c.name);
+  const newCols = (db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>).map(c => c.name);
+  const colList = oldCols.filter(c => newCols.includes(c)).join(", ");
+  db.exec(`INSERT INTO ${tableName} (${colList}) SELECT ${colList} FROM ${bakName}`);
+  db.exec(`DROP TABLE ${bakName}`);
+}
+
 function migrateAddWorkflowStages(db: DatabaseSync): void {
   // Add test_generation, human_review, ci_check to the status CHECK constraint.
   // SQLite doesn't support ALTER CHECK, so we rebuild the table.
@@ -148,31 +206,7 @@ function migrateAddWorkflowStages(db: DatabaseSync): void {
   // Skip if already migrated
   if (checkInfo.sql.includes("test_generation")) return;
 
-  db.exec("BEGIN TRANSACTION");
-  try {
-    db.exec("ALTER TABLE tasks RENAME TO tasks_old");
-    db.exec(SCHEMA_SQL.split("CREATE TABLE IF NOT EXISTS tasks")[0]); // tables before tasks are already created
-    // Recreate tasks table with new CHECK constraint (from SCHEMA_SQL)
-    const tasksSchema = SCHEMA_SQL.match(/CREATE TABLE IF NOT EXISTS tasks \([\s\S]*?\);/);
-    if (tasksSchema) {
-      db.exec(tasksSchema[0]);
-    }
-    // Copy data
-    const cols = (db.prepare("PRAGMA table_info(tasks_old)").all() as Array<{ name: string }>)
-      .map(c => c.name);
-    const newCols = (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>)
-      .map(c => c.name);
-    const commonCols = cols.filter(c => newCols.includes(c));
-    const colList = commonCols.join(", ");
-    db.exec(`INSERT INTO tasks (${colList}) SELECT ${colList} FROM tasks_old`);
-    db.exec("DROP TABLE tasks_old");
-    // Recreate indexes
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id)");
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+  rebuildTasksTable(db);
 }
 
 function migrateAddLastHeartbeat(db: DatabaseSync): void {
@@ -228,30 +262,7 @@ function migrateAddRefinementStage(db: DatabaseSync): void {
   if (!checkInfo) return;
   if (checkInfo.sql.includes("'refinement'")) return;
 
-  db.exec("BEGIN TRANSACTION");
-  try {
-    db.exec("ALTER TABLE tasks RENAME TO tasks_old");
-    const tasksSchema = SCHEMA_SQL.match(/CREATE TABLE IF NOT EXISTS tasks \([\s\S]*?\);/);
-    if (tasksSchema) {
-      db.exec(tasksSchema[0]);
-    }
-    const oldCols = (db.prepare("PRAGMA table_info(tasks_old)").all() as Array<{ name: string }>)
-      .map(c => c.name);
-    const newCols = (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>)
-      .map(c => c.name);
-    const commonCols = oldCols.filter(c => newCols.includes(c));
-    const colList = commonCols.join(", ");
-    db.exec(`INSERT INTO tasks (${colList}) SELECT ${colList} FROM tasks_old`);
-    db.exec("DROP TABLE tasks_old");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(assigned_agent_id)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_status_priority_created ON tasks(status, priority DESC, created_at)");
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id)");
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+  rebuildTasksTable(db);
 }
 
 function migrateAddLogStageAgent(db: DatabaseSync): void {
