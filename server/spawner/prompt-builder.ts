@@ -603,8 +603,13 @@ export function buildRefinementPrompt(task: Task): string {
   parts.push("- 完了後の状態（ユーザー体験、システム動作、パフォーマンス等）");
   parts.push("- 影響範囲の予測");
   parts.push("");
+  parts.push("## 変更対象ファイル (Files to Modify)");
+  parts.push("既存リポジトリの場合、変更が必要なファイルを全て列挙する:");
+  parts.push("- `path/to/file.ts` — 変更内容の要約");
+  parts.push("- `path/to/new-file.ts` — (新規作成) 目的の説明");
+  parts.push("");
   parts.push("## 実装計画 (Implementation Plan)");
-  parts.push("1. ステップ1: 具体的な変更内容");
+  parts.push("1. ステップ1: 具体的な変更内容（対象ファイルを明記）");
   parts.push("2. ステップ2: ...");
   parts.push("");
   parts.push("## リスク・注意点 (Risks & Considerations)");
