@@ -19,6 +19,7 @@
 export const TASK_STATUSES = [
   "inbox",
   "in_progress",
+  "logic",
   "self_review",
   "test_generation",
   "qa_testing",
@@ -64,6 +65,7 @@ export type AutoStage = (typeof AUTO_STAGES)[number];
  */
 export const WORKFLOW_STAGES = [
   "in_progress",
+  "logic",
   "test_generation",
   "qa_testing",
   "pr_review",

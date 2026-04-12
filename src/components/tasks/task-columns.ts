@@ -3,6 +3,7 @@ import type { Task } from "../../types/index.js";
 export const TASK_BOARD_COLUMNS = [
   { key: "inbox", label: "INBOX", town: "Inbox", accentColor: "var(--status-inbox)" },
   { key: "in_progress", label: "IN PROGRESS", town: "In Progress", accentColor: "var(--status-progress)" },
+  { key: "logic", label: "LOGIC", town: "Logic", accentColor: "var(--status-logic)" },
   { key: "self_review", label: "SELF REVIEW", town: "Self Review", accentColor: "var(--status-review)" },
   { key: "test_generation", label: "TEST GEN", town: "Test Generation", accentColor: "var(--status-test-gen)" },
   { key: "qa_testing", label: "QA TESTING", town: "QA Testing", accentColor: "var(--status-qa)" },
@@ -26,6 +27,7 @@ export function createEmptyTaskColumns(): TaskColumns {
   return {
     inbox: [],
     in_progress: [],
+    logic: [],
     self_review: [],
     test_generation: [],
     qa_testing: [],

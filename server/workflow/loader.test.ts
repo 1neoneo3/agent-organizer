@@ -81,6 +81,7 @@ describe("shouldIncludeWorkflow", () => {
       includeTask: true,
       includeReview: false,
       includeDecompose: false,
+      enableLogic: false,
       enableTestGeneration: false,
       enableHumanReview: false,
       enablePreDeploy: false,

@@ -1,6 +1,33 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { isTerminalStatus, isAutoStage, shouldStampCompletedAt } from "./task-rules.js";
+import { TASK_STATUSES, WORKFLOW_STAGES } from "./task-status.js";
+
+describe("TASK_STATUSES includes logic", () => {
+  it("contains the logic status", () => {
+    assert.ok(TASK_STATUSES.includes("logic"), "logic should be in TASK_STATUSES");
+  });
+
+  it("places logic after in_progress", () => {
+    const inProgressIndex = TASK_STATUSES.indexOf("in_progress");
+    const logicIndex = TASK_STATUSES.indexOf("logic");
+    assert.ok(logicIndex > inProgressIndex, "logic should come after in_progress");
+  });
+});
+
+describe("WORKFLOW_STAGES includes logic", () => {
+  it("contains the logic stage", () => {
+    assert.ok(WORKFLOW_STAGES.includes("logic"), "logic should be in WORKFLOW_STAGES");
+  });
+
+  it("places logic between in_progress and test_generation", () => {
+    const inProgressIndex = WORKFLOW_STAGES.indexOf("in_progress");
+    const logicIndex = WORKFLOW_STAGES.indexOf("logic");
+    const testGenIndex = WORKFLOW_STAGES.indexOf("test_generation");
+    assert.ok(logicIndex > inProgressIndex);
+    assert.ok(logicIndex < testGenIndex);
+  });
+});
 
 describe("isTerminalStatus", () => {
   it("is true for done", () => {
@@ -21,6 +48,10 @@ describe("isTerminalStatus", () => {
 
   it("is false for inbox", () => {
     assert.equal(isTerminalStatus("inbox"), false);
+  });
+
+  it("is false for logic", () => {
+    assert.equal(isTerminalStatus("logic"), false);
   });
 });
 
@@ -47,6 +78,10 @@ describe("isAutoStage", () => {
 
   it("is false for in_progress", () => {
     assert.equal(isAutoStage("in_progress"), false);
+  });
+
+  it("is false for logic (logic is manual, not auto)", () => {
+    assert.equal(isAutoStage("logic"), false);
   });
 });
 
