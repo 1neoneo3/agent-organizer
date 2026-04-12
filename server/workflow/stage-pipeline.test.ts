@@ -54,6 +54,7 @@ const baseWorkflow: ProjectWorkflow = {
   includeTask: true,
   includeReview: true,
   includeDecompose: true,
+  enableRefinement: null,
   enableTestGeneration: false,
   enableHumanReview: false,
   enableCiCheck: false,
@@ -87,7 +88,8 @@ describe("resolveActiveStages", () => {
     const db = createMockDb({ qa_mode: "enabled", review_mode: "pr_only" });
     const workflow = {
       ...baseWorkflow,
-      enableTestGeneration: true,
+      enableRefinement: null,
+  enableTestGeneration: true,
       enableHumanReview: true,
       enableCiCheck: true,
     };
@@ -107,7 +109,8 @@ describe("resolveActiveStages", () => {
     const db = createMockDb({ qa_mode: "disabled", review_mode: "pr_only" });
     const workflow = {
       ...baseWorkflow,
-      enableTestGeneration: false,
+      enableRefinement: null,
+  enableTestGeneration: false,
       enableHumanReview: true,
       enableCiCheck: false,
           projectType: "generic" as const,
@@ -270,7 +273,8 @@ describe("resolveActiveStages", () => {
 
     const stages = resolveActiveStages(
       db,
-      { ...baseWorkflow, enableTestGeneration: true },
+      { ...baseWorkflow, enableRefinement: null,
+  enableTestGeneration: true },
       "medium",
       "task-parallel-1",
     );
@@ -303,7 +307,8 @@ describe("resolveActiveStages", () => {
 
     const stages = resolveActiveStages(
       db,
-      { ...baseWorkflow, enableTestGeneration: true },
+      { ...baseWorkflow, enableRefinement: null,
+  enableTestGeneration: true },
       "medium",
       "task-no-done-yet",
     );
@@ -362,7 +367,8 @@ describe("resolveActiveStages", () => {
 
     const stages = resolveActiveStages(
       db,
-      { ...baseWorkflow, enableTestGeneration: true },
+      { ...baseWorkflow, enableRefinement: null,
+  enableTestGeneration: true },
       "medium",
       "task-parallel-fail",
     );
@@ -404,7 +410,8 @@ describe("resolveActiveStages", () => {
 
     const stages = resolveActiveStages(
       db,
-      { ...baseWorkflow, enableTestGeneration: true },
+      { ...baseWorkflow, enableRefinement: null,
+  enableTestGeneration: true },
       "medium",
       // no taskId — simulate validateStatusTransition call site
     );
@@ -461,7 +468,8 @@ describe("resolveActiveStages", () => {
 
     const stages = resolveActiveStages(
       db,
-      { ...baseWorkflow, enableTestGeneration: true },
+      { ...baseWorkflow, enableRefinement: null,
+  enableTestGeneration: true },
       "medium",
       "task-serial-stale",
     );
@@ -733,6 +741,7 @@ function makeReviewTask(id: string): Task {
     task_number: null,
     depends_on: null,
     result: null,
+    refinement_plan: null,
     review_count: 1,
     directive_id: null,
     pr_url: null,

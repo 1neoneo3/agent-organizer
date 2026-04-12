@@ -30,6 +30,7 @@ function insertTask(db: DatabaseSync, overrides: Partial<Task> = {}): Task {
     task_number: "#1",
     depends_on: null,
     result: null,
+    refinement_plan: null,
     pr_url: null,
     external_source: null,
     external_id: null,

@@ -16,6 +16,7 @@ function createTask(id: string, status: Task["status"], createdAt = 1): Task {
     task_number: null,
     depends_on: null,
     result: null,
+    refinement_plan: null,
     pr_url: null,
     review_count: 0,
     directive_id: null,

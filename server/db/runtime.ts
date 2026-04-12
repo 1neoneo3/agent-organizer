@@ -53,6 +53,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddLogStageAgent(db);
   migrateAddLastHeartbeat(db);
   migrateAddRepositoryUrl(db);
+  migrateAddRefinementStage(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -210,6 +211,46 @@ function migrateAddRepositoryUrl(db: DatabaseSync): void {
     if (url) {
       update.run(url, row.id);
     }
+  }
+}
+
+function migrateAddRefinementStage(db: DatabaseSync): void {
+  // Add refinement_plan column
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "refinement_plan")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN refinement_plan TEXT");
+  }
+
+  // Add 'refinement' to the status CHECK constraint (rebuild table if needed)
+  const checkInfo = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
+  ).get() as { sql: string } | undefined;
+  if (!checkInfo) return;
+  if (checkInfo.sql.includes("'refinement'")) return;
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    db.exec("ALTER TABLE tasks RENAME TO tasks_old");
+    const tasksSchema = SCHEMA_SQL.match(/CREATE TABLE IF NOT EXISTS tasks \([\s\S]*?\);/);
+    if (tasksSchema) {
+      db.exec(tasksSchema[0]);
+    }
+    const oldCols = (db.prepare("PRAGMA table_info(tasks_old)").all() as Array<{ name: string }>)
+      .map(c => c.name);
+    const newCols = (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>)
+      .map(c => c.name);
+    const commonCols = oldCols.filter(c => newCols.includes(c));
+    const colList = commonCols.join(", ");
+    db.exec(`INSERT INTO tasks (${colList}) SELECT ${colList} FROM tasks_old`);
+    db.exec("DROP TABLE tasks_old");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(assigned_agent_id)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_status_priority_created ON tasks(status, priority DESC, created_at)");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id)");
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
   }
 }
 

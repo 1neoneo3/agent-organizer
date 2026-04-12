@@ -13,6 +13,7 @@ const SIZE_LABEL: Record<string, string> = {
 
 const STATUS_DISPLAY: Record<string, string> = {
   inbox: "Inbox",
+  refinement: "Refinement",
   in_progress: "In Progress",
   self_review: "Review",
   test_generation: "Test Gen",
@@ -26,6 +27,7 @@ const STATUS_DISPLAY: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   inbox: "var(--status-inbox)",
+  refinement: "var(--status-refinement)",
   in_progress: "var(--status-progress)",
   self_review: "var(--status-review)",
   test_generation: "var(--status-test-gen)",
@@ -222,6 +224,42 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
               style={{ flex: 1, fontSize: "11px", padding: "5px 8px", opacity: sendingPromptResponse ? 0.5 : 1 }}
             >
               {sendingPromptResponse ? "..." : "Reject"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Refinement Plan Approval */}
+      {task.status === "refinement" && task.refinement_plan && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            padding: "8px 12px",
+            background: "var(--bg-tertiary)",
+            borderTop: "1px solid var(--border-default)",
+            borderBottom: "1px solid var(--border-default)",
+          }}
+        >
+          <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+            Refinement Plan Review
+          </div>
+          <div style={{ fontSize: "10px", color: "var(--text-tertiary)", marginBottom: "6px", maxHeight: "80px", overflow: "auto", whiteSpace: "pre-wrap", lineHeight: 1.4 }}>
+            {task.refinement_plan.slice(0, 400)}{task.refinement_plan.length > 400 ? "…" : ""}
+          </div>
+          <div style={{ display: "flex", gap: "6px" }}>
+            <button
+              onClick={async () => { play("confirm"); await approveTask(task.id); }}
+              className="eb-btn eb-btn--primary"
+              style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
+            >
+              Approve Plan
+            </button>
+            <button
+              onClick={async () => { play("select"); await rejectTask(task.id); }}
+              className="eb-btn eb-btn--danger"
+              style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
+            >
+              Reject Plan
             </button>
           </div>
         </div>

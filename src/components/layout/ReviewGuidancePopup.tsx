@@ -55,6 +55,7 @@ function toReviewTask(task: ReviewTask): Task {
     task_number: null,
     depends_on: null,
     result: null,
+    refinement_plan: null,
     pr_url: null,
     review_count: 0,
     directive_id: null,

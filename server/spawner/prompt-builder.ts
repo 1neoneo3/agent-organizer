@@ -548,6 +548,78 @@ export function buildExplorePrompt(task: Task): string {
   return parts.join("\n");
 }
 
+export function buildRefinementPrompt(task: Task): string {
+  const parts: string[] = [];
+
+  parts.push("## Language");
+  parts.push(
+    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
+  );
+  parts.push("");
+
+  appendSharedContext(parts, task.project_path);
+
+  parts.push("# 調整フェーズ: タスク計画の策定");
+  parts.push("");
+  parts.push("**重要な制約: コードの変更は行わないでください。分析と計画策定のみ。**");
+  parts.push("");
+  parts.push(`## タスク: ${task.title}`);
+  parts.push("");
+  if (task.description) {
+    parts.push(task.description);
+    parts.push("");
+  }
+  if (task.project_path) {
+    parts.push(`プロジェクトパス: ${task.project_path}`);
+    parts.push("");
+  }
+
+  const contextSnippet = extractContextFromTask(task);
+  if (contextSnippet) {
+    parts.push(contextSnippet);
+    parts.push("");
+  }
+
+  parts.push("## ミッション");
+  parts.push("");
+  parts.push("タスクを分析し、以下の構造化された計画を策定してください。");
+  parts.push("コードベースを読み取り、関連ファイル・依存関係・既存パターンを調査した上で、");
+  parts.push("具体的かつ実行可能な計画を立ててください。");
+  parts.push("");
+  parts.push("## 出力形式");
+  parts.push("");
+  parts.push("以下のフォーマットで出力してください:");
+  parts.push("");
+  parts.push("---REFINEMENT PLAN---");
+  parts.push("## 要求・要件 (Requirements)");
+  parts.push("- このタスクが解決すべき具体的な問題や実現すべき機能");
+  parts.push("- 技術的な要件（API仕様、DB変更、UIコンポーネント等）");
+  parts.push("");
+  parts.push("## 受け入れ条件 (Acceptance Criteria)");
+  parts.push("- [ ] 完了判定の条件（チェックリスト形���）");
+  parts.push("- [ ] テスト可能な検証項目");
+  parts.push("");
+  parts.push("## 期待値 (Expected Outcomes)");
+  parts.push("- 完了後の状態（ユーザー体験、システム動作、パフォーマンス等）");
+  parts.push("- 影響範囲の予測");
+  parts.push("");
+  parts.push("## 実装計画 (Implementation Plan)");
+  parts.push("1. ステップ1: 具体的な変更内容");
+  parts.push("2. ステップ2: ...");
+  parts.push("");
+  parts.push("## リスク・注意点 (Risks & Considerations)");
+  parts.push("- 潜在的なリスクやエッジケース");
+  parts.push("- 回帰テストが必要な既存機能");
+  parts.push("");
+  parts.push("## 更新されたタスク説明 (Updated Description)");
+  parts.push("上記を踏まえた、より詳細で明確なタスク説明文。");
+  parts.push("---END REFINEMENT---");
+  parts.push("");
+  parts.push("重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。");
+
+  return parts.join("\n");
+}
+
 /**
  * Reviewer role for role-aware review prompts and verdict tags.
  *

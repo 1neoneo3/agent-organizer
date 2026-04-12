@@ -142,6 +142,8 @@ export const SETTINGS_DEFAULTS = {
   // not explicitly opt out in WORKFLOW.md gets a dedicated tester pass
   // after implementation. Small tasks still skip this stage by design.
   default_enable_test_generation: "true" as const, // "true" | "false"
+  default_enable_refinement: "false" as const, // "true" | "false" — run planning agent before implementation
+  refinement_auto_approve: "false" as const, // "true" | "false" — skip human approval of refinement plan
 };
 
 

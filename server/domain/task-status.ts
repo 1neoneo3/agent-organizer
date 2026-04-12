@@ -18,6 +18,7 @@
  */
 export const TASK_STATUSES = [
   "inbox",
+  "refinement",
   "in_progress",
   "self_review",
   "test_generation",
@@ -63,6 +64,7 @@ export type AutoStage = (typeof AUTO_STAGES)[number];
  * should order.
  */
 export const WORKFLOW_STAGES = [
+  "refinement",
   "in_progress",
   "test_generation",
   "ci_check",

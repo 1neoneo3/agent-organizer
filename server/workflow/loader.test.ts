@@ -81,6 +81,7 @@ describe("shouldIncludeWorkflow", () => {
       includeTask: true,
       includeReview: false,
       includeDecompose: false,
+      enableRefinement: false,
       enableTestGeneration: false,
       enableHumanReview: false,
       enableCiCheck: false,
@@ -128,6 +129,7 @@ Body
 
     const result = loadProjectWorkflow(tmpDir);
     assert.ok(result);
+    assert.equal(result.enableRefinement, null);
     assert.equal(result.enableTestGeneration, null);
     assert.equal(result.enableHumanReview, null);
     assert.equal(result.enableCiCheck, null);

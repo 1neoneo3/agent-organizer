@@ -38,6 +38,7 @@ export interface Task {
   task_number: string | null;
   depends_on: string | null;
   result: string | null;
+  refinement_plan: string | null;
   pr_url: string | null;
   external_source: string | null;
   external_id: string | null;

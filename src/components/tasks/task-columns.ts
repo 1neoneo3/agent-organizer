@@ -2,6 +2,7 @@ import type { Task } from "../../types/index.js";
 
 export const TASK_BOARD_COLUMNS = [
   { key: "inbox", label: "INBOX", town: "Inbox", accentColor: "var(--status-inbox)" },
+  { key: "refinement", label: "REFINEMENT", town: "Refinement", accentColor: "var(--status-refinement)" },
   { key: "in_progress", label: "IN PROGRESS", town: "In Progress", accentColor: "var(--status-progress)" },
   { key: "self_review", label: "SELF REVIEW", town: "Self Review", accentColor: "var(--status-review)" },
   { key: "test_generation", label: "TEST GEN", town: "Test Generation", accentColor: "var(--status-test-gen)" },
@@ -25,6 +26,7 @@ export type TaskColumns = Record<(typeof COLUMN_KEYS)[number], Task[]>;
 export function createEmptyTaskColumns(): TaskColumns {
   return {
     inbox: [],
+    refinement: [],
     in_progress: [],
     self_review: [],
     test_generation: [],

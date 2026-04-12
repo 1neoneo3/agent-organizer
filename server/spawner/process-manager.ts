@@ -13,6 +13,7 @@ import {
   buildQaPrompt,
   buildTestGenerationPrompt,
   buildCiCheckPrompt,
+  buildRefinementPrompt,
   type ReviewerRole,
 } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
@@ -26,7 +27,7 @@ import { triggerAutoCiCheck } from "./auto-ci-check.js";
 import { triggerAutoChecks, waitForActiveChecks } from "./auto-checks.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
 import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
-import { determineNextStage } from "../workflow/stage-pipeline.js";
+import { determineNextStage, resolveActiveStages } from "../workflow/stage-pipeline.js";
 import { notifyTaskStatus } from "../notify/telegram.js";
 import type { TaskLogKind } from "../types/runtime.js";
 import {
@@ -519,11 +520,15 @@ export function spawnAgent(
   // for tool-restrictions, handoff context, and prompt routing.
   const isTestGenRun = task.status === "test_generation" || isParallelTester;
   const isCiCheckRun = task.status === "ci_check";
+  // Refinement: task is already in refinement status, or dispatching from
+  // inbox when refinement is the first active stage in the pipeline.
+  const activeStages = resolveActiveStages(db, workflow, task.task_size);
+  const isRefinementRun = task.status === "refinement" || (task.status === "inbox" && activeStages[0] === "refinement");
   const parallelImplEnabled =
     !isParallelTester && !isContinue && isParallelImplTestEnabled(db);
 
   // Restrict tools for review/QA/ci-check phases (read-only)
-  const allowedTools = (isReviewRun || isQaRun || isCiCheckRun)
+  const allowedTools = (isReviewRun || isQaRun || isCiCheckRun || isRefinementRun)
     ? REVIEW_ALLOWED_TOOLS
     : undefined;
 
@@ -538,7 +543,7 @@ export function spawnAgent(
 
   // Extract handoff context for QA/review agents
   let handoffContext = "";
-  if ((isQaRun || isReviewRun || isTestGenRun || isCiCheckRun) && !isContinue) {
+  if ((isQaRun || isReviewRun || isTestGenRun || isCiCheckRun || isRefinementRun) && !isContinue) {
     const handoffs = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[HANDOFF]%' ORDER BY created_at DESC LIMIT 3"
     ).all(task.id) as Array<{ message: string }>;
@@ -549,7 +554,7 @@ export function spawnAgent(
 
   // Run Explore phase before Implement (if enabled and applicable)
   let exploreContext = "";
-  if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isCiCheckRun) {
+  if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isCiCheckRun && !isRefinementRun) {
     // Check for existing explore result (from previous run)
     const existingExplore = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[EXPLORE]%' ORDER BY created_at DESC LIMIT 1"
@@ -568,22 +573,24 @@ export function spawnAgent(
 
   const prompt = isContinue
     ? options!.continuePrompt!
-    : (isTestGenRun
-      ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
-          parallel: isParallelTester,
-        }) + handoffContext
-      : (isQaRun
-        ? buildQaPrompt(task, workflow?.projectType ?? "generic") + handoffContext
-        : (isCiCheckRun
-          ? buildCiCheckPrompt(task) + handoffContext
-          : (isReviewRun
-            ? buildReviewPrompt(task, { reviewerRole: options?.reviewerRole ?? "code" }) + handoffContext
-            : buildTaskPrompt(task, {
-                selfReview,
-                workflow,
-                runtimePolicy,
-                parallelScope: parallelImplEnabled ? "implementer" : undefined,
-              }) + exploreContext))));
+    : (isRefinementRun
+      ? buildRefinementPrompt(task)
+      : (isTestGenRun
+        ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
+            parallel: isParallelTester,
+          }) + handoffContext
+        : (isQaRun
+          ? buildQaPrompt(task, workflow?.projectType ?? "generic") + handoffContext
+          : (isCiCheckRun
+            ? buildCiCheckPrompt(task) + handoffContext
+            : (isReviewRun
+              ? buildReviewPrompt(task, { reviewerRole: options?.reviewerRole ?? "code" }) + handoffContext
+              : buildTaskPrompt(task, {
+                  selfReview,
+                  workflow,
+                  runtimePolicy,
+                  parallelScope: parallelImplEnabled ? "implementer" : undefined,
+                }) + exploreContext)))));
 
   // Log directory
   const logDir = join("data", "logs");
@@ -628,15 +635,18 @@ export function spawnAgent(
     const now = Date.now();
     // Preserve current status for QA/review/test_generation/ci_check runs — only set in_progress for inbox tasks
     const currentStatus = task.status;
-    const shouldSetInProgress = currentStatus === "inbox";
+    const shouldTransitionFromInbox = currentStatus === "inbox";
     if (isParallelTester) {
       // The implementer "owns" assigned_agent_id / started_at / status.
       // The parallel tester must not overwrite them — it just borrows the
       // same worktree and logs a [PARALLEL_TEST:DONE] marker on exit.
       // Only flip the *tester* agent to working so the UI shows both
       // agents busy during parallel execution.
-    } else if (shouldSetInProgress) {
-      db.prepare("UPDATE tasks SET status = 'in_progress', assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
+    } else if (shouldTransitionFromInbox) {
+      // When refinement is the first active stage, transition to refinement
+      // instead of in_progress so the pipeline gate is respected.
+      const firstStage = isRefinementRun ? "refinement" : "in_progress";
+      db.prepare("UPDATE tasks SET status = ?, assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(firstStage, agent.id, now, now, task.id);
     } else {
       db.prepare("UPDATE tasks SET assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
     }
@@ -644,7 +654,7 @@ export function spawnAgent(
 
     invalidateCaches(cache);
     const startedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
-    ws.broadcast("task_update", startedTask ?? { id: task.id, status: shouldSetInProgress ? "in_progress" : currentStatus, started_at: now });
+    ws.broadcast("task_update", startedTask ?? { id: task.id, status: shouldTransitionFromInbox ? (isRefinementRun ? "refinement" : "in_progress") : currentStatus, started_at: now });
     ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
 
     // AO Phase 3: if parallel impl/test mode is enabled and this is an
@@ -658,7 +668,8 @@ export function spawnAgent(
       !isReviewRun &&
       !isQaRun &&
       !isTestGenRun &&
-      !isCiCheckRun
+      !isCiCheckRun &&
+      !isRefinementRun
     ) {
       const freshTask = db
         .prepare("SELECT * FROM tasks WHERE id = ?")
@@ -1203,6 +1214,17 @@ export function spawnAgent(
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
     let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
+
+    // Extract and store refinement plan when refinement agent completes
+    if (isRefinementRun && code === 0) {
+      const refLogs = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id ASC LIMIT 100"
+      ).all(task.id, completionTask.started_at ?? 0) as Array<{ message: string }>;
+      const combined = refLogs.map(l => l.message).join("\n");
+      const planMatch = combined.match(/---REFINEMENT PLAN---([\s\S]*?)---END REFINEMENT---/);
+      const refinementPlan = planMatch ? planMatch[0] : combined.slice(-5000);
+      db.prepare("UPDATE tasks SET refinement_plan = ? WHERE id = ?").run(refinementPlan, task.id);
+    }
 
     // Run after_run hooks (lint, format, etc.) — log failures as warnings but don't block progress
     if (code === 0 && workflow?.afterRun.length) {

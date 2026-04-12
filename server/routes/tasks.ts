@@ -167,7 +167,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
-      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review', 'ci_check') LIMIT 1"
+      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'refinement', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review', 'ci_check') LIMIT 1"
     ).get(title) as { id: string; task_number: string; status: string } | undefined;
     if (duplicate) {
       return res.status(409).json({
@@ -325,23 +325,26 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     res.json({ stopped: true });
   });
 
-  // Approve a task in human_review — advance to next stage
+  // Approve a task in human_review or refinement — advance to next stage
   router.post("/tasks/:id/approve", async (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
-    if (task.status !== "human_review") {
-      return res.status(400).json({ error: "not_in_human_review", current_status: task.status });
+
+    const approvableStatuses = ["human_review", "refinement"];
+    if (!approvableStatuses.includes(task.status)) {
+      return res.status(400).json({ error: "not_in_approvable_status", current_status: task.status });
     }
 
+    const isRefinement = task.status === "refinement";
     const workflow = loadProjectWorkflow(task.project_path);
     const activeStages = resolveActiveStages(db, workflow, task.task_size);
-    const next = nextStage("human_review", activeStages);
+    const next = nextStage(task.status as "human_review" | "refinement", activeStages);
     const now = Date.now();
 
     db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(next, now, task.id);
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, `Human review approved. Advancing to ${next}.`);
+    ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} approved. Advancing to ${next}.`);
 
     await invalidateTaskCaches();
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
@@ -351,26 +354,36 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (next === "ci_check") {
       setTimeout(() => triggerAutoCiCheck(db, ws, updatedTask, cache), 500);
     }
+    // After refinement approval → auto-dispatch to in_progress if agent is idle
+    if (isRefinement && next === "in_progress" && updatedTask.assigned_agent_id) {
+      const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(updatedTask.assigned_agent_id) as Agent | undefined;
+      if (agent && agent.status === "idle") {
+        setTimeout(() => spawnAgent(db, ws, agent, updatedTask, { cache }), 500);
+      }
+    }
 
     res.json({ approved: true, next_status: next });
   });
 
-  // Reject a task in human_review — send back to inbox
+  // Reject a task in human_review or refinement — send back to inbox
   router.post("/tasks/:id/reject", async (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
-    if (task.status !== "human_review") {
-      return res.status(400).json({ error: "not_in_human_review", current_status: task.status });
+
+    const approvableStatuses = ["human_review", "refinement"];
+    if (!approvableStatuses.includes(task.status)) {
+      return res.status(400).json({ error: "not_in_approvable_status", current_status: task.status });
     }
 
-    const reason = (req.body as { reason?: string }).reason ?? "Rejected by human reviewer";
+    const isRefinement = task.status === "refinement";
+    const reason = (req.body as { reason?: string }).reason ?? (isRefinement ? "Refinement plan rejected" : "Rejected by human reviewer");
     const now = Date.now();
 
     db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
-    recordFailedStage(db, task.id, "human_review");
+    recordFailedStage(db, task.id, task.status as "human_review" | "refinement");
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, `Human review rejected: ${reason}. Returning to inbox. Will resume from human_review after rework.`);
+    ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} rejected: ${reason}. Returning to inbox.`);
 
     await invalidateTaskCaches();
     ws.broadcast("task_update", { id: task.id, status: "inbox" });

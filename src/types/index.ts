@@ -21,12 +21,13 @@ export interface Task {
   description: string | null;
   assigned_agent_id: string | null;
   project_path: string | null;
-  status: "inbox" | "in_progress" | "self_review" | "test_generation" | "qa_testing" | "pr_review" | "human_review" | "ci_check" | "done" | "cancelled";
+  status: "inbox" | "refinement" | "in_progress" | "self_review" | "test_generation" | "qa_testing" | "pr_review" | "human_review" | "ci_check" | "done" | "cancelled";
   priority: number;
   task_size: "small" | "medium" | "large";
   task_number: string | null;
   depends_on: string | null;
   result: string | null;
+  refinement_plan: string | null;
   pr_url: string | null;
   review_count: number;
   directive_id: string | null;

@@ -88,6 +88,7 @@ function insertTask(
     task_number: overrides.task_number ?? "#1",
     depends_on: overrides.depends_on ?? null,
     result: overrides.result ?? null,
+    refinement_plan: overrides.refinement_plan ?? null,
     pr_url: overrides.pr_url ?? null,
     review_count: overrides.review_count ?? 0,
     directive_id: overrides.directive_id ?? null,

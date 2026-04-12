@@ -32,6 +32,7 @@
   --accent-glow: rgba(107, 164, 169, 0.30);
 
   --status-inbox: #a8b8bb;
+  --status-refinement: #c4a84d;
   --status-progress: #d4a876;
   --status-review: #a89bc7;
   --status-test-gen: #7fb5a6;
@@ -86,6 +87,7 @@
   --accent-glow: rgba(89, 120, 184, 0.30);
 
   --status-inbox: #a3aec2;
+  --status-refinement: #c9a94e;
   --status-progress: #e8b8a0;
   --status-review: #9b8fc6;
   --status-test-gen: #88a8b9;
@@ -134,6 +136,7 @@
   --accent-glow: rgba(13, 82, 78, 0.30);
 
   --status-inbox: #98b5b0;
+  --status-refinement: #b89b3e;
   --status-progress: #d4a876;
   --status-review: #9b8cc4;
   --status-test-gen: #5a9c84;
@@ -182,6 +185,7 @@
   --accent-glow: rgba(11, 139, 139, 0.30);
 
   --status-inbox: #95b5bf;
+  --status-refinement: #c4a84d;
   --status-progress: #d4a876;
   --status-review: #9b8cc4;
   --status-test-gen: #1ca47a;

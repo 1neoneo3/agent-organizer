@@ -71,8 +71,8 @@ export function validateStatusTransition(
   // Always allow reset to inbox or cancel
   if (newStatus === "inbox" || newStatus === "cancelled") return null;
 
-  // Allow inbox → in_progress (start task)
-  if (currentStatus === "inbox" && newStatus === "in_progress") return null;
+  // Allow inbox → first active stage (refinement or in_progress)
+  if (currentStatus === "inbox" && (newStatus === "in_progress" || newStatus === "refinement")) return null;
 
   // Allow cancelled → inbox (reopen)
   if (currentStatus === "cancelled" && newStatus === "inbox") return null;
@@ -166,7 +166,14 @@ export function resolveActiveStages(
   const qaMode = getSetting(db, "qa_mode") ?? "disabled";
   const reviewMode = getSetting(db, "review_mode") ?? "pr_only";
 
-  const stages: WorkflowStage[] = ["in_progress"];
+  const stages: WorkflowStage[] = [];
+
+  // refinement: optional planning/requirements gate before implementation
+  if (resolveWorkflowToggle(db, workflow?.enableRefinement, "default_enable_refinement")) {
+    stages.push("refinement");
+  }
+
+  stages.push("in_progress");
 
   // test_generation: workflow override → settings default → false.
   // Small tasks always skip this stage regardless of the toggle so the
@@ -303,6 +310,17 @@ export function determineNextStage(
   // Pass task.id so parallel-mode completion drops the serial
   // test_generation stage for this task only.
   const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
+
+  // Refinement completed — check if auto-approve or wait for human
+  if (task.status === "refinement") {
+    const autoApprove = getSetting(db, "refinement_auto_approve") === "true";
+    if (autoApprove) {
+      clearFailedStage(db, task.id);
+      return nextStage("refinement", activeStages);
+    }
+    // Stay in refinement waiting for human approval via approve/reject API
+    return "refinement";
+  }
 
   // QA run completed — check QA verdict
   if (task.status === "qa_testing") {
