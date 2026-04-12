@@ -394,8 +394,6 @@ export function TaskDetailModal({
                 borderRadius: "8px",
                 padding: "12px",
                 border: "1px solid var(--border-subtle)",
-                maxHeight: "400px",
-                overflow: "auto",
               }}>
                 <MarkdownContent content={task.refinement_plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")} />
               </div>
