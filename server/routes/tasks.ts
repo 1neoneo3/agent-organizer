@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
@@ -394,6 +394,91 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("task_update", { id: task.id, status: "inbox", assigned_agent_id: null, started_at: null });
 
     res.json({ rejected: true, reason });
+  });
+
+  // Split a refinement plan into individual tasks
+  router.post("/tasks/:id/split", async (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (!task.refinement_plan) return res.status(400).json({ error: "no_refinement_plan" });
+
+    // Parse implementation steps from the refinement plan
+    const plan = task.refinement_plan;
+    const implMatch = plan.match(/## 実装計画 \(Implementation Plan\)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
+    if (!implMatch) return res.status(400).json({ error: "no_implementation_steps" });
+
+    const stepsRaw = implMatch[1].trim();
+    const steps: Array<{ num: number; text: string }> = [];
+    for (const match of stepsRaw.matchAll(/^(\d+)\.\s+(.+)$/gm)) {
+      steps.push({ num: parseInt(match[1], 10), text: match[2].trim() });
+    }
+    if (steps.length === 0) return res.status(400).json({ error: "no_implementation_steps" });
+
+    // Save plan to Docs/plans/
+    let planPath: string | null = null;
+    if (task.project_path) {
+      const plansDir = join(task.project_path, "Docs", "plans");
+      mkdirSync(plansDir, { recursive: true });
+      const slug = task.title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60).toLowerCase();
+      const filename = `${(task.task_number ?? "").replace("#", "")}-${slug}.md`;
+      planPath = join(plansDir, filename);
+      const content = `# ${task.title}\n\n${plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")}`;
+      writeFileSync(planPath, content, "utf-8");
+    }
+
+    // Create child tasks with depends_on
+    const now = Date.now();
+    const childTasks: Task[] = [];
+    const taskNumberMap = new Map<number, string>(); // step num -> task_number
+
+    for (const step of steps) {
+      const childId = randomUUID();
+      const childNumber = nextTaskNumber(db);
+      taskNumberMap.set(step.num, childNumber);
+
+      // Build depends_on from previous step
+      const deps: string[] = [];
+      if (step.num > 1) {
+        const prevNumber = taskNumberMap.get(step.num - 1);
+        if (prevNumber) deps.push(prevNumber);
+      }
+      const depsJson = deps.length > 0 ? JSON.stringify(deps) : null;
+
+      const description = `Step ${step.num} of ${task.task_number}: ${step.text}${planPath ? `\n\nRefinement Plan: ${planPath}` : ""}`;
+      const repoUrl = task.repository_url ?? (task.project_path ? detectRepositoryUrl(task.project_path) : null);
+
+      db.prepare(
+        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, repository_url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, repoUrl, now, now);
+
+      const child = db.prepare("SELECT * FROM tasks WHERE id = ?").get(childId) as unknown as Task;
+      childTasks.push(child);
+    }
+
+    // Mark parent task as done with result
+    const childNumbers = childTasks.map(c => c.task_number).join(", ");
+    const result = `Split into ${childNumbers}${planPath ? `\nPlan saved: ${planPath}` : ""}`;
+    db.prepare("UPDATE tasks SET status = 'done', result = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(result, now, now, task.id);
+
+    // Release agent if assigned
+    if (task.assigned_agent_id) {
+      db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(now, task.assigned_agent_id);
+      ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+    }
+
+    await invalidateTaskCaches();
+    const updatedParent = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    ws.broadcast("task_update", updatedParent);
+    for (const child of childTasks) {
+      ws.broadcast("task_update", child);
+    }
+
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    ).run(task.id, `Task split into ${childNumbers}. Plan saved to ${planPath ?? "(no project path)"}.`);
+
+    res.json({ parent: updatedParent, children: childTasks, plan_path: planPath });
   });
 
   // Get task logs

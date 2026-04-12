@@ -3,7 +3,7 @@ import { PanelLeft, PanelRight } from "lucide-react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
-import { sendTaskFeedback, approveTask, rejectTask } from "../../api/endpoints.js";
+import { sendTaskFeedback, approveTask, rejectTask, splitTask } from "../../api/endpoints.js";
 import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
@@ -410,6 +410,16 @@ export function TaskDetailModal({
                       style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
                     >
                       Approve Plan
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Split this plan into individual tasks? The parent task will be marked as done.")) return;
+                        await splitTask(task.id);
+                      }}
+                      className="eb-btn"
+                      style={{ flex: 1, fontSize: "12px", padding: "8px 12px", background: "var(--status-refinement)", color: "#fff" }}
+                    >
+                      Split into Tasks
                     </button>
                     <button
                       onClick={async () => { await rejectTask(task.id); }}

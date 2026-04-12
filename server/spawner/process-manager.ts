@@ -14,6 +14,7 @@ import {
   buildTestGenerationPrompt,
   buildCiCheckPrompt,
   buildRefinementPrompt,
+  type ActiveTaskContext,
   type ReviewerRole,
 } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
@@ -574,7 +575,12 @@ export function spawnAgent(
   const prompt = isContinue
     ? options!.continuePrompt!
     : (isRefinementRun
-      ? buildRefinementPrompt(task)
+      ? buildRefinementPrompt(task, (() => {
+          const rows = db.prepare(
+            "SELECT task_number, title, status, project_path, description FROM tasks WHERE status NOT IN ('done','cancelled') AND id != ? ORDER BY created_at DESC LIMIT 20"
+          ).all(task.id) as Array<{ task_number: string; title: string; status: string; project_path: string | null; description: string | null }>;
+          return rows;
+        })())
       : (isTestGenRun
         ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
             parallel: isParallelTester,

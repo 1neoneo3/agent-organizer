@@ -548,7 +548,15 @@ export function buildExplorePrompt(task: Task): string {
   return parts.join("\n");
 }
 
-export function buildRefinementPrompt(task: Task): string {
+export interface ActiveTaskContext {
+  task_number: string;
+  title: string;
+  status: string;
+  project_path: string | null;
+  description: string | null;
+}
+
+export function buildRefinementPrompt(task: Task, activeTasks?: ActiveTaskContext[]): string {
   const parts: string[] = [];
 
   parts.push("## Language");
@@ -558,6 +566,18 @@ export function buildRefinementPrompt(task: Task): string {
   parts.push("");
 
   appendSharedContext(parts, task.project_path);
+
+  // Inject active tasks context for dependency analysis
+  if (activeTasks && activeTasks.length > 0) {
+    parts.push("## 現在アクティブなタスク (Active Tasks)");
+    parts.push("");
+    parts.push("以下のタスクが現在進行中または待機中です。新しいタスクの計画時に、これらとのファイル変更の競合や依存関係を分析してください:");
+    parts.push("");
+    for (const at of activeTasks) {
+      parts.push(`- ${at.task_number} **${at.title}** (${at.status})${at.description ? ` — ${at.description.slice(0, 150)}` : ""}`);
+    }
+    parts.push("");
+  }
 
   parts.push("# 調整フェーズ: タスク計画の策定");
   parts.push("");
@@ -652,6 +672,15 @@ export function buildRefinementPrompt(task: Task): string {
   parts.push("");
   parts.push("- リスクや注意点");
   parts.push("- 回帰テストが必要な既存機能");
+  parts.push("");
+  parts.push("## 依存関係・コンフリクト (Dependencies & Conflicts)");
+  parts.push("");
+  parts.push("現在アクティブなタスクとの関係を分析する。");
+  parts.push("各項目は `- ` で始める:");
+  parts.push("");
+  parts.push("- このタスクの前に完了すべきタスク（依存先）があれば `Blocked by #XX: 理由` で記載");
+  parts.push("- 同じファイルを変更するタスクがあれば `Conflicts with #XX: 対象ファイルと競合内容` で記載");
+  parts.push("- 並行実行可能な場合は `No conflicts` と記載");
   parts.push("");
   parts.push("## 更新されたタスク説明 (Updated Description)");
   parts.push("");

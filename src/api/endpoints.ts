@@ -19,6 +19,7 @@ export const runTask = (id: string, agentId?: string) =>
 export const stopTask = (id: string) => api.post<{ stopped: boolean }>(`/tasks/${id}/stop`);
 export const approveTask = (id: string) => api.post<{ approved: boolean; next_status: string }>(`/tasks/${id}/approve`);
 export const rejectTask = (id: string, reason?: string) => api.post<{ rejected: boolean; reason: string }>(`/tasks/${id}/reject`, { reason });
+export const splitTask = (id: string) => api.post<{ parent: Task; children: Task[]; plan_path: string | null }>(`/tasks/${id}/split`);
 export const fetchTaskLogs = (id: string, limit = 200) =>
   api.get<TaskLog[]>(`/tasks/${id}/logs?limit=${limit}`);
 

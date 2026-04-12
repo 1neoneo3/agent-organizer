@@ -157,6 +157,20 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
+          {task.depends_on && (() => {
+            try {
+              const deps = JSON.parse(task.depends_on) as string[];
+              if (deps.length > 0) return (
+                <div style={{ fontSize: "10px", color: "var(--text-tertiary)", marginTop: "2px", display: "flex", alignItems: "center", gap: "4px" }}>
+                  <span style={{ color: "var(--status-cancelled)", fontWeight: 600 }}>Blocked by</span>
+                  {deps.map((d) => (
+                    <span key={d} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{d}</span>
+                  ))}
+                </div>
+              );
+            } catch { /* ignore */ }
+            return null;
+          })()}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
           {hasInteractivePrompt && (
