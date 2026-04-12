@@ -153,7 +153,6 @@ src/
     agents/       # Agent list and forms
     directives/   # Directive management
     layout/       # App shell, sidebar
-    office/       # Office visualization
     settings/     # Settings panel
     tasks/        # Task board, cards, detail modal
     terminal/     # Terminal output viewer
