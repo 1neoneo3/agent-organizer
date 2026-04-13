@@ -23,7 +23,7 @@ export function createWsHub(): WsHub {
   const taskSubscriptions = new WeakMap<WebSocket, Set<string>>();
   const batches = new Map<
     string,
-    { queue: Array<{ payload: unknown; taskId?: string }>; timer: ReturnType<typeof setTimeout> }
+    { type: string; queue: Array<{ payload: unknown; taskId?: string }>; timer: ReturnType<typeof setTimeout> }
   >();
 
   // --- ping/pong heartbeat ---
@@ -88,8 +88,8 @@ export function createWsHub(): WsHub {
     }
   }
 
-  function flushBatch(type: string): void {
-    const batch = batches.get(type);
+  function flushBatch(batchKey: string): void {
+    const batch = batches.get(batchKey);
     if (!batch || batch.queue.length === 0) return;
     const items = batch.queue.splice(0);
     // Flatten when individual payloads are already arrays. Without this,
@@ -102,8 +102,8 @@ export function createWsHub(): WsHub {
     const flattened = items.flatMap((item) =>
       Array.isArray(item.payload) ? item.payload : [item.payload],
     );
-    sendRaw(type, flattened, items[0]?.taskId);
-    batches.delete(type);
+    sendRaw(batch.type, flattened, items[0]?.taskId);
+    batches.delete(batchKey);
   }
 
   function broadcast(type: string, payload: unknown, options?: BroadcastOptions): void {
@@ -119,6 +119,7 @@ export function createWsHub(): WsHub {
       // First event: send immediately, open batch window
       sendRaw(type, payload, options?.taskId);
       batches.set(batchKey, {
+        type,
         queue: [],
         timer: setTimeout(() => flushBatch(batchKey), interval),
       });

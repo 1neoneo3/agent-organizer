@@ -98,7 +98,14 @@ describe("createWsHub", () => {
     // After the 80ms window closes, the queued payloads flush as a single broadcast
     t.mock.timers.tick(80);
     assert.equal(ws.sent.length, 2);
-    const flushed = JSON.parse(ws.sent[1]!).payload as Array<{ message: string }>;
+    const flushedMsg = JSON.parse(ws.sent[1]!);
+    // Batched events must preserve the original event type ("cli_output"),
+    // not leak the internal batch key like "cli_output:task-1". Clients
+    // subscribe by exact type match — if this regresses, batched events
+    // will be silently dropped and only the first event of each window
+    // reaches the UI.
+    assert.equal(flushedMsg.type, "cli_output");
+    const flushed = flushedMsg.payload as Array<{ message: string }>;
     assert.ok(Array.isArray(flushed));
     assert.equal(flushed.length, 2);
     assert.equal(flushed[0]!.message, "second");
