@@ -98,6 +98,8 @@ function insertTask(
     review_sync_status: overrides.review_sync_status ?? "pending",
     review_sync_error: overrides.review_sync_error ?? null,
     repository_url: overrides.repository_url ?? null,
+    repository_urls: null,
+    pr_urls: null,
     external_source: overrides.external_source === undefined ? "github" : overrides.external_source,
     external_id: overrides.external_id === undefined ? "24" : overrides.external_id,
     started_at: overrides.started_at ?? null,

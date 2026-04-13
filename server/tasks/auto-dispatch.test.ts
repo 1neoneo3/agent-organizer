@@ -81,6 +81,8 @@ function insertTask(db: DatabaseSync, overrides?: Partial<Task>): Task {
     review_sync_status: overrides?.review_sync_status ?? "pending",
     review_sync_error: overrides?.review_sync_error ?? null,
     repository_url: overrides?.repository_url ?? null,
+    repository_urls: null,
+    pr_urls: null,
     started_at: overrides?.started_at ?? null,
     completed_at: overrides?.completed_at ?? null,
     created_at: overrides?.created_at ?? now,

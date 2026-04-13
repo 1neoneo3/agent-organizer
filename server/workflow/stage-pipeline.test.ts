@@ -753,6 +753,8 @@ function makeReviewTask(id: string): Task {
     review_sync_status: "pending",
     review_sync_error: null,
     repository_url: null,
+    repository_urls: null,
+    pr_urls: null,
     started_at: 1000,
     completed_at: null,
     last_heartbeat_at: null,

@@ -34,6 +34,8 @@ export interface Task {
   external_source: string | null;
   external_id: string | null;
   repository_url: string | null;
+  repository_urls: string | null;
+  pr_urls: string | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;

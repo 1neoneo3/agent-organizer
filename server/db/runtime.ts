@@ -54,6 +54,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddLastHeartbeat(db);
   migrateAddRepositoryUrl(db);
   migrateAddRefinementStage(db);
+  migrateAddMultiUrls(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -244,6 +245,31 @@ function migrateAddRepositoryUrl(db: DatabaseSync): void {
     const url = detectRepositoryUrl(row.project_path);
     if (url) {
       update.run(url, row.id);
+    }
+  }
+}
+
+function migrateAddMultiUrls(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "repository_urls")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN repository_urls TEXT");
+    // Backfill from existing single repository_url
+    const rows = db.prepare(
+      "SELECT id, repository_url FROM tasks WHERE repository_url IS NOT NULL AND repository_url <> ''",
+    ).all() as Array<{ id: string; repository_url: string }>;
+    const upd = db.prepare("UPDATE tasks SET repository_urls = ? WHERE id = ?");
+    for (const r of rows) {
+      upd.run(JSON.stringify([r.repository_url]), r.id);
+    }
+  }
+  if (!cols.some((c) => c.name === "pr_urls")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN pr_urls TEXT");
+    const rows = db.prepare(
+      "SELECT id, pr_url FROM tasks WHERE pr_url IS NOT NULL AND pr_url <> ''",
+    ).all() as Array<{ id: string; pr_url: string }>;
+    const upd = db.prepare("UPDATE tasks SET pr_urls = ? WHERE id = ?");
+    for (const r of rows) {
+      upd.run(JSON.stringify([r.pr_url]), r.id);
     }
   }
 }

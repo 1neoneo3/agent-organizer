@@ -50,6 +50,8 @@ export interface Task {
   review_sync_status: "pending" | "not_applicable" | "local_commit_ready" | "pushed" | "pr_open";
   review_sync_error: string | null;
   repository_url: string | null;
+  repository_urls: string | null;
+  pr_urls: string | null;
   started_at: number | null;
   completed_at: number | null;
   created_at: number;

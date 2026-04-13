@@ -27,6 +27,7 @@ const CreateTaskSchema = z.object({
   priority: z.number().int().min(0).max(10).default(0),
   task_size: z.enum(["small", "medium", "large"]).default("small"),
   repository_url: z.string().url().nullish(),
+  repository_urls: z.array(z.string().url()).nullish(),
 });
 
 const UpdateTaskSchema = z.object({
@@ -39,7 +40,9 @@ const UpdateTaskSchema = z.object({
   task_size: z.enum(["small", "medium", "large"]).optional(),
   result: z.string().nullish(),
   pr_url: z.string().url().nullish(),
+  pr_urls: z.array(z.string().url()).nullish(),
   repository_url: z.string().url().nullish(),
+  repository_urls: z.array(z.string().url()).nullish(),
 });
 
 /**
@@ -163,7 +166,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const parsed = CreateTaskSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const { title, description, assigned_agent_id, project_path, priority, task_size, repository_url } = parsed.data;
+    const { title, description, assigned_agent_id, project_path, priority, task_size, repository_url, repository_urls } = parsed.data;
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
@@ -201,12 +204,21 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const id = randomUUID();
     const now = Date.now();
     const taskNumber = nextTaskNumber(db);
-    const resolvedRepoUrl = resolveRepositoryUrl(repository_url ?? null, project_path ?? null);
+    // Multi-repo support: if repository_urls array is provided, use it;
+    // otherwise fall back to single repository_url (legacy) or auto-detect.
+    const urlArray: string[] = Array.isArray(repository_urls) && repository_urls.length > 0
+      ? repository_urls.map((u) => normalizeGitUrl(u) ?? u)
+      : (() => {
+          const single = resolveRepositoryUrl(repository_url ?? null, project_path ?? null);
+          return single ? [single] : [];
+        })();
+    const urlsJson = urlArray.length > 0 ? JSON.stringify(urlArray) : null;
+    const primaryRepoUrl = urlArray[0] ?? null;
 
     db.prepare(
-      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, repository_url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, resolvedRepoUrl, now, now);
+      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, repository_url, repository_urls, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, primaryRepoUrl, urlsJson, now, now);
 
     let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
     ws.broadcast("task_update", task);
@@ -258,6 +270,29 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const now = Date.now();
     const fields: string[] = [];
     const values: unknown[] = [];
+
+    // Convert repository_urls / pr_urls arrays to JSON, and sync the
+    // legacy single-URL fields with the first element.
+    if (Array.isArray(updates.repository_urls)) {
+      const arr = updates.repository_urls.map((u) => normalizeGitUrl(u) ?? u);
+      fields.push("repository_urls = ?");
+      values.push(arr.length > 0 ? JSON.stringify(arr) : null);
+      if (updates.repository_url === undefined && arr.length > 0) {
+        fields.push("repository_url = ?");
+        values.push(arr[0]);
+      }
+      delete (updates as Record<string, unknown>).repository_urls;
+    }
+    if (Array.isArray(updates.pr_urls)) {
+      const arr = updates.pr_urls;
+      fields.push("pr_urls = ?");
+      values.push(arr.length > 0 ? JSON.stringify(arr) : null);
+      if (updates.pr_url === undefined && arr.length > 0) {
+        fields.push("pr_url = ?");
+        values.push(arr[0]);
+      }
+      delete (updates as Record<string, unknown>).pr_urls;
+    }
 
     for (const [key, value] of Object.entries(updates)) {
       if (value !== undefined) {

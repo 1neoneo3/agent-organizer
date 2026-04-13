@@ -62,6 +62,8 @@ function toReviewTask(task: ReviewTask): Task {
     external_source: null,
     external_id: null,
     repository_url: null,
+    repository_urls: null,
+    pr_urls: null,
     started_at: null,
     completed_at: null,
     created_at: 0,

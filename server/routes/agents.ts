@@ -58,10 +58,17 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
     const resolvedModel = cli_model ?? DEFAULT_CLI_MODELS[cli_provider] ?? null;
     const resolvedReasoningLevel = resolveDefaultCliReasoningLevel(cli_provider, cli_reasoning_level);
 
-    db.prepare(
-      `INSERT INTO agents (id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, agent_type, personality, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, name, cli_provider, resolvedModel, resolvedReasoningLevel, avatar_emoji, role ?? null, agent_type, personality ?? null, now, now);
+    try {
+      db.prepare(
+        `INSERT INTO agents (id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, agent_type, personality, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(id, name, cli_provider, resolvedModel, resolvedReasoningLevel, avatar_emoji, role ?? null, agent_type, personality ?? null, now, now);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
+        return res.status(409).json({ error: "duplicate_name", message: `Agent name already exists: ${name}` });
+      }
+      throw err;
+    }
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(id);
     await cache.del("agents:all");
@@ -91,7 +98,14 @@ export function createAgentsRouter(ctx: RuntimeContext): Router {
     values.push(now);
     values.push(req.params.id);
 
-    db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
+    try {
+      db.prepare(`UPDATE agents SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
+        return res.status(409).json({ error: "duplicate_name", message: `Agent name already exists: ${updates.name}` });
+      }
+      throw err;
+    }
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(req.params.id);
     await cache.del("agents:all");
     ws.broadcast("agent_status", agent);
