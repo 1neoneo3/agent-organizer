@@ -657,15 +657,20 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
        VALUES (?, 'user', NULL, ?, 'directive', ?, ?)`
     ).run(msgId, content, task.id, now);
 
-    // 3. Add system log
+    // 3. Add system log — persist the full directive so the Activity tab
+    // shows the whole instruction after a reload (previously we stored only
+    // the first 200 chars, which hid user intent when revising refinement
+    // plans). The /tasks/:id/logs endpoint caps per-message length at 4KB
+    // on fetch, so bounded payload is still enforced at read time.
+    const logMessage = `[CEO Feedback] ${content}`;
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, `CEO feedback received: ${content.slice(0, 200)}`);
+    ).run(task.id, logMessage);
 
     // 4. Broadcast
     const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(msgId);
     ws.broadcast("message_new", message);
-    ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: `[CEO Feedback] ${content}` }, { taskId: task.id });
+    ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: logMessage }, { taskId: task.id });
 
     // 5. Deliver feedback to agent
     const previousStatus = task.status;
