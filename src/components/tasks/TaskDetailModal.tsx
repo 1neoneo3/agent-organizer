@@ -278,7 +278,24 @@ export function TaskDetailModal({
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflowY: "auto", overflowX: "hidden", padding: "0 24px 20px" }}>
+        <div style={{
+          flex: 1,
+          minWidth: 0,
+          // minHeight: 0 lets the body shrink below its children's intrinsic
+          // content height inside the outer flex column, which is what the
+          // Activity tab relies on so its flex:1 TerminalPanel can actually
+          // expand to fill the available vertical space. Without it the
+          // terminal was being squeezed to its content-size minimum.
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          // Activity owns its own scroll region (the terminal), so suppress
+          // the outer scroll to avoid double scrollbars. Description flows
+          // vertically as normal content and needs the outer scroll.
+          overflowY: activeTab === "activity" ? "hidden" : "auto",
+          overflowX: "hidden",
+          padding: "0 24px 20px",
+        }}>
           {/* Tab bar: switch the main area between the task's Description
               content (default) and the live Activity terminal. */}
           <div
@@ -699,6 +716,11 @@ export function TaskDetailModal({
 
   // Modal mode: centered overlay with backdrop.
   if (layoutMode === "modal") {
+    // Activity is a live terminal view with no natural content height, so a
+    // maxHeight-only modal collapses around the tab bar. Lock to 90vh when
+    // the user is on the Activity tab so the terminal gets the full intended
+    // viewport; Description keeps maxHeight to stay compact for short tasks.
+    const isActivity = activeTab === "activity";
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
         <div
@@ -708,7 +730,7 @@ export function TaskDetailModal({
             borderRadius: "12px",
             width: "100%",
             maxWidth: "56rem",
-            maxHeight: "90vh",
+            ...(isActivity ? { height: "90vh" } : { maxHeight: "90vh" }),
             display: "flex",
             flexDirection: "column",
             boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",

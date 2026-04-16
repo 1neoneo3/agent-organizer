@@ -516,8 +516,11 @@ const StageSegmentBlock = memo(function StageSegmentBlock({
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
             margin: 0,
-            maxHeight: "500px",
-            overflowY: "auto",
+            // No inner maxHeight: the outer terminal container already
+            // provides a bounded scroll region (see containerRef scroller),
+            // so constraining the segment body here only creates dead
+            // whitespace below when the text fits within 500px while the
+            // outer pane is much taller.
           }}
         >
           {segment.text || "(empty)"}
