@@ -90,19 +90,29 @@ export function createWsHub(): WsHub {
 
   function flushBatch(batchKey: string): void {
     const batch = batches.get(batchKey);
-    if (!batch || batch.queue.length === 0) return;
-    const items = batch.queue.splice(0);
-    // Flatten when individual payloads are already arrays. Without this,
-    // batching a stream of `[log, log]` payloads would produce the nested
-    // form `[[log, log], [log]]`, which clients handling `cli_output`
-    // treat as single entries and end up looking at a raw Array as a
-    // "log record". Flattening produces a uniform flat array for
-    // subscribers, regardless of whether the original broadcasts sent
-    // scalars or arrays.
-    const flattened = items.flatMap((item) =>
-      Array.isArray(item.payload) ? item.payload : [item.payload],
-    );
-    sendRaw(batch.type, flattened, items[0]?.taskId);
+    if (!batch) return;
+    // Always tear down the batch entry after the timer fires, even when the
+    // queue is empty. Previously an empty-queue flush returned early without
+    // deleting the entry, leaving a stale batch record whose timer had
+    // already expired. Subsequent broadcasts then appended to that dead
+    // queue forever — no new timer was scheduled because the batch "existed"
+    // — and clients stopped receiving events after the first burst that
+    // fell into this window. Cleaning up here makes the next broadcast
+    // re-open a fresh batch with a fresh timer.
+    if (batch.queue.length > 0) {
+      const items = batch.queue.splice(0);
+      // Flatten when individual payloads are already arrays. Without this,
+      // batching a stream of `[log, log]` payloads would produce the nested
+      // form `[[log, log], [log]]`, which clients handling `cli_output`
+      // treat as single entries and end up looking at a raw Array as a
+      // "log record". Flattening produces a uniform flat array for
+      // subscribers, regardless of whether the original broadcasts sent
+      // scalars or arrays.
+      const flattened = items.flatMap((item) =>
+        Array.isArray(item.payload) ? item.payload : [item.payload],
+      );
+      sendRaw(batch.type, flattened, items[0]?.taskId);
+    }
     batches.delete(batchKey);
   }
 

@@ -163,4 +163,41 @@ describe("createWsHub", () => {
       ["c", "d", "e"],
     );
   });
+
+  it("keeps delivering broadcasts after an empty-queue flush window", async (t) => {
+    // Regression: previously, when the first event in a batch window had no
+    // followers, the flush timer fired against an empty queue and returned
+    // without deleting the batch record. Subsequent broadcasts then saw the
+    // stale record, appended to its dead queue, and never fired because no
+    // new timer was scheduled — so clients received only the very first
+    // event per taskId for the entire task lifetime. This test guarantees
+    // the fresh-batch re-open behavior after quiet windows.
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+    hub.subscribeClientToTask(ws as never, "task-1");
+
+    // First burst: single event, window closes empty.
+    hub.broadcast("cli_output", { task_id: "task-1", kind: "stdout", message: "one" }, { taskId: "task-1" });
+    assert.equal(ws.sent.length, 1);
+    t.mock.timers.tick(80); // empty-queue flush; batch record must be cleared
+    assert.equal(ws.sent.length, 1);
+
+    // Second event arrives long after the window closed. It must be sent
+    // immediately because a fresh batch should have been opened.
+    hub.broadcast("cli_output", { task_id: "task-1", kind: "stdout", message: "two" }, { taskId: "task-1" });
+    assert.equal(ws.sent.length, 2);
+    assert.equal(JSON.parse(ws.sent[1]!).payload.message, "two");
+
+    // Third event within the new window queues and flushes normally.
+    hub.broadcast("cli_output", { task_id: "task-1", kind: "stdout", message: "three" }, { taskId: "task-1" });
+    assert.equal(ws.sent.length, 2);
+    t.mock.timers.tick(80);
+    assert.equal(ws.sent.length, 3);
+    const flushed = JSON.parse(ws.sent[2]!).payload as Array<{ message: string }>;
+    assert.deepEqual(flushed.map((p) => p.message), ["three"]);
+  });
 });
