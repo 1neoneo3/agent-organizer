@@ -66,6 +66,7 @@ function toReviewTask(task: ReviewTask): Task {
     pr_urls: null,
     started_at: null,
     completed_at: null,
+    auto_respawn_count: 0,
     created_at: 0,
     updated_at: task.updated_at,
   };

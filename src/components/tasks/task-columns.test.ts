@@ -34,6 +34,7 @@ function createTask(id: string, status: Task["status"], createdAt = 1): Task {
     pr_urls: null,
     started_at: null,
     completed_at: null,
+    auto_respawn_count: 0,
     created_at: createdAt,
     updated_at: 1,
   };
