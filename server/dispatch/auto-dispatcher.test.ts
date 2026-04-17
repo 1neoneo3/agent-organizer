@@ -104,6 +104,7 @@ function insertTask(
     external_id: overrides.external_id === undefined ? "24" : overrides.external_id,
     started_at: overrides.started_at ?? null,
     completed_at: overrides.completed_at ?? null,
+    auto_respawn_count: overrides.auto_respawn_count ?? 0,
     created_at: overrides.created_at ?? now,
     updated_at: overrides.updated_at ?? now,
   };

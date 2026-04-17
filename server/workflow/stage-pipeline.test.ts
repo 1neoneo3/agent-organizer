@@ -758,6 +758,7 @@ function makeReviewTask(id: string): Task {
     settings_overrides: null,
     started_at: 1000,
     completed_at: null,
+    auto_respawn_count: 0,
     last_heartbeat_at: null,
     created_at: 0,
     updated_at: 0,

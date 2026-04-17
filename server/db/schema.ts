@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   started_at INTEGER,
   completed_at INTEGER,
   last_heartbeat_at INTEGER,
+  auto_respawn_count INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
 );

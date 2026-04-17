@@ -771,22 +771,26 @@ export interface ActiveTaskContext {
   description: string | null;
 }
 
+export interface BuildRefinementPromptOptions {
+  /**
+   * When true, the refinement agent is expected to commit the plan to
+   * a Markdown file on a fresh branch and open a PR. The prompt body
+   * switches wording to allow plan-file creation + git/PR operations
+   * while still forbidding implementation-code edits.
+   */
+  asPr?: boolean;
+  /** Output language for the natural-language portions. */
+  language?: OutputLanguage;
+}
+
 export function buildRefinementPrompt(
   task: Task,
   activeTasks?: ActiveTaskContext[],
-  opts?: {
-    /**
-     * When true, the refinement agent is expected to commit the plan to
-     * a Markdown file on a fresh branch and open a PR. The prompt body
-     * is unchanged; call-site just passes this through for future use.
-     */
-    asPr?: boolean;
-    /** Output language for the natural-language portions. */
-    language?: OutputLanguage;
-  },
+  opts: BuildRefinementPromptOptions = {},
 ): string {
+  const refinementAsPr = opts.asPr ?? false;
   const parts: string[] = [];
-  const language: OutputLanguage = opts?.language ?? DEFAULT_OUTPUT_LANGUAGE;
+  const language: OutputLanguage = opts.language ?? DEFAULT_OUTPUT_LANGUAGE;
   const isEn = language === "en";
 
   appendLanguageDirective(parts, language);
@@ -818,7 +822,10 @@ export function buildRefinementPrompt(
   if (isEn) {
     parts.push("# Refinement Phase: Task Planning");
     parts.push("");
-    parts.push("**Hard constraint: do not modify any code. Analysis and planning only.**");
+    parts.push(
+      refinementAsPr
+        ? "**Hard constraint: do not modify implementation code. Only plan-document creation, saving, and PR operations are allowed.**"
+        : "**Hard constraint: do not modify any code. Analysis and planning only.**");
     parts.push("");
     parts.push(`## Task: ${task.title}`);
     parts.push("");
@@ -948,12 +955,18 @@ export function buildRefinementPrompt(
     parts.push("---END REFINEMENT---");
     parts.push("");
     parts.push(
-      "Important: do not create, edit, or write files. Read and analyze only.",
+      refinementAsPr
+        ? "Important: do not modify implementation code. Only plan-document Markdown creation / updates, git operations, and PR creation are allowed."
+        : "Important: do not create, edit, or write files. Read and analyze only.",
     );
   } else {
     parts.push("# 調整フェーズ: タスク計画の策定");
     parts.push("");
-    parts.push("**重要な制約: コードの変更は行わないでください。分析と計画策定のみ。**");
+    parts.push(
+      refinementAsPr
+        ? "**重要な制約: 実装コードは変更しないでください。計画書の作成・保存・PR 化のみ許可されます。**"
+        : "**重要な制約: コードの変更は行わないでください。分析と計画策定のみ。**",
+    );
     parts.push("");
     parts.push(`## タスク: ${task.title}`);
     parts.push("");
@@ -1068,7 +1081,11 @@ export function buildRefinementPrompt(
     parts.push("");
     parts.push("---END REFINEMENT---");
     parts.push("");
-    parts.push("重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。");
+    parts.push(
+      refinementAsPr
+        ? "重要: 実装コードは変更しないこと。計画書 Markdown の作成・更新、git 操作、PR 作成のみ許可されます。"
+        : "重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。",
+    );
   }
 
   return parts.join("\n");

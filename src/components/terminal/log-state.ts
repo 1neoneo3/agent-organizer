@@ -89,6 +89,17 @@ function formatTerminalChunk(entry: { kind: TaskLog["kind"]; message: string }):
 export interface StageSegment {
   id: string;
   stage: string | null;
+  /**
+   * The previous stage recorded on the transition marker that opened this
+   * segment, when available. Falls back to `null` for implicit segments
+   * (first log before any transition, or when we had to start a segment
+   * because the log's stage changed without an explicit marker). Keeping
+   * this on the segment lets the UI render the full "from → to" label on
+   * every segment — including the first one — instead of having to derive
+   * it from adjacent segments (which fails when earlier stages produced no
+   * in-stage logs at all).
+   */
+  fromStage: string | null;
   agentId: string | null;
   startedAt: number;
   text: string;
@@ -107,10 +118,11 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
 
   const startSegment = (
     log: TaskLog,
-    stageOverride?: string | null,
+    options: { stageOverride?: string | null; fromStage?: string | null } = {},
   ): StageSegment => ({
     id: `seg-${log.id}`,
-    stage: stageOverride !== undefined ? stageOverride : log.stage,
+    stage: options.stageOverride !== undefined ? options.stageOverride : log.stage,
+    fromStage: options.fromStage ?? null,
     agentId: log.agent_id,
     startedAt: log.created_at,
     text: "",
@@ -122,8 +134,19 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
 
     if (transition) {
       // Transition marker — close the previous segment (if any) and start a new one.
+      // If the incoming transition's `to` matches the stage we are already in
+      // (e.g. the DB trigger fired a duplicate marker, or the client already
+      // synthesized one), merge instead of opening an empty duplicate segment.
+      if (current && current.stage === transition.to) {
+        // Backfill `fromStage` from the marker when the existing segment
+        // lacked one (implicit segment that turned out to be the real start).
+        if (current.fromStage === null) {
+          current.fromStage = transition.from;
+        }
+        continue;
+      }
       if (current) segments.push(current);
-      current = startSegment(log, transition.to);
+      current = startSegment(log, { stageOverride: transition.to, fromStage: transition.from });
       continue;
     }
 
@@ -131,8 +154,9 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
     if (!current) {
       current = startSegment(log);
     } else if (log.stage !== null && current.stage !== null && log.stage !== current.stage) {
+      const previousStage = current.stage;
       segments.push(current);
-      current = startSegment(log);
+      current = startSegment(log, { fromStage: previousStage });
     }
 
     const chunk = formatTerminalChunk({ kind: log.kind, message: log.message });

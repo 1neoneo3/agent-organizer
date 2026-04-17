@@ -472,8 +472,13 @@ const StageSegmentBlock = memo(function StageSegmentBlock({
   const roleLabel = agent?.role ? getRoleLabel(agent.role) ?? agent.role : null;
   const modelLabel = agent?.cli_model ?? null;
   const providerLabel = agent?.cli_provider ?? null;
-  const transitionLabel = previousStage !== null && previousStage !== segment.stage
-    ? `${previousStage} → ${segment.stage ?? "—"}`
+  // Prefer the transition marker's own `from` (captured as segment.fromStage)
+  // because it records the real predecessor even when earlier stages produced
+  // no displayable logs. Fall back to the adjacent segment's stage for
+  // implicit segments where no marker was present.
+  const effectiveFromStage = segment.fromStage ?? previousStage;
+  const transitionLabel = effectiveFromStage !== null && effectiveFromStage !== segment.stage
+    ? `${effectiveFromStage} → ${segment.stage ?? "—"}`
     : segment.stage ?? "—";
   const startedAtLabel = new Date(segment.startedAt).toLocaleTimeString("ja-JP", {
     hour: "2-digit",

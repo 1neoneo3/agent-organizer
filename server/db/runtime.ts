@@ -55,6 +55,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddRepositoryUrl(db);
   migrateAddRefinementStage(db);
   migrateAddMultiUrls(db);
+  migrateAddAutoRespawnCount(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -271,6 +272,13 @@ function migrateAddMultiUrls(db: DatabaseSync): void {
     for (const r of rows) {
       upd.run(JSON.stringify([r.pr_url]), r.id);
     }
+  }
+}
+
+function migrateAddAutoRespawnCount(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "auto_respawn_count")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN auto_respawn_count INTEGER NOT NULL DEFAULT 0");
   }
 }
 

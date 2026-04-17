@@ -147,6 +147,13 @@ export function buildContinuePromptFromInteractiveResponse({
     : "The user acknowledged your question without a specific answer.";
 }
 
+export function resolveRequestedAgentId(
+  taskAssignedAgentId: string | null | undefined,
+  requestedAgentId: string | null | undefined,
+): string | undefined {
+  return requestedAgentId ?? taskAssignedAgentId ?? undefined;
+}
+
 function nextTaskNumber(db: RuntimeContext["db"]): string {
   const row = db.prepare(
     "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
@@ -443,7 +450,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") return res.status(409).json({ error: "already_running" });
 
-    const agentId = task.assigned_agent_id ?? (req.body as { agent_id?: string }).agent_id;
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
     if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
@@ -455,7 +462,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET assigned_agent_id = ? WHERE id = ?").run(agentId, task.id);
     }
 
-    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId }, { cache });
+    // Manual Run is an explicit user intent — reset any prior orphan-recovery
+    // auto-respawn history so the task gets a fresh budget from zero.
+    db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
+
+    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
     res.json({ started: true, pid: result.pid });
   });
 
@@ -477,6 +488,32 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     await cache.del("agents:all");
     ws.broadcast("task_update", { id: req.params.id, status: "cancelled" });
     res.json({ stopped: true });
+  });
+
+  // Resume a cancelled task: re-assign agent and spawn back to in_progress
+  router.post("/tasks/:id/resume", async (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (task.status !== "cancelled") return res.status(409).json({ error: "not_cancelled" });
+
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
+    if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
+
+    const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
+    if (!agent) return res.status(404).json({ error: "agent_not_found" });
+    if (agent.status === "working") return res.status(409).json({ error: "agent_busy" });
+
+    const now = Date.now();
+    db.prepare(
+      "UPDATE tasks SET status = 'in_progress', completed_at = NULL, assigned_agent_id = ?, updated_at = ? WHERE id = ?"
+    ).run(agentId, now, task.id);
+
+    const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+    const result = spawnAgent(db, ws, agent, freshTask, { cache });
+
+    await invalidateTaskCaches();
+    res.json({ resumed: true, pid: result.pid });
   });
 
   // Approve a task in human_review or refinement — advance to next stage
@@ -673,7 +710,27 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const offset = Number(req.query.offset ?? 0);
     const logs = db.prepare(
       "SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ? OFFSET ?"
-    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { message: string }>;
+    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { id: number; message: string }>;
+
+    // Stage transition markers are inserted by the tasks_log_stage_transition
+    // trigger on every status change. When a task is long-lived enough that
+    // in-stage logs exceed `limit`, the oldest transition markers fall
+    // outside the paginated window and the Activity terminal loses the
+    // earliest stage segments (e.g. inbox→refinement, refinement→in_progress).
+    // Always fold every transition marker for the task into the response so
+    // the client can rebuild the full stage timeline regardless of pagination.
+    const transitions = db.prepare(
+      "SELECT * FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC"
+    ).all(req.params.id) as Array<Record<string, unknown> & { id: number; message: string }>;
+
+    const seen = new Set<number>(logs.map((row) => row.id));
+    for (const row of transitions) {
+      if (!seen.has(row.id)) {
+        logs.push(row);
+        seen.add(row.id);
+      }
+    }
+    logs.sort((a, b) => Number(b.id) - Number(a.id));
 
     // Cap per-message length to keep the response payload bounded. Some rows
     // contain full tool-result JSON blobs (tens of KB each), which can push
@@ -829,7 +886,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "refinement" });
     } else {
-      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+      // Manual feedback-rework is an explicit user intent — reset the
+      // auto-respawn counter so a mid-rework crash gets a full retry budget.
+      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "in_progress" });
     }
 

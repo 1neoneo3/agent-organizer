@@ -50,12 +50,14 @@ function insertTask(
     assigned_agent_id?: string | null;
     updated_at?: number;
     last_heartbeat_at?: number | null;
+    started_at?: number | null;
+    auto_respawn_count?: number;
   },
 ): void {
   const now = Date.now();
   db.prepare(
-    `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at, last_heartbeat_at)
-     VALUES (?, ?, ?, ?, 'small', ?, ?, ?)`,
+    `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at, last_heartbeat_at, started_at, auto_respawn_count)
+     VALUES (?, ?, ?, ?, 'small', ?, ?, ?, ?, ?)`,
   ).run(
     overrides.id,
     `task-${overrides.id}`,
@@ -64,6 +66,8 @@ function insertTask(
     now,
     overrides.updated_at ?? now,
     overrides.last_heartbeat_at ?? null,
+    overrides.started_at ?? null,
+    overrides.auto_respawn_count ?? 0,
   );
 }
 
@@ -130,6 +134,93 @@ describe("recoverInProgressOrphans", () => {
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
     assert.equal(row.status, "in_progress");
+  });
+
+  it("auto-respawns a parked in_progress task when the agent is idle and budget allows", () => {
+    // Simulate a crash: task is in_progress, agent was released to idle
+    // by a previous orphan-recovery tick (or was never marked working
+    // because the process died during spawn).
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const spawnCalls: Array<{ taskId: string; agentId: string; autoRespawnCount: number }> = [];
+    const fakeSpawn = ((_db: DatabaseSync, _ws: unknown, agent: { id: string }, task: { id: string; auto_respawn_count: number }) => {
+      spawnCalls.push({ taskId: task.id, agentId: agent.id, autoRespawnCount: task.auto_respawn_count });
+      return { pid: 12345 };
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls.length, 1, "spawnAgent should be called exactly once");
+    assert.equal(spawnCalls[0].taskId, "t1");
+    assert.equal(spawnCalls[0].agentId, "agent-1");
+    assert.equal(spawnCalls[0].autoRespawnCount, 1, "freshly-incremented count passed to spawn");
+
+    const row = db.prepare("SELECT status, auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
+      status: string;
+      auto_respawn_count: number;
+    };
+    assert.equal(row.status, "in_progress");
+    assert.equal(row.auto_respawn_count, 1);
+
+    const log = db
+      .prepare("SELECT message FROM task_logs WHERE task_id = 't1' ORDER BY id DESC LIMIT 1")
+      .get() as { message: string };
+    assert.match(log.message, /auto-respawn attempt 1\/3/);
+  });
+
+  it("stops auto-respawning once the budget is exhausted", () => {
+    insertTask(db, {
+      id: "t1",
+      status: "in_progress",
+      assigned_agent_id: "agent-1",
+      auto_respawn_count: 3,
+    });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    let spawnCalls = 0;
+    const fakeSpawn = (() => {
+      spawnCalls += 1;
+      return { pid: 1 };
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls, 0, "must not spawn after budget exhausted");
+
+    const row = db.prepare("SELECT auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
+      auto_respawn_count: number;
+    };
+    assert.equal(row.auto_respawn_count, 3, "counter stays at max");
+
+    const log = db
+      .prepare("SELECT message FROM task_logs WHERE task_id = 't1' ORDER BY id DESC LIMIT 1")
+      .get() as { message: string };
+    assert.match(log.message, /budget exhausted/i);
+    assert.match(log.message, /3\/3/);
+  });
+
+  it("skips auto-respawn when the task has no assigned agent", () => {
+    // Without an assigned agent the recovery path has nothing to drive, so
+    // it parks quietly without incrementing the counter.
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: null });
+    const ws = createFakeWs();
+
+    let spawnCalls = 0;
+    const fakeSpawn = (() => {
+      spawnCalls += 1;
+      return { pid: 1 };
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls, 0);
+    const row = db.prepare("SELECT auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
+      auto_respawn_count: number;
+    };
+    assert.equal(row.auto_respawn_count, 0, "no increment when respawn skipped");
   });
 
   it("still bounces refinement-without-plan orphans back to inbox", () => {
