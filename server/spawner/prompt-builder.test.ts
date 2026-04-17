@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildQaPrompt,
+  buildRefinementPrompt,
   buildReviewPrompt,
   buildTaskPrompt,
   buildTestGenerationPrompt,
@@ -42,7 +43,7 @@ describe("buildTaskPrompt", () => {
           includeReview: true,
           includeDecompose: true,
           enableRefinement: null,
-  enableTestGeneration: false,
+          enableTestGeneration: false,
           enableHumanReview: false,
           enableCiCheck: false,
           projectType: "generic" as const,
@@ -213,6 +214,38 @@ describe("buildTestGenerationPrompt", () => {
 
     assert.match(prompt, /\[PARALLEL_TEST:DONE\]\s+pass/);
     assert.match(prompt, /\[PARALLEL_TEST:DONE\]\s+fail/);
+  });
+});
+
+describe("buildRefinementPrompt", () => {
+  it("keeps refinement read-only by default", () => {
+    const prompt = buildRefinementPrompt({
+      id: "task-refinement-default",
+      title: "Plan the work",
+      description: "Draft a refinement plan.",
+      project_path: "/tmp/project",
+      status: "refinement",
+    } as never);
+
+    assert.match(prompt, /コードの変更は行わないでください。分析と計画策定のみ。/);
+    assert.match(prompt, /ファイルの作成・編集・書き込みをしないこと。/);
+  });
+
+  it("allows plan-file creation when refinement_as_pr is enabled", () => {
+    const prompt = buildRefinementPrompt(
+      {
+        id: "task-refinement-pr",
+        title: "Plan the work",
+        description: "Draft a refinement plan.",
+        project_path: "/tmp/project",
+        status: "refinement",
+      } as never,
+      undefined,
+      { asPr: true },
+    );
+
+    assert.match(prompt, /計画書の作成・保存・PR 化のみ許可されます/);
+    assert.match(prompt, /計画書 Markdown の作成・更新、git 操作、PR 作成のみ許可されます/);
   });
 });
 

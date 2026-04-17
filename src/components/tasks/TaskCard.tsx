@@ -4,6 +4,7 @@ import { sendTaskFeedback, sendInteractiveResponse, approveTask, rejectTask } fr
 import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-time.js";
+import { getResumeActionState } from "./task-resume.js";
 
 const SIZE_LABEL: Record<string, string> = {
   small: "S",
@@ -459,11 +460,11 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
         {/* Cancelled: Restart row (agent selector when assigned agent is busy/missing) */}
         {task.status === "cancelled" && (() => {
-          const canUseAssigned = assignedAgent && assignedAgent.status !== "working";
-          const resumeAgentId = canUseAssigned
-            ? assignedAgent!.id
-            : (idleAgents.find((a) => a.id === selectedAgentId)?.id ?? idleAgents[0]?.id ?? "");
-          const showSelector = !canUseAssigned && idleAgents.length > 0;
+          const { canUseAssigned, resumeAgentId, showSelector } = getResumeActionState(
+            assignedAgent,
+            idleAgents,
+            selectedAgentId,
+          );
           return (
             <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
               {showSelector && (

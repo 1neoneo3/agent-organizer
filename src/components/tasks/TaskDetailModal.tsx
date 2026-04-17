@@ -8,6 +8,7 @@ import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
 import { buildAgentViewState } from "./agent-view.js";
+import { getResumeActionState } from "./task-resume.js";
 
 /**
  * Layout mode for the task detail view.
@@ -671,11 +672,11 @@ export function TaskDetailModal({
               </button>
             )}
             {task.status === "cancelled" && (() => {
-              const canUseAssigned = agent && agent.status !== "working";
-              const showSelector = !canUseAssigned && idleAgents.length > 0;
-              const resumeAgentId = canUseAssigned
-                ? agent!.id
-                : (idleAgents.find((a) => a.id === selectedAgentId)?.id ?? idleAgents[0]?.id ?? "");
+              const { canUseAssigned, resumeAgentId, showSelector } = getResumeActionState(
+                agent,
+                idleAgents,
+                selectedAgentId,
+              );
               return (
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   {showSelector && (

@@ -35,7 +35,7 @@ inbox → [refinement] → in_progress → [test_generation] → [ci_check] → 
 | **pr_review** | Code review agent(s) check quality, security, correctness. Auto-checks (tsc/lint/test/e2e) run in parallel | `review_mode` | Code quality — multi-role review panel (code + security). Auto-checks gate: any failing check blocks advancement regardless of reviewer verdict |
 | **human_review** | Human approves or rejects via UI before task completes | `default_enable_human_review` | Human approval gate — Approve/Reject with feedback |
 | **done** | Terminal state. `completed_at` stamped, agent released | Always on | — |
-| **cancelled** | Terminal state. Can be reopened to inbox | Always on | — |
+| **cancelled** | Terminal state. Can be resumed to `in_progress` or reopened to inbox | Always on | — |
 
 ### Transient Markers (not pipeline stages)
 
@@ -110,6 +110,7 @@ cp .env.example .env  # Edit SESSION_AUTH_TOKEN
 pnpm dev            # Start both server and client
 pnpm dev:server     # Server only (port 8791)
 pnpm dev:client     # Vite dev server only
+pnpm lint           # TypeScript static checks
 pnpm check          # TypeScript type check
 ```
 
@@ -123,6 +124,7 @@ pnpm start
 ## Testing
 
 ```bash
+pnpm test           # Run unit/integration tests via tsx + node:test
 pnpm test:e2e       # Run Playwright E2E tests
 pnpm test:e2e:ui    # Run with Playwright UI
 ```
@@ -174,6 +176,7 @@ e2e/              # Playwright E2E tests
 | DELETE | /api/tasks/:id | Delete task |
 | POST | /api/tasks/:id/run | Start task (assign agent and spawn) |
 | POST | /api/tasks/:id/stop | Stop running task |
+| POST | /api/tasks/:id/resume | Resume a cancelled task with the selected or assigned agent |
 | POST | /api/tasks/:id/approve | Approve task (refinement or human_review) |
 | POST | /api/tasks/:id/reject | Reject task (refinement or human_review) |
 | POST | /api/tasks/:id/feedback | Send feedback to running/completed task |

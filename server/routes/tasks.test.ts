@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   buildContinuePromptFromInteractiveResponse,
   getInteractivePromptTypeMismatch,
+  resolveRequestedAgentId,
 } from "./tasks.js";
 
 describe("getInteractivePromptTypeMismatch", () => {
@@ -38,5 +39,19 @@ describe("buildContinuePromptFromInteractiveResponse", () => {
       }),
       "The user has responded to your questions:\n\nQ: scope\nA: full\n\nInclude regression coverage.",
     );
+  });
+});
+
+describe("resolveRequestedAgentId", () => {
+  it("prefers the explicit request agent over the task assignment", () => {
+    assert.equal(resolveRequestedAgentId("assigned-agent", "requested-agent"), "requested-agent");
+  });
+
+  it("falls back to the task assignment when no request agent is provided", () => {
+    assert.equal(resolveRequestedAgentId("assigned-agent", undefined), "assigned-agent");
+  });
+
+  it("returns undefined when neither source provides an agent", () => {
+    assert.equal(resolveRequestedAgentId(null, undefined), undefined);
   });
 });

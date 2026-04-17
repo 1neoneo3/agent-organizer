@@ -121,6 +121,13 @@ export function buildContinuePromptFromInteractiveResponse({
     : "The user acknowledged your question without a specific answer.";
 }
 
+export function resolveRequestedAgentId(
+  taskAssignedAgentId: string | null | undefined,
+  requestedAgentId: string | null | undefined,
+): string | undefined {
+  return requestedAgentId ?? taskAssignedAgentId ?? undefined;
+}
+
 function nextTaskNumber(db: RuntimeContext["db"]): string {
   const row = db.prepare(
     "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
@@ -417,7 +424,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") return res.status(409).json({ error: "already_running" });
 
-    const agentId = task.assigned_agent_id ?? (req.body as { agent_id?: string }).agent_id;
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
     if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
@@ -459,7 +466,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status !== "cancelled") return res.status(409).json({ error: "not_cancelled" });
 
-    const agentId = task.assigned_agent_id ?? (req.body as { agent_id?: string }).agent_id;
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
     if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
