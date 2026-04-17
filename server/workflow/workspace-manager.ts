@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { Task } from "../types/runtime.js";
 import type { ProjectWorkflow } from "./loader.js";
-import { isWorkspaceMode, type WorkspaceMode } from "../config/runtime.js";
+import { SETTINGS_DEFAULTS, isWorkspaceMode, type WorkspaceMode } from "../config/runtime.js";
 
 export interface TaskWorkspace {
   cwd: string;
@@ -36,7 +36,7 @@ function buildBranchName(task: Task, prefix: string): string {
 /**
  * Read the global `default_workspace_mode` setting. Returns `undefined`
  * when the setting is missing, empty, or unrecognized; callers should
- * then fall back to the compile-time default (`"git-worktree"`).
+ * then fall back to `SETTINGS_DEFAULTS.default_workspace_mode`.
  */
 function readGlobalWorkspaceMode(db: DatabaseSync | undefined): WorkspaceMode | undefined {
   if (!db) return undefined;
@@ -58,9 +58,10 @@ function readGlobalWorkspaceMode(db: DatabaseSync | undefined): WorkspaceMode | 
  * Precedence (first match wins):
  *   1. Explicit `workspace_mode` in the project's WORKFLOW.md
  *   2. Global `default_workspace_mode` setting
- *   3. Hard-coded fallback (`"git-worktree"`) — isolates tasks by
- *      default so concurrent in_progress tasks on the same repo don't
- *      clobber each other's working tree.
+ *   3. `SETTINGS_DEFAULTS.default_workspace_mode` — only reached when
+ *      the db is unavailable (e.g. minimal test fixtures) or the row
+ *      was manually deleted. Keeps the schema and the code in sync
+ *      without a separate magic string.
  */
 export function resolveWorkspaceMode(
   workflow: ProjectWorkflow | null,
@@ -70,7 +71,7 @@ export function resolveWorkspaceMode(
   if (explicit) return explicit;
   const fromSettings = readGlobalWorkspaceMode(db);
   if (fromSettings) return fromSettings;
-  return "git-worktree";
+  return SETTINGS_DEFAULTS.default_workspace_mode;
 }
 
 export function prepareTaskWorkspace(
