@@ -84,14 +84,23 @@ describe("recoverInProgressOrphans", () => {
     db.close();
   });
 
-  it("returns in_progress tasks with no active process to inbox", () => {
+  it("keeps in_progress orphans at in_progress instead of bouncing to inbox", () => {
+    // Previously orphan recovery sent in_progress tasks back to inbox so
+    // auto-dispatcher would restart the whole workflow (refinement →
+    // implementation → review…). That silently undid any pr_review /
+    // qa_testing / ci_check rework loop. The fixture agent is created
+    // with status='working' (see createInMemoryDb), so spawnAgent is NOT
+    // triggered here — instead the task stays parked at in_progress and
+    // the assigned agent is released to idle for the next tick.
     insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
     const ws = createFakeWs();
 
     recoverInProgressOrphans(db, ws as never, undefined, new Set());
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
-    assert.equal(row.status, "inbox");
+    // Must NOT regress past in_progress.
+    assert.notEqual(row.status, "inbox");
+    assert.equal(row.status, "in_progress");
 
     const agent = db.prepare("SELECT status, current_task_id FROM agents WHERE id = 'agent-1'").get() as {
       status: string;
@@ -99,7 +108,18 @@ describe("recoverInProgressOrphans", () => {
     };
     assert.equal(agent.status, "idle");
 
-    assert.ok(ws.events.some((e) => e.type === "task_update"));
+    // Broadcast should describe the agent release, but no inbox
+    // task_update should have been emitted.
+    assert.ok(
+      ws.events.some((e) => e.type === "agent_status"),
+      "expected agent_status broadcast on agent release",
+    );
+    assert.ok(
+      !ws.events.some(
+        (e) => e.type === "task_update" && (e.payload as { status?: string })?.status === "inbox",
+      ),
+      "task must not be broadcast as returned to inbox",
+    );
   });
 
   it("leaves tasks alone when they have an active process", () => {
@@ -110,6 +130,24 @@ describe("recoverInProgressOrphans", () => {
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
     assert.equal(row.status, "in_progress");
+  });
+
+  it("still bounces refinement-without-plan orphans back to inbox", () => {
+    // Refinement tasks that never produced a plan are a genuine dead
+    // start; the auto-dispatcher needs a fresh run, which only happens
+    // from inbox. This path must keep working.
+    insertTask(db, { id: "t2", status: "refinement", assigned_agent_id: "agent-1" });
+    const ws = createFakeWs();
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+
+    const row = db.prepare("SELECT status FROM tasks WHERE id = 't2'").get() as { status: string };
+    assert.equal(row.status, "inbox");
+    assert.ok(
+      ws.events.some(
+        (e) => e.type === "task_update" && (e.payload as { status?: string })?.status === "inbox",
+      ),
+    );
   });
 });
 

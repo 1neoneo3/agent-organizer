@@ -108,7 +108,41 @@ export function recoverInProgressOrphans(
       continue;
     }
 
-    // in_progress or refinement without plan: return to inbox
+    // in_progress orphan: park the task at in_progress and release the
+    // assigned agent. Previously this branch bounced the task all the way
+    // back to inbox, which made the auto-dispatcher start a fresh
+    // refinement run and lost the entire pr_review → rework loop context.
+    // Spec: regressions from pr_review/ci_check/qa_testing/human_review may
+    // land at in_progress but must never slip further back to inbox.
+    //
+    // We deliberately do NOT re-spawn the agent here. Auto-respawn from
+    // inside a periodic timer is easy to misfire (e.g. a task the user
+    // just paused would silently restart on the next tick). The user can
+    // resume via the UI's Run control; the task is visible at in_progress
+    // with an idle agent assignment ready to pick it back up.
+    if (task.status === "in_progress") {
+      if (task.assigned_agent_id) {
+        db.prepare(
+          "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+        ).run(now, task.assigned_agent_id);
+        ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+      }
+
+      db.prepare(
+        "UPDATE tasks SET started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ?",
+      ).run(now, task.id);
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+      ).run(
+        task.id,
+        "Orphan recovery: parked at in_progress (did not regress to inbox). Run the task again to resume.",
+      );
+      if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
+      continue;
+    }
+
+    // Refinement without plan: legitimately dead start — bounce to inbox so
+    // the auto-dispatcher can redo the refinement run from scratch.
     const result = db.prepare(
       "UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ? AND status = ?",
     ).run(now, task.id, task.status);
