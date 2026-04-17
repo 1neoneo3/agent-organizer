@@ -159,6 +159,18 @@ export const SETTINGS_DEFAULTS = {
   // ---END REFINEMENT--- etc.) remain stable across languages so that
   // downstream parsers keep working.
   output_language: "ja" as const, // "ja" | "en"
+  // Stage-specific default agent overrides. Empty string means "no
+  // override" — the existing role-based resolver is used. When set, the
+  // value is an agent id; the auto-* spawn paths prefer that agent when
+  // it is idle and not the task's implementer. `assigned_agent_id` on
+  // the task continues to represent the implementer (in_progress) and
+  // is unaffected by these settings. human_review has no auto-spawn
+  // path today, so no setting is exposed for it.
+  refinement_agent_id: "" as const,
+  review_agent_id: "" as const,
+  qa_agent_id: "" as const,
+  test_generation_agent_id: "" as const,
+  ci_check_agent_id: "" as const,
 };
 
 export const VALID_OUTPUT_LANGUAGES = ["ja", "en"] as const;

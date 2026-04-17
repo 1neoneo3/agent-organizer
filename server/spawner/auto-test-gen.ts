@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
 
 /**
  * Trigger automatic test generation when a task transitions to "test_generation".
@@ -57,6 +58,9 @@ function findTestGenAgent(
   db: DatabaseSync,
   implementerAgentId: string | null,
 ): Agent | undefined {
+  const override = resolveStageAgentOverride(db, "test_generation_agent_id", [implementerAgentId]);
+  if (override) return override;
+
   const testerByRole = db.prepare(
     "SELECT * FROM agents WHERE role = 'tester' AND status = 'idle' AND id != ? LIMIT 1"
   ).get(implementerAgentId ?? "") as Agent | undefined;
