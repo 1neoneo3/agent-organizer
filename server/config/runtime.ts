@@ -171,6 +171,13 @@ export const SETTINGS_DEFAULTS = {
   qa_agent_id: "" as const,
   test_generation_agent_id: "" as const,
   ci_check_agent_id: "" as const,
+  // Default workspace mode when WORKFLOW.md does not explicitly set
+  // `workspace_mode`. "git-worktree" isolates each in_progress task in
+  // `.ao-worktrees/<taskId>` on its own branch so concurrent tasks on
+  // the same repo don't clobber each other's working tree. "shared"
+  // preserves the legacy behavior of running every task directly in
+  // the main checkout.
+  default_workspace_mode: "git-worktree" as const, // "shared" | "git-worktree"
 };
 
 export const VALID_OUTPUT_LANGUAGES = ["ja", "en"] as const;
@@ -178,6 +185,13 @@ export type OutputLanguage = (typeof VALID_OUTPUT_LANGUAGES)[number];
 
 export function isOutputLanguage(value: string): value is OutputLanguage {
   return (VALID_OUTPUT_LANGUAGES as readonly string[]).includes(value);
+}
+
+export const VALID_WORKSPACE_MODES = ["shared", "git-worktree"] as const;
+export type WorkspaceMode = (typeof VALID_WORKSPACE_MODES)[number];
+
+export function isWorkspaceMode(value: string): value is WorkspaceMode {
+  return (VALID_WORKSPACE_MODES as readonly string[]).includes(value);
 }
 
 

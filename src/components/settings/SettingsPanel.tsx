@@ -118,6 +118,26 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         </section>
 
         <section>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Workspace</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Default Workspace Mode</span>
+              <select
+                style={inputStyle}
+                value={local.default_workspace_mode ?? "git-worktree"}
+                onChange={(e) => update("default_workspace_mode", e.target.value)}
+              >
+                <option value="git-worktree">Git worktree (isolated per task)</option>
+                <option value="shared">Shared (main checkout)</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Applied when a project's WORKFLOW.md does not explicitly set <code>workspace_mode</code>. <strong>Git worktree</strong> isolates each in_progress task in <code>.ao-worktrees/&lt;taskId&gt;</code> on its own branch so concurrent tasks on the same repo don't clobber each other's working tree. <strong>Shared</strong> runs every task directly in the main checkout (legacy behavior).
+              </p>
+            </label>
+          </div>
+        </section>
+
+        <section>
           <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Settings</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             <label style={{ display: "block" }}>

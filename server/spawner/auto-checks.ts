@@ -306,7 +306,7 @@ export function triggerAutoChecks(
   const projectPath = task.project_path ?? process.cwd();
   let cwd = projectPath;
   try {
-    const workspace = prepareTaskWorkspace(task, workflow);
+    const workspace = prepareTaskWorkspace(task, workflow, db);
     cwd = workspace.cwd;
   } catch (err) {
     // prepareTaskWorkspace can throw on worktree creation errors; we
