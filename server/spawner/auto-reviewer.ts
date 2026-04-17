@@ -4,6 +4,7 @@ import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
 import type { ReviewerRole } from "./prompt-builder.js";
 import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
+import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
 
 /**
  * A single reviewer assigned to a task, together with the role they are
@@ -171,12 +172,24 @@ export function findReviewAgents(
   const excludeId = implementerAgentId ?? "";
   const assignments: ReviewerAssignment[] = [];
 
+  // 0. Settings override: when `review_agent_id` is configured and the
+  // referenced worker is idle, use it as the primary code reviewer. The
+  // role-based code_reviewer slot is skipped so we do not end up with a
+  // panel of two code reviewers; the security_reviewer secondary slot
+  // still applies.
+  const overrideReviewer = resolveStageAgentOverride(db, "review_agent_id", [excludeId]);
+  if (overrideReviewer) {
+    assignments.push({ agent: overrideReviewer, role: "code" });
+  }
+
   // 1. Primary slot: idle code_reviewer (excluding the implementer)
-  const codeReviewer = db
-    .prepare(
-      "SELECT * FROM agents WHERE role = 'code_reviewer' AND status = 'idle' AND id != ? LIMIT 1",
-    )
-    .get(excludeId) as Agent | undefined;
+  const codeReviewer = assignments.some((a) => a.role === "code")
+    ? undefined
+    : (db
+        .prepare(
+          "SELECT * FROM agents WHERE role = 'code_reviewer' AND status = 'idle' AND id != ? LIMIT 1",
+        )
+        .get(excludeId) as Agent | undefined);
   if (codeReviewer) {
     assignments.push({ agent: codeReviewer, role: "code" });
   }

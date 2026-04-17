@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
 
 /**
  * Trigger automatic QA testing when a task transitions to "qa_testing".
@@ -78,6 +79,11 @@ function findQaAgent(
   db: DatabaseSync,
   implementerAgentId: string | null,
 ): Agent | undefined {
+  // Settings override: explicit qa_agent_id wins when the referenced
+  // agent is idle and not the implementer.
+  const override = resolveStageAgentOverride(db, "qa_agent_id", [implementerAgentId]);
+  if (override) return override;
+
   // Try tester role first
   const testerByRole = db.prepare(
     "SELECT * FROM agents WHERE role = 'tester' AND status = 'idle' AND id != ? LIMIT 1"

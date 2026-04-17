@@ -1,11 +1,50 @@
 import { useState, useEffect } from "react";
-import { updateSettings } from "../../api/endpoints.js";
-import type { Settings } from "../../types/index.js";
+import { fetchAgents, updateSettings } from "../../api/endpoints.js";
+import type { Agent, Settings } from "../../types/index.js";
 
 interface SettingsPanelProps {
   settings: Settings;
   onReload: () => void;
 }
+
+interface StageAgentOption {
+  key: string;
+  label: string;
+  description: string;
+}
+
+const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
+  {
+    key: "refinement_agent_id",
+    label: "Refinement Stage",
+    description: "Preferred agent when a task enters refinement (planning). Falls back to role-based scoring if unset or busy.",
+  },
+  {
+    key: "review_agent_id",
+    label: "PR Review Stage",
+    description: "Primary reviewer when a task enters pr_review. The security_reviewer secondary slot still applies.",
+  },
+  {
+    key: "qa_agent_id",
+    label: "QA Testing Stage",
+    description: "Preferred tester when a task enters qa_testing. Falls back to tester role, then any idle worker.",
+  },
+  {
+    key: "test_generation_agent_id",
+    label: "Test Generation Stage",
+    description: "Preferred tester for the test_generation stage. Falls back to tester role, then any idle worker.",
+  },
+  {
+    key: "ci_check_agent_id",
+    label: "CI Check Stage",
+    description: "Preferred agent for the ci_check stage. Falls back to devops role, then any idle worker.",
+  },
+  {
+    key: "human_review_agent_id",
+    label: "Human Review Stage",
+    description: "Agent reserved for human_review coordination. Informational; no auto-spawn runs for this stage today.",
+  },
+];
 
 const inputStyle = {
   width: "100%",
@@ -22,10 +61,27 @@ const inputStyle = {
 export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   const [local, setLocal] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
+  const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
     setLocal(settings);
   }, [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchAgents()
+      .then((list) => {
+        if (!cancelled) setAgents(list);
+      })
+      .catch(() => {
+        if (!cancelled) setAgents([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const workerAgents = agents.filter((a) => a.agent_type === "worker");
 
   const handleSave = async () => {
     setSaving(true);
@@ -260,6 +316,34 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 Automatically assigns an idle worker agent and starts matching inbox tasks in the background.
               </p>
             </label>
+          </div>
+        </section>
+
+        <section>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Stage-Specific Agent Assignments</h3>
+          <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
+            Override the default role-based agent selection for each workflow stage. When the selected agent is busy or unavailable at dispatch time, the system falls back to the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {STAGE_AGENT_OPTIONS.map((option) => (
+              <label key={option.key} style={{ display: "block" }}>
+                <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>{option.label}</span>
+                <select
+                  style={inputStyle}
+                  value={local[option.key] ?? ""}
+                  onChange={(e) => update(option.key, e.target.value)}
+                >
+                  <option value="">None (auto-select by role)</option>
+                  {workerAgents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                      {agent.role ? ` — ${agent.role}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>{option.description}</p>
+              </label>
+            ))}
           </div>
         </section>
 

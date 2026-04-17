@@ -144,6 +144,18 @@ export const SETTINGS_DEFAULTS = {
   default_enable_test_generation: "true" as const, // "true" | "false"
   default_enable_refinement: "false" as const, // "true" | "false" — run planning agent before implementation
   refinement_auto_approve: "false" as const, // "true" | "false" — skip human approval of refinement plan
+  // Stage-specific default agent overrides. Empty string means "no
+  // override" — the existing role-based resolver is used. When set, the
+  // value is an agent id; the auto-* spawn paths prefer that agent when
+  // it is idle and not the task's implementer. `assigned_agent_id` on
+  // the task continues to represent the implementer (in_progress) and
+  // is unaffected by these settings.
+  refinement_agent_id: "" as const,
+  review_agent_id: "" as const,
+  qa_agent_id: "" as const,
+  test_generation_agent_id: "" as const,
+  ci_check_agent_id: "" as const,
+  human_review_agent_id: "" as const,
 };
 
 

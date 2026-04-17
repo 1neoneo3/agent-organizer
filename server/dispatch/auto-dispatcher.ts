@@ -3,8 +3,11 @@ import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
 import { AUTO_DISPATCH_INTERVAL_MS } from "../config/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
+import { resolveStageAgentOverride } from "../spawner/stage-agent-resolver.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
+import { loadProjectWorkflow } from "../workflow/loader.js";
+import { resolveActiveStages } from "../workflow/stage-pipeline.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
 
@@ -146,6 +149,27 @@ function scoreAgentForTask(agent: Agent, task: Task, preferredRoles: string[]): 
   if (/\b(security|review|architecture|migration)\b/.test(text) && agent.cli_provider === "claude") score += 4;
 
   return score;
+}
+
+function resolveRefinementAgentForInbox(
+  db: DatabaseSync,
+  task: Task,
+  availableAgents: Map<string, Agent>,
+): Agent | undefined {
+  const override = resolveStageAgentOverride(db, "refinement_agent_id");
+  if (!override) return undefined;
+  if (!availableAgents.has(override.id)) return undefined;
+
+  let workflow = null;
+  try {
+    workflow = loadProjectWorkflow(task.project_path ?? process.cwd());
+  } catch {
+    workflow = null;
+  }
+  const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
+  if (activeStages[0] !== "refinement") return undefined;
+
+  return override;
 }
 
 function chooseBestAgent(task: Task, agents: Agent[]): Agent | undefined {
@@ -304,7 +328,14 @@ export function dispatchAutoStartableTasks(
       continue;
     }
 
-    const selectedAgent = chooseBestAgent(task, [...availableAgents.values()]);
+    // Stage-specific default: when the task's first active stage is
+    // `refinement`, honour the `refinement_agent_id` setting override
+    // before falling back to role-based scoring. The override only
+    // applies if the agent is currently idle (i.e. present in
+    // `availableAgents`); otherwise we defer to `chooseBestAgent` so
+    // a busy override does not starve the queue.
+    const refinementOverride = resolveRefinementAgentForInbox(db, task, availableAgents);
+    const selectedAgent = refinementOverride ?? chooseBestAgent(task, [...availableAgents.values()]);
     if (!selectedAgent) {
       summary.skipped += 1;
       writeDispatchLog(db, ws, task, "skipped: no idle worker agent is available", options?.cache);
