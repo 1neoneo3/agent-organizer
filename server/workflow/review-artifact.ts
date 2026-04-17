@@ -193,7 +193,12 @@ export function promoteTaskReviewArtifact(
     baseBranch: null,
   };
 
-  if (!workflow || workflow.workspaceMode !== "git-worktree" || !workspace.branchName) {
+  // `workspace.branchName` is the authoritative signal: it is set iff
+  // prepareTaskWorkspace actually created a git worktree on a fresh
+  // branch. This covers every precedence path (explicit WORKFLOW.md,
+  // global setting, or hard-coded default) without re-checking
+  // `workflow.workspaceMode`, which is now tri-state.
+  if (!workspace.branchName) {
     return {
       ...result,
       syncStatus: "not_applicable",
