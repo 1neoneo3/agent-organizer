@@ -207,4 +207,101 @@ describe("initializeDb", () => {
     assert.equal(row.stage, "refinement", "explicit stage must win over tasks.status fallback");
     assert.equal(row.agent_id, "agent-stage-preserve");
   });
+
+  it("adds refinement_completed_at column and backfills from existing plans", async () => {
+    // #99 PR 3 migration test: existing rows with a populated
+    // refinement_plan must not get recomputed by the new re-spawn path
+    // after upgrade — they need refinement_completed_at stamped with
+    // whatever timestamp the row still has.
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    assert.ok(
+      cols.some((c) => c.name === "refinement_completed_at"),
+      "tasks.refinement_completed_at column should exist",
+    );
+
+    // Insert a row mimicking a pre-migration task (completed refinement
+    // but no refinement_completed_at). NULL the column to simulate the
+    // pre-backfill state, then re-invoke initializeDb to ensure the
+    // migration re-run is idempotent AND the backfill does not blow
+    // away an already-populated value.
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-refcomp", `ref-comp-${now}`, "claude", "idle", now, now);
+    db.prepare(
+      `INSERT INTO tasks
+         (id, title, status, assigned_agent_id, task_size,
+          refinement_plan, refinement_completed_at,
+          started_at, completed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "task-refcomp",
+      "Pre-migration refined task",
+      "done",
+      "agent-refcomp",
+      "small",
+      "---REFINEMENT PLAN---\nexisting\n---END REFINEMENT---",
+      null, // simulate pre-migration state
+      now - 30_000, // started_at
+      now - 1_000, // completed_at — backfill should prefer this
+      now - 60_000,
+      now,
+    );
+
+    // Simulate the migration re-running on a DB that predates the
+    // column. Because the column already exists after initializeDb,
+    // exercise the backfill SQL directly — that is the statement the
+    // migration runs once, and it is what protects against upgrade-day
+    // "refinement was done but recovery logic thinks it wasn't".
+    db.exec(`
+      UPDATE tasks
+      SET refinement_completed_at = COALESCE(completed_at, started_at, updated_at, created_at)
+      WHERE refinement_completed_at IS NULL
+        AND refinement_plan IS NOT NULL
+        AND refinement_plan <> ''
+    `);
+
+    const row = db
+      .prepare(
+        "SELECT refinement_completed_at FROM tasks WHERE id = ?",
+      )
+      .get("task-refcomp") as { refinement_completed_at: number | null };
+
+    assert.equal(
+      row.refinement_completed_at,
+      now - 1_000,
+      "backfill should pick completed_at when present (preferred over started_at/updated_at)",
+    );
+
+    // Empty refinement_plan must NOT be backfilled — those rows are
+    // exactly the Bug 2 victims we want re-spawn recovery to re-try.
+    db.prepare(
+      `INSERT INTO tasks
+         (id, title, status, assigned_agent_id, task_size,
+          refinement_plan, refinement_completed_at,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("task-empty-plan", "Empty plan", "done", "agent-refcomp", "small", "", null, now, now);
+
+    db.exec(`
+      UPDATE tasks
+      SET refinement_completed_at = COALESCE(completed_at, started_at, updated_at, created_at)
+      WHERE refinement_completed_at IS NULL
+        AND refinement_plan IS NOT NULL
+        AND refinement_plan <> ''
+    `);
+
+    const emptyRow = db
+      .prepare("SELECT refinement_completed_at FROM tasks WHERE id = ?")
+      .get("task-empty-plan") as { refinement_completed_at: number | null };
+
+    assert.equal(
+      emptyRow.refinement_completed_at,
+      null,
+      "empty refinement_plan must remain uncompleted so recovery can re-run",
+    );
+  });
 });

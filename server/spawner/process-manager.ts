@@ -597,11 +597,31 @@ export function spawnAgent(
   const isCiCheckRun = task.status === "ci_check";
   // Refinement: task is already in refinement status, or dispatching from
   // inbox when refinement is the first active stage in the pipeline.
-  // Skip refinement if the task already has a refinement_plan (e.g. child
-  // tasks created by Split into Tasks inherit the parent's plan).
+  // Skip refinement if the task already has a completed refinement plan
+  // (e.g. child tasks created by Split into Tasks inherit the parent's plan).
   const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
-  const hasExistingPlan = !!task.refinement_plan;
-  const isRefinementRun = !hasExistingPlan && (task.status === "refinement" || (task.status === "inbox" && activeStages[0] === "refinement"));
+  // A plan is only "existing" when it has content AND refinement was
+  // marked complete. PR 2 stopped writing "" on empty extractions, but
+  // historical rows and the marker-less fallback path can still leave a
+  // non-null but incomplete value — those should NOT short-circuit
+  // refinement when recovery is explicitly enabled.
+  const refinementCompleted = task.refinement_completed_at != null;
+  const hasExistingPlan = !!task.refinement_plan && refinementCompleted;
+  // Opt-in recovery path (#99 PR 3): allow the implementer stage to
+  // fall back into a refinement run when refinement never finished.
+  // Gated behind `refinement_recovery_mode` so existing deployments keep
+  // their current behavior until operators flip the switch.
+  const recoveryEnabled = getSetting(db, "refinement_recovery_mode", task.id) === "true";
+  const canRecoverRefinement =
+    recoveryEnabled &&
+    !refinementCompleted &&
+    task.status === "in_progress" &&
+    activeStages.includes("refinement");
+  const isRefinementRun =
+    !hasExistingPlan &&
+    (task.status === "refinement" ||
+      (task.status === "inbox" && activeStages[0] === "refinement") ||
+      canRecoverRefinement);
 
   // Capture the stage this spawn represents once, at spawn time. Every
   // task_logs INSERT emitted during the spawn lifecycle uses this value
@@ -1403,10 +1423,20 @@ export function spawnAgent(
     // `extractRefinementPlanFromLogs` for the query contract.
     if (isRefinementRun && code === 0) {
       const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
-      const updatePlanStmt = db.prepare("UPDATE tasks SET refinement_plan = ? WHERE id = ?");
+      // Stamp refinement_completed_at alongside refinement_plan on the
+      // "plan" (canonical) path so future re-spawns can tell a finished
+      // refinement from a crashed / markerless one. Fallback writes do
+      // NOT set completed_at — a marker-less tail is not a proof that
+      // refinement "completed" in the semantic sense.
+      const updatePlanStmt = db.prepare(
+        "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ? WHERE id = ?",
+      );
+      const updatePlanFallbackStmt = db.prepare(
+        "UPDATE tasks SET refinement_plan = ? WHERE id = ?",
+      );
 
       if (extraction.kind === "plan") {
-        updatePlanStmt.run(extraction.plan, task.id);
+        updatePlanStmt.run(extraction.plan, Date.now(), task.id);
       } else if (extraction.kind === "fallback") {
         // Fallback guard: if a valid plan already exists, do NOT replace
         // it with the marker-less tail. Normally `hasExistingPlan` short-
@@ -1425,7 +1455,7 @@ export function spawnAgent(
             agent.id,
           );
         } else {
-          updatePlanStmt.run(extraction.plan, task.id);
+          updatePlanFallbackStmt.run(extraction.plan, task.id);
           insertLogStmt.run(
             task.id,
             "system",

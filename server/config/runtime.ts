@@ -158,6 +158,13 @@ export const SETTINGS_DEFAULTS = {
   // WORKFLOW.md-only toggles should move those flags to Settings.
   default_enable_ci_check: "false" as const, // "true" | "false" — run CI verification stage
   default_enable_human_review: "false" as const, // "true" | "false" — require human approval before done
+  // Re-spawn recovery for refinement runs that never produced a plan.
+  // When enabled, spawnAgent will re-enter refinement mode even if the
+  // task has moved forward to in_progress, provided `refinement_plan`
+  // is empty AND `refinement_completed_at IS NULL` (i.e. refinement
+  // never successfully finished). Default off for safety — opt in via
+  // Settings UI after validating the behavior on a test workflow.
+  refinement_recovery_mode: "false" as const, // "true" | "false"
   // Output language for agent-generated artifacts (task titles, task
   // descriptions, refinement plans, review/QA narrative text, and PR
   // titles/bodies). "ja" preserves the historical Japanese output;

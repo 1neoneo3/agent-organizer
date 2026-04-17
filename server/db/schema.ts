@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   depends_on TEXT,
   result TEXT,
   refinement_plan TEXT,
+  refinement_completed_at INTEGER,
   review_count INTEGER NOT NULL DEFAULT 0,
   directive_id TEXT REFERENCES directives(id) ON DELETE SET NULL,
   pr_url TEXT,
