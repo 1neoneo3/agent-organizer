@@ -13,10 +13,11 @@ import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransi
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
-import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/runtime.js";
+import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE, isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
+import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
 import {
   isTaskOverridableKey,
@@ -69,6 +70,31 @@ function resolveRepositoryUrl(
     return detectRepositoryUrl(projectPath);
   }
   return null;
+}
+
+function resolveTaskOutputLanguage(
+  db: RuntimeContext["db"],
+  taskId: string,
+): OutputLanguage {
+  const taskRow = db
+    .prepare("SELECT settings_overrides FROM tasks WHERE id = ?")
+    .get(taskId) as { settings_overrides: string | null } | undefined;
+
+  const overrideValue = taskRow
+    ? safeParseOverrides(taskRow.settings_overrides)?.output_language
+    : undefined;
+  if (typeof overrideValue === "string" && isOutputLanguage(overrideValue)) {
+    return overrideValue;
+  }
+
+  const globalRow = db
+    .prepare("SELECT value FROM settings WHERE key = 'output_language'")
+    .get() as { value: string } | undefined;
+  if (globalRow?.value && isOutputLanguage(globalRow.value)) {
+    return globalRow.value;
+  }
+
+  return "ja";
 }
 
 type InteractivePromptType = "exit_plan_mode" | "ask_user_question" | "text_input_request";
@@ -569,7 +595,10 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Parse implementation steps from the refinement plan
     const plan = task.refinement_plan;
-    const implMatch = plan.match(/## 実装計画 \(Implementation Plan\)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
+    // Match both Japanese and English refinement-plan section headings.
+    // Legacy plans used `## 実装計画 (Implementation Plan)`; current plans
+    // emit either `## 実装計画` (ja) or `## Implementation Plan` (en).
+    const implMatch = plan.match(/## (?:実装計画(?: \(Implementation Plan\))?|Implementation Plan)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
     if (!implMatch) return res.status(400).json({ error: "no_implementation_steps" });
 
     const stepsRaw = implMatch[1].trim();
@@ -598,6 +627,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const now = Date.now();
     const childTasks: Task[] = [];
     const taskNumberMap = new Map<number, string>(); // step num -> task_number
+    const outputLanguage = resolveTaskOutputLanguage(db, task.id);
 
     for (const step of steps) {
       const childId = randomUUID();
@@ -612,10 +642,18 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       }
       const depsJson = deps.length > 0 ? JSON.stringify(deps) : null;
       const hasDeps = deps.length > 0;
-
-      const description = `Step ${step.num} of ${task.task_number}: ${step.text}${planPath ? `\n\nRefinement Plan: ${planPath}` : ""}`;
+      const splitArtifacts = buildRefinementSplitArtifacts({
+        language: outputLanguage,
+        parentTaskNumber: task.task_number,
+        stepNumber: step.num,
+        totalSteps: steps.length,
+        stepText: step.text,
+        childNumbers: childNumber,
+        planPath,
+      });
+      const description = splitArtifacts.description;
       // Inherit parent's refinement plan so child tasks skip refinement stage
-      const childPlan = `Parent ${task.task_number} — Step ${step.num}/${steps.length}: ${step.text}\n\n${parentPlanClean}`;
+      const childPlan = `${splitArtifacts.childPlan}\n\n${parentPlanClean}`;
       const repoUrl = task.repository_url ?? (task.project_path ? detectRepositoryUrl(task.project_path) : null);
 
       db.prepare(
@@ -629,7 +667,15 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Mark parent task as done with result
     const childNumbers = childTasks.map(c => c.task_number).join(", ");
-    const result = `Split into ${childNumbers}${planPath ? `\nPlan saved: ${planPath}` : ""}`;
+    const result = buildRefinementSplitArtifacts({
+      language: outputLanguage,
+      parentTaskNumber: task.task_number,
+      stepNumber: 1,
+      totalSteps: steps.length,
+      stepText: steps[0]?.text ?? task.title,
+      childNumbers,
+      planPath,
+    }).result;
     db.prepare("UPDATE tasks SET status = 'done', result = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(result, now, now, task.id);
 
     // Release agent if assigned

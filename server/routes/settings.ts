@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { RuntimeContext } from "../types/runtime.js";
-import { SETTINGS_DEFAULTS } from "../config/runtime.js";
+import { SETTINGS_DEFAULTS, VALID_OUTPUT_LANGUAGES } from "../config/runtime.js";
 
 const VALID_SETTINGS_KEYS = new Set([
   ...Object.keys(SETTINGS_DEFAULTS),
@@ -13,6 +13,14 @@ const VALID_SETTINGS_KEYS = new Set([
   "github_write_token_passthrough",
   "auto_done",
 ]);
+
+// Per-key enum validation runs after the generic record<string,string> parse.
+// When a key is listed here, only the given values are accepted; unknown
+// values yield a 400 before they can be persisted. Keep this list in sync
+// with the corresponding UI select options in SettingsPanel.tsx.
+const SETTINGS_ENUM_VALUES: Record<string, readonly string[]> = {
+  output_language: VALID_OUTPUT_LANGUAGES,
+};
 
 const UpdateSettingsSchema = z.record(z.string(), z.string());
 
@@ -48,6 +56,17 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
     const unknownKeys = Object.keys(parsed.data).filter(k => !VALID_SETTINGS_KEYS.has(k));
     if (unknownKeys.length > 0) {
       return res.status(400).json({ error: "unknown_settings_keys", keys: unknownKeys });
+    }
+
+    const invalidValues: Array<{ key: string; value: string; allowed: readonly string[] }> = [];
+    for (const [key, value] of Object.entries(parsed.data)) {
+      const allowed = SETTINGS_ENUM_VALUES[key];
+      if (allowed && !allowed.includes(value)) {
+        invalidValues.push({ key, value, allowed });
+      }
+    }
+    if (invalidValues.length > 0) {
+      return res.status(400).json({ error: "invalid_settings_values", details: invalidValues });
     }
 
     const upsert = db.prepare(

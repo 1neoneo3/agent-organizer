@@ -150,7 +150,23 @@ export const SETTINGS_DEFAULTS = {
   default_enable_test_generation: "true" as const, // "true" | "false"
   default_enable_refinement: "false" as const, // "true" | "false" — run planning agent before implementation
   refinement_auto_approve: "false" as const, // "true" | "false" — skip human approval of refinement plan
+  // Output language for agent-generated artifacts (task titles, task
+  // descriptions, refinement plans, review/QA narrative text, and PR
+  // titles/bodies). "ja" preserves the historical Japanese output;
+  // "en" switches the natural-language portions of every agent prompt
+  // and PR body template to English. Control tokens / marker tags
+  // (SPRINT CONTRACT, [REVIEW:<role>:PASS], ---REFINEMENT PLAN---,
+  // ---END REFINEMENT--- etc.) remain stable across languages so that
+  // downstream parsers keep working.
+  output_language: "ja" as const, // "ja" | "en"
 };
+
+export const VALID_OUTPUT_LANGUAGES = ["ja", "en"] as const;
+export type OutputLanguage = (typeof VALID_OUTPUT_LANGUAGES)[number];
+
+export function isOutputLanguage(value: string): value is OutputLanguage {
+  return (VALID_OUTPUT_LANGUAGES as readonly string[]).includes(value);
+}
 
 
 export const AUTO_ASSIGN_TASK_ON_CREATE = process.env.AUTO_ASSIGN_TASK_ON_CREATE !== "false";

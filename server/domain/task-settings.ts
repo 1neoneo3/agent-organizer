@@ -118,6 +118,7 @@ export const TASK_OVERRIDABLE_KEYS: readonly string[] = [
   "check_lint_cmd",
   "check_tests_cmd",
   "check_e2e_cmd",
+  "output_language",
 ] as const;
 
 const TASK_OVERRIDABLE_SET = new Set(TASK_OVERRIDABLE_KEYS);
