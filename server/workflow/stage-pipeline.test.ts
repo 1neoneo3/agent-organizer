@@ -755,6 +755,7 @@ function makeReviewTask(id: string): Task {
     repository_url: null,
     repository_urls: null,
     pr_urls: null,
+    settings_overrides: null,
     started_at: 1000,
     completed_at: null,
     last_heartbeat_at: null,
@@ -878,6 +879,26 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
       baseWorkflow,
     );
     assert.strictEqual(result, "in_progress");
+  });
+
+  it("preserves cancelled status instead of advancing to the next stage", () => {
+    // Regression: when a user hits Stop, killAgent sets tasks.status to
+    // 'cancelled'. If the child process happens to exit with code 0 right
+    // then, the close handler fetches completionTask (status=cancelled)
+    // and previously fell through to the implementation-completed branch,
+    // returning qa_testing / pr_review / etc. The caller then UPDATEd the
+    // task to that stage, silently clobbering the user's cancel.
+    const db = createNextStageMockDb(reviewSettings, []);
+    const task = { ...makeReviewTask("t-cancelled"), status: "cancelled" as Task["status"] };
+    const result = determineNextStage(db as never, task, false, false, baseWorkflow);
+    assert.strictEqual(result, "cancelled");
+  });
+
+  it("preserves done status so completed tasks are not re-advanced", () => {
+    const db = createNextStageMockDb(reviewSettings, []);
+    const task = { ...makeReviewTask("t-done"), status: "done" as Task["status"] };
+    const result = determineNextStage(db as never, task, false, false, baseWorkflow);
+    assert.strictEqual(result, "done");
   });
 });
 

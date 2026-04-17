@@ -10,6 +10,7 @@ import {
   hasParallelTestCompletion,
   isParallelImplTestEnabled,
 } from "./parallel-impl.js";
+import { getTaskSetting } from "../domain/task-settings.js";
 
 export { WORKFLOW_STAGES };
 export type { WorkflowStage };
@@ -106,11 +107,8 @@ export function validateStatusTransition(
   return `Cannot skip stages. Must pass through: ${skippedStages.join(" → ")} before reaching "${newStatus}".`;
 }
 
-function getSetting(db: DatabaseSync, key: string): string | undefined {
-  const row = db
-    .prepare("SELECT value FROM settings WHERE key = ?")
-    .get(key) as { value: string } | undefined;
-  return row?.value;
+function getSetting(db: DatabaseSync, key: string, taskId?: string): string | undefined {
+  return getTaskSetting(db, key, taskId);
 }
 
 /**
@@ -137,8 +135,9 @@ function resolveWorkflowToggle(
   db: DatabaseSync,
   workflowValue: boolean | null | undefined,
   settingKey: string,
+  taskId?: string,
 ): boolean {
-  const settingValue = getSetting(db, settingKey);
+  const settingValue = getSetting(db, settingKey, taskId);
   // Settings key exists → it is the SSOT.
   if (settingValue !== undefined) return settingValue === "true";
   // Settings key absent → fall back to WORKFLOW.md.
@@ -163,13 +162,13 @@ export function resolveActiveStages(
    */
   taskId?: string,
 ): WorkflowStage[] {
-  const qaMode = getSetting(db, "qa_mode") ?? "disabled";
-  const reviewMode = getSetting(db, "review_mode") ?? "pr_only";
+  const qaMode = getSetting(db, "qa_mode", taskId) ?? "disabled";
+  const reviewMode = getSetting(db, "review_mode", taskId) ?? "pr_only";
 
   const stages: WorkflowStage[] = [];
 
   // refinement: optional planning/requirements gate before implementation
-  if (resolveWorkflowToggle(db, workflow?.enableRefinement, "default_enable_refinement")) {
+  if (resolveWorkflowToggle(db, workflow?.enableRefinement, "default_enable_refinement", taskId)) {
     stages.push("refinement");
   }
 
@@ -184,6 +183,7 @@ export function resolveActiveStages(
     db,
     workflow?.enableTestGeneration,
     "default_enable_test_generation",
+    taskId,
   );
   const parallelAlreadyRan =
     taskId !== undefined &&
@@ -196,7 +196,7 @@ export function resolveActiveStages(
   // ci_check: verify CI/CD infrastructure exists and is passing.
   // Positioned after implementation / test generation but before QA and
   // review so that CI gaps are caught early.
-  if (resolveWorkflowToggle(db, workflow?.enableCiCheck, "default_enable_ci_check")) {
+  if (resolveWorkflowToggle(db, workflow?.enableCiCheck, "default_enable_ci_check", taskId)) {
     stages.push("ci_check");
   }
 
@@ -211,7 +211,7 @@ export function resolveActiveStages(
   }
 
   // human_review: settings SSOT → WORKFLOW.md fallback → false
-  if (resolveWorkflowToggle(db, workflow?.enableHumanReview, "default_enable_human_review")) {
+  if (resolveWorkflowToggle(db, workflow?.enableHumanReview, "default_enable_human_review", taskId)) {
     stages.push("human_review");
   }
 
@@ -306,6 +306,19 @@ export function determineNextStage(
   reviewRun: boolean,
   workflow: ProjectWorkflow | null,
 ): Task["status"] {
+  // Terminal statuses must never be "advanced" by the pipeline. Previously,
+  // if a process was killed (user Stop, etc.) and its close handler raced
+  // with the status UPDATE that set tasks.status = 'cancelled', this
+  // function saw status='cancelled', fell through to the "implementation
+  // completed" branch, and returned the next auto-stage (qa_testing / …).
+  // The caller's subsequent UPDATE then silently clobbered 'cancelled'
+  // back into an auto-stage, leaving a task stuck mid-pipeline with no
+  // work to do. Bail out early for terminal states so the caller preserves
+  // the user-visible outcome.
+  if (task.status === "cancelled" || task.status === "done") {
+    return task.status;
+  }
+
   const runStartedAt = task.started_at ?? 0;
   // Pass task.id so parallel-mode completion drops the serial
   // test_generation stage for this task only.
@@ -313,7 +326,7 @@ export function determineNextStage(
 
   // Refinement completed — check if auto-approve or wait for human
   if (task.status === "refinement") {
-    const autoApprove = getSetting(db, "refinement_auto_approve") === "true";
+    const autoApprove = getSetting(db, "refinement_auto_approve", task.id) === "true";
     if (autoApprove) {
       clearFailedStage(db, task.id);
       return nextStage("refinement", activeStages);
