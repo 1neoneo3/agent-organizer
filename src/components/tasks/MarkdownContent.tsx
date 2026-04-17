@@ -134,7 +134,33 @@ export function MarkdownContent({ content }: MarkdownContentProps): ReactNode {
           p: ({ children }) => <p style={paragraphStyle}>{children}</p>,
           ul: ({ children }) => <ul style={unorderedListStyle}>{children}</ul>,
           ol: ({ children }) => <ol style={orderedListStyle}>{children}</ol>,
-          li: ({ children }) => <li style={{ margin: "2px 0", display: "list-item" }}>{children}</li>,
+          // Task-list items (`- [ ]` / `- [x]`) already carry a checkbox as
+          // their marker; rendering a disc bullet alongside makes the row
+          // feel double-marked. `react-markdown` + `remark-gfm` surface
+          // these as `className="task-list-item"` and provide a `checked`
+          // prop. Suppress the list marker only for those rows so the
+          // Acceptance Criteria section shows clean `[ ] / [x]` lines
+          // while ordinary bullets elsewhere keep their disc.
+          li: ({ children, className, ...rest }) => {
+            const checked = (rest as { checked?: boolean }).checked;
+            const isTaskItem =
+              (typeof className === "string" && className.includes("task-list-item")) ||
+              typeof checked === "boolean";
+            return (
+              <li
+                className={className}
+                style={{
+                  margin: "2px 0",
+                  display: "list-item",
+                  ...(isTaskItem
+                    ? { listStyleType: "none", marginLeft: "-20px" }
+                    : null),
+                }}
+              >
+                {children}
+              </li>
+            );
+          },
           blockquote: ({ children }) => <blockquote style={blockquoteStyle}>{children}</blockquote>,
           code: ({ className, children, ...rest }) => {
             const isBlock = className?.startsWith("language-");
