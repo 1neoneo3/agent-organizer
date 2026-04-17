@@ -48,13 +48,23 @@ const paragraphStyle: CSSProperties = {
   wordBreak: "break-word",
 };
 
-const listStyle: CSSProperties = {
+// Tailwind's preflight strips list-style from ul/ol so bullet/number
+// markers disappear. Restore them explicitly here so refinement plans
+// and other markdown content keep their list affordances.
+const unorderedListStyle: CSSProperties = {
   margin: "6px 0",
   paddingLeft: "20px",
   color: "var(--text-primary)",
   lineHeight: 1.6,
   overflowWrap: "anywhere",
   wordBreak: "break-word",
+  listStyleType: "disc",
+  listStylePosition: "outside",
+};
+
+const orderedListStyle: CSSProperties = {
+  ...unorderedListStyle,
+  listStyleType: "decimal",
 };
 
 const blockquoteStyle: CSSProperties = {
@@ -122,9 +132,9 @@ export function MarkdownContent({ content }: MarkdownContentProps): ReactNode {
           h5: ({ children }) => <h5 style={headingStyle(5)}>{children}</h5>,
           h6: ({ children }) => <h6 style={headingStyle(6)}>{children}</h6>,
           p: ({ children }) => <p style={paragraphStyle}>{children}</p>,
-          ul: ({ children }) => <ul style={listStyle}>{children}</ul>,
-          ol: ({ children }) => <ol style={listStyle}>{children}</ol>,
-          li: ({ children }) => <li style={{ margin: "2px 0" }}>{children}</li>,
+          ul: ({ children }) => <ul style={unorderedListStyle}>{children}</ul>,
+          ol: ({ children }) => <ol style={orderedListStyle}>{children}</ol>,
+          li: ({ children }) => <li style={{ margin: "2px 0", display: "list-item" }}>{children}</li>,
           blockquote: ({ children }) => <blockquote style={blockquoteStyle}>{children}</blockquote>,
           code: ({ className, children, ...rest }) => {
             const isBlock = className?.startsWith("language-");
