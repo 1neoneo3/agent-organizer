@@ -56,6 +56,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddRefinementStage(db);
   migrateAddMultiUrls(db);
   migrateAddAutoRespawnCount(db);
+  migrateAddRefinementCompletedAt(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -280,6 +281,43 @@ function migrateAddAutoRespawnCount(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === "auto_respawn_count")) {
     db.exec("ALTER TABLE tasks ADD COLUMN auto_respawn_count INTEGER NOT NULL DEFAULT 0");
   }
+}
+
+function migrateAddRefinementCompletedAt(db: DatabaseSync): void {
+  // PR 3 of issue #99: track when a refinement run actually finished
+  // producing a plan, so re-spawns after a crash can tell "refinement
+  // already completed, move on" apart from "refinement never ran".
+  //
+  // Without this column we only have `refinement_plan IS NOT NULL`,
+  // which lies in both directions: (a) an `"empty"` branch from PR 2
+  // may legitimately leave the plan untouched even though refinement
+  // ran, and (b) a backfill slice from an old fallback path may have
+  // written a partial string that has no marker block. The timestamp
+  // column lets the re-spawn guard distinguish "we finalized a plan"
+  // from "the column just happens to be non-null".
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "refinement_completed_at")) return;
+
+  db.exec("ALTER TABLE tasks ADD COLUMN refinement_completed_at INTEGER");
+
+  // Backfill: existing rows with a populated `refinement_plan` must not
+  // be treated as "never refined" on first boot after the upgrade — or
+  // the re-spawn logic in spawnAgent would queue a fresh refinement run
+  // for every in-flight task.
+  //
+  // Source ordering: prefer `started_at` over `completed_at` because
+  // completed_at can carry garbage (future dates, 0, etc.) from legacy
+  // writes — refinement by definition happened *after* the task started,
+  // so started_at is a safer monotonic proxy. Fall back to updated_at /
+  // created_at only when started_at is null (inbox-born rows that
+  // somehow have a plan).
+  db.exec(`
+    UPDATE tasks
+    SET refinement_completed_at = COALESCE(started_at, updated_at, created_at)
+    WHERE refinement_completed_at IS NULL
+      AND refinement_plan IS NOT NULL
+      AND refinement_plan <> ''
+  `);
 }
 
 function migrateAddRefinementStage(db: DatabaseSync): void {

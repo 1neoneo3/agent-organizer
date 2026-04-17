@@ -656,10 +656,17 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       const childPlan = `${splitArtifacts.childPlan}\n\n${parentPlanClean}`;
       const repoUrl = task.repository_url ?? (task.project_path ? detectRepositoryUrl(task.project_path) : null);
 
+      // Stamp `refinement_completed_at = now` so the child task's
+      // `hasExistingPlan` check in spawnAgent treats the inherited plan
+      // as a completed refinement and skips the stage, matching the
+      // pre-#99-PR3 behavior where `refinement_plan != NULL` alone was
+      // enough. Without this stamp, the stricter `hasExistingPlan`
+      // rule (plan AND completed_at) would re-run refinement on every
+      // child task.
       db.prepare(
-        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, refinement_plan, repository_url, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, childPlan, repoUrl, now, now);
+        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, refinement_plan, refinement_completed_at, repository_url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, childPlan, now, repoUrl, now, now);
 
       const child = db.prepare("SELECT * FROM tasks WHERE id = ?").get(childId) as unknown as Task;
       childTasks.push(child);
