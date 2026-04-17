@@ -7,11 +7,17 @@ Multi-agent orchestration dashboard for managing AI agent (Claude / Codex / Gemi
 - Kanban task board with drag-and-drop
 - Multi-agent spawning and lifecycle management (Claude, Codex, Gemini)
 - Configurable quality pipeline with optional stages
+- Per-task workspace isolation via `git worktree` (`.ao-worktrees/<taskId>`)
 - Real-time WebSocket updates and terminal output streaming
 - Interactive prompt handling (plan approval, agent questions)
-- GitHub issue sync and auto-dispatch
-- Telegram notifications
+- Directive → task decomposition and refinement-plan splitting
+- Orphan recovery with auto-respawn (crash-resilient `in_progress` tasks)
+- Parallel auto-checks (tsc / lint / test / e2e) and multi-role PR review
+- Output language switch for agent-generated text (ja / en)
+- GitHub issue sync, Kanban sync, and auto-dispatch
+- Telegram notifications and approval commands
 - Token-based session authentication
+- Optional Redis cache layer (ioredis)
 
 ## Task Pipeline
 
@@ -85,14 +91,28 @@ All pipeline behavior is controlled through the Settings UI (`/settings`).
 | `auto_dispatch_mode` | disabled/github_only/all_inbox | Auto-assign idle agents to inbox tasks |
 | `review_count` | number | Max review iterations before escalation |
 | `qa_count` | number | Max QA iterations before escalation |
+| `output_language` | ja/en | Natural-language output of agent-generated titles, descriptions, refinement plans, review/QA text, and PR bodies. Control tokens (`[REVIEW:...]`, `---REFINEMENT PLAN---` etc.) remain stable across languages |
+| `default_workspace_mode` | shared/git-worktree | Default workspace isolation strategy. `git-worktree` spins up `.ao-worktrees/<taskId>` on its own branch per `in_progress` task; `shared` uses the main checkout |
+| `refinement_agent_id` | agent id / empty | Preferred agent for the refinement (planning) stage. Empty = role-based resolver |
+| `review_agent_id` | agent id / empty | Preferred agent for PR review |
+| `qa_agent_id` | agent id / empty | Preferred agent for QA testing |
+| `test_generation_agent_id` | agent id / empty | Preferred agent for test generation |
+| `ci_check_agent_id` | agent id / empty | Preferred agent for CI check |
 
 Settings are the single source of truth (SSOT). Per-project `WORKFLOW.md` frontmatter serves as a fallback only when the setting is absent.
 
+### Orphan Recovery
+
+A background job (`server/lifecycle/jobs.ts`) detects tasks marked `in_progress` / `refinement` whose agent process has died. Each orphan is auto-respawned up to `ORPHAN_AUTO_RESPAWN_MAX` times (default **3**, env-overridable). After the budget is exhausted the task is parked with an explanatory log entry — press Run, send feedback, or use the Resume button to continue. The counter resets on any forward stage transition, manual Run, or feedback-rework.
+
+Stuck auto-stage tasks (`pr_review`, `qa_testing`, `test_generation`, `ci_check`) with a stale `last_heartbeat_at` (> 10 min) are promoted to `human_review` instead of being silently retried.
+
 ## Tech Stack
 
-- **Frontend**: React 19 + TypeScript + Vite
-- **Backend**: Express + WebSocket (ws) + Node.js 22
-- **Database**: SQLite (node:sqlite)
+- **Frontend**: React 19 + TypeScript + Vite 6 + Tailwind CSS 4 + React Router 7
+- **Backend**: Express 5 + WebSocket (ws) + Node.js 22
+- **Database**: SQLite (`node:sqlite`)
+- **Cache (optional)**: Redis via ioredis (disable with `REDIS_ENABLED=false`)
 - **CLI Agents**: Claude Code, Codex, Gemini CLI
 - **E2E Testing**: Playwright
 
@@ -101,17 +121,39 @@ Settings are the single source of truth (SSOT). Per-project `WORKFLOW.md` frontm
 ```bash
 # Requirements: Node.js >= 22, pnpm
 pnpm install
-cp .env.example .env  # Edit SESSION_AUTH_TOKEN
+cp .env.example .env  # Edit SESSION_AUTH_TOKEN (a random token is auto-generated on first run if left as the placeholder)
 ```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8791` | Server port |
+| `NODE_ENV` | `development` | `development` / `production` |
+| `SESSION_AUTH_TOKEN` | auto-generated | Session token. Placeholder value triggers auto-generation into `data/.session-token` |
+| `DB_PATH` | `data/agent-organizer.db` | SQLite database path |
+| `REDIS_URL` | `redis://127.0.0.1:6379` | Redis endpoint for cache |
+| `REDIS_ENABLED` | `true` | Set `false` to run without Redis |
+| `AUTO_ASSIGN_TASK_ON_CREATE` | `true` | Auto-assign an agent when a task is created |
+| `AUTO_RUN_TASK_ON_CREATE` | `true` | Auto-spawn the agent immediately after creation |
+| `AUTO_DISPATCH_INTERVAL_MS` | `60000` | Auto-dispatcher tick interval |
+| `ORPHAN_AUTO_RESPAWN_MAX` | `3` | Max auto-respawns per orphaned task |
+| `GITHUB_SYNC_ENABLED` | `false` | Enable GitHub Issue → task sync |
+| `GITHUB_SYNC_REPO` | derived from git remote | `owner/name` |
+| `GITHUB_SYNC_TOKEN` | from `gh auth token` | PAT for sync |
+| `GITHUB_SYNC_PROJECT_PATH` | project root | Working directory for synced tasks |
+| `GITHUB_SYNC_INTERVAL_MS` | `300000` | Sync poll interval |
+| `TELEGRAM_CONTROL_ENABLED` | `true` | Enable Telegram control bot |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token for notifications / approvals |
 
 ## Development
 
 ```bash
-pnpm dev            # Start both server and client
-pnpm dev:server     # Server only (port 8791)
+pnpm dev            # Start both server (8791) and client (Vite)
+pnpm dev:server     # Server only
 pnpm dev:client     # Vite dev server only
-pnpm lint           # TypeScript static checks
-pnpm check          # TypeScript type check
+pnpm lint           # TypeScript static checks (tsc --noEmit)
+pnpm check          # Same as lint
 ```
 
 ## Production
@@ -135,32 +177,39 @@ E2E tests in `e2e/` cover agent CRUD, task CRUD, task flow, and settings scenari
 
 ```
 server/
-  config/         # Runtime configuration, defaults
-  db/             # SQLite schema, migrations
-  dispatch/       # Auto-dispatch scheduler
-  domain/         # Task status constants, rules
-  lifecycle/      # Background jobs (orphan recovery)
-  notify/         # Telegram notifications
-  perf/           # Performance metrics
-  routes/         # REST API endpoints
-  security/       # Authentication middleware
-  spawner/        # Agent process management, prompt builders
-  tasks/          # Task dispatch logic
-  types/          # TypeScript interfaces
-  workflow/       # Stage pipeline, WORKFLOW.md loader, workspace management
-  ws/             # WebSocket hub
+  cache/             # Redis cache service (noop when REDIS_ENABLED=false)
+  config/            # Runtime configuration, defaults, settings resolver
+  db/                # SQLite schema, migrations
+  dispatch/          # Auto-dispatch scheduler
+  domain/            # Task status constants, stage rules
+  lifecycle/         # Background jobs (orphan recovery, auto-respawn)
+  notify/            # Telegram notifications + control bot
+  perf/              # Performance metrics
+  routes/            # REST API endpoints
+    integrations/    #   Kanban sync endpoint
+  security/          # Authentication middleware
+  spawner/           # Agent process management, prompt builders
+  static-handlers.ts # Production static serving for dist/
+  tasks/             # Task dispatch / creation logic
+  types/             # TypeScript interfaces
+  utils/             # Shared helpers
+  workflow/          # Stage pipeline, WORKFLOW.md loader, worktree management
+  ws/                # WebSocket hub (event batching)
 src/
-  api/            # API client
+  api/               # API client
   components/
-    agents/       # Agent list and forms
-    directives/   # Directive management
-    layout/       # App shell, sidebar
-    settings/     # Settings panel
-    tasks/        # Task board, cards, detail modal
-    terminal/     # Terminal output viewer
-  hooks/          # Custom React hooks
-  types/          # Frontend TypeScript types
-e2e/              # Playwright E2E tests
+    agents/          # Agent list and forms
+    directives/      # Directive management + decomposition
+    layout/          # App shell, sidebar
+    settings/        # Settings panel
+    tasks/           # Task board, cards, detail modal, terminal viewer
+    terminal/        # Terminal output viewer
+  hooks/             # Custom React hooks
+  types/             # Frontend TypeScript types
+e2e/                 # Playwright E2E tests
+data/
+  agent-organizer.db # SQLite database
+  .ao-worktrees/     # Per-task git worktrees (when workspace_mode = git-worktree)
 ```
 
 ## API Endpoints
@@ -170,35 +219,67 @@ e2e/              # Playwright E2E tests
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | /api/tasks | List tasks (optional `?status=` filter) |
+| GET | /api/tasks/interactive-prompts | List all pending interactive prompts |
 | GET | /api/tasks/:id | Get task detail |
 | POST | /api/tasks | Create task |
 | PUT | /api/tasks/:id | Update task |
 | DELETE | /api/tasks/:id | Delete task |
+| GET | /api/tasks/:id/settings | Get per-task setting overrides |
+| PUT | /api/tasks/:id/settings | Merge per-task setting overrides |
+| DELETE | /api/tasks/:id/settings | Clear per-task setting overrides |
 | POST | /api/tasks/:id/run | Start task (assign agent and spawn) |
 | POST | /api/tasks/:id/stop | Stop running task |
-| POST | /api/tasks/:id/resume | Resume a cancelled task with the selected or assigned agent |
+| POST | /api/tasks/:id/resume | Resume a cancelled task (restores `in_progress`) |
 | POST | /api/tasks/:id/approve | Approve task (refinement or human_review) |
 | POST | /api/tasks/:id/reject | Reject task (refinement or human_review) |
+| POST | /api/tasks/:id/split | Split a refinement plan into individual child tasks |
 | POST | /api/tasks/:id/feedback | Send feedback to running/completed task |
 | GET | /api/tasks/:id/logs | Get task logs (paginated) |
 | GET | /api/tasks/:id/terminal | Pretty-printed terminal view |
 | POST | /api/tasks/:id/interactive-response | Respond to agent prompt |
-| GET | /api/tasks/interactive-prompts | List all pending prompts |
 
 ### Agents
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /api/agents | List agents |
+| GET | /api/agents | List agents (with workload) |
 | GET | /api/agents/:id | Get agent detail |
 | POST | /api/agents | Create agent |
 | PUT | /api/agents/:id | Update agent |
 | DELETE | /api/agents/:id | Delete agent |
 
+### Directives
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/directives | List directives |
+| GET | /api/directives/:id | Get directive detail |
+| POST | /api/directives | Create directive |
+| PUT | /api/directives/:id | Update directive |
+| DELETE | /api/directives/:id | Delete directive |
+| POST | /api/directives/:id/decompose | Run LLM decomposition into child tasks |
+| GET | /api/directives/:id/decompose-logs | Decomposition log stream |
+| GET | /api/directives/:id/tasks | List child tasks |
+| GET | /api/directives/:id/plan | Decomposition plan |
+
+### Messages
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /api/messages | List messages |
+| POST | /api/messages | Post a message |
+
+### Integrations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /api/integrations/kanban/sync | Sync tasks with an external Kanban source |
+
 ### Other
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | /api/auth/session | Current session info (returns unauthenticated if no token) |
 | GET | /api/settings | Get all settings |
 | PUT | /api/settings | Update settings (bulk) |
 | GET | /api/health | Health check |
