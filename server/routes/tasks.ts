@@ -18,6 +18,12 @@ import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
+import {
+  isTaskOverridableKey,
+  mergeOverrides,
+  safeParseOverrides,
+  TASK_OVERRIDABLE_KEYS,
+} from "../domain/task-settings.js";
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -331,12 +337,78 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
   router.delete("/tasks/:id", async (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
-    if (task.status === "in_progress") {
-      killAgent(task.id);
-    }
+    // Kill any active agent process regardless of task.status. Previously
+    // we only killed on in_progress, but refinement / pr_review /
+    // qa_testing / ci_check / test_generation all run child processes
+    // too. Leaving them alive after DELETE caused FOREIGN KEY violations
+    // when the child's next stdout chunk tried to insert a task_log
+    // referencing the now-deleted task id, crashing the server.
+    killAgent(task.id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
     await invalidateTaskCaches();
     res.json({ deleted: true });
+  });
+
+  // GET /tasks/:id/settings — return overrides + the allow-list of keys
+  router.get("/tasks/:id/settings", (req, res) => {
+    const task = db
+      .prepare("SELECT settings_overrides FROM tasks WHERE id = ?")
+      .get(req.params.id) as { settings_overrides: string | null } | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    const overrides = safeParseOverrides(task.settings_overrides) ?? {};
+    res.json({
+      task_id: req.params.id,
+      overrides,
+      allowed_keys: TASK_OVERRIDABLE_KEYS,
+    });
+  });
+
+  // PUT /tasks/:id/settings — merge a patch of {key: value|null} into
+  // tasks.settings_overrides. `null` removes a key. Unknown keys are
+  // rejected so typos cannot silently create dead config.
+  router.put("/tasks/:id/settings", async (req, res) => {
+    const PatchSchema = z.record(
+      z.string(),
+      z.union([z.string(), z.null()]),
+    );
+    const parsed = PatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+
+    const unknownKeys = Object.keys(parsed.data).filter((k) => !isTaskOverridableKey(k));
+    if (unknownKeys.length > 0) {
+      return res
+        .status(400)
+        .json({ error: "unknown_settings_keys", keys: unknownKeys, allowed_keys: TASK_OVERRIDABLE_KEYS });
+    }
+
+    const task = db
+      .prepare("SELECT settings_overrides FROM tasks WHERE id = ?")
+      .get(req.params.id) as { settings_overrides: string | null } | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+
+    const merged = mergeOverrides(task.settings_overrides, parsed.data);
+    const serialized = merged ? JSON.stringify(merged) : null;
+    const now = Date.now();
+    db.prepare("UPDATE tasks SET settings_overrides = ?, updated_at = ? WHERE id = ?").run(
+      serialized,
+      now,
+      req.params.id,
+    );
+
+    await invalidateTaskCaches();
+    res.json({ task_id: req.params.id, overrides: merged ?? {} });
+  });
+
+  // DELETE /tasks/:id/settings — clear all overrides for a task
+  router.delete("/tasks/:id/settings", async (req, res) => {
+    const task = db.prepare("SELECT id FROM tasks WHERE id = ?").get(req.params.id) as { id: string } | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    const now = Date.now();
+    db.prepare("UPDATE tasks SET settings_overrides = NULL, updated_at = ? WHERE id = ?").run(now, req.params.id);
+    await invalidateTaskCaches();
+    res.json({ task_id: req.params.id, overrides: {} });
   });
 
   // Run a task (spawn agent)

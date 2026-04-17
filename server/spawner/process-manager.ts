@@ -43,6 +43,7 @@ import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 import { runWorkflowHooks } from "../workflow/hooks.js";
+import { getTaskSetting } from "../domain/task-settings.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
@@ -506,7 +507,7 @@ export function spawnAgent(
   const workflow = loadProjectWorkflow(projectPath);
   const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
   // Determine if self-review applies (skip for continue mode)
-  const selfReviewThreshold = getSetting(db, "self_review_threshold") ?? "small";
+  const selfReviewThreshold = getSetting(db, "self_review_threshold", task.id) ?? "small";
   const selfReview = !isContinue && (
     selfReviewThreshold === "all" ||
     (selfReviewThreshold === "medium" && (task.task_size === "small" || task.task_size === "medium")) ||
@@ -525,16 +526,24 @@ export function spawnAgent(
   // inbox when refinement is the first active stage in the pipeline.
   // Skip refinement if the task already has a refinement_plan (e.g. child
   // tasks created by Split into Tasks inherit the parent's plan).
-  const activeStages = resolveActiveStages(db, workflow, task.task_size);
+  const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
   const hasExistingPlan = !!task.refinement_plan;
   const isRefinementRun = !hasExistingPlan && (task.status === "refinement" || (task.status === "inbox" && activeStages[0] === "refinement"));
+  // When enabled, the refinement agent commits the plan to a Markdown
+  // file on a fresh branch and opens a PR. This requires write + git
+  // access, so the read-only tool restriction must be lifted.
+  const refinementAsPr = isRefinementRun && getSetting(db, "refinement_as_pr", task.id) === "true";
   const parallelImplEnabled =
     !isParallelTester && !isContinue && isParallelImplTestEnabled(db);
 
-  // Restrict tools for review/QA/ci-check phases (read-only)
-  const allowedTools = (isReviewRun || isQaRun || isCiCheckRun || isRefinementRun)
-    ? REVIEW_ALLOWED_TOOLS
-    : undefined;
+  // Restrict tools for review/QA/ci-check phases (read-only).
+  // Refinement is read-only by default, but when `refinement_as_pr` is
+  // enabled the agent must Write/Edit the plan file and run git + gh,
+  // so we fall back to the default (implementer) tool set.
+  const allowedTools =
+    isReviewRun || isQaRun || isCiCheckRun || (isRefinementRun && !refinementAsPr)
+      ? REVIEW_ALLOWED_TOOLS
+      : undefined;
 
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
@@ -583,7 +592,7 @@ export function spawnAgent(
             "SELECT task_number, title, status, project_path, description FROM tasks WHERE status NOT IN ('done','cancelled') AND id != ? ORDER BY created_at DESC LIMIT 20"
           ).all(task.id) as Array<{ task_number: string; title: string; status: string; project_path: string | null; description: string | null }>;
           return rows;
-        })())
+        })(), { asPr: refinementAsPr })
       : (isTestGenRun
         ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
             parallel: isParallelTester,
@@ -762,7 +771,17 @@ export function spawnAgent(
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
-      throw error;
+      // Swallow FK violations that occur when the task was deleted while
+      // the child was mid-stream. Without this, a late stdout chunk from
+      // a still-terminating process crashes the whole server with
+      // `FOREIGN KEY constraint failed`. Any other DB error is still
+      // surfaced so we don't silently hide real corruption.
+      const isFkViolation =
+        error instanceof Error &&
+        /FOREIGN KEY constraint failed/i.test(error.message);
+      if (!isFkViolation) {
+        throw error;
+      }
     }
     recordDbLogInsertMs(performance.now() - t0);
   }
@@ -1732,7 +1751,6 @@ function isToolResultForPrompt(obj: Record<string, unknown>, toolUseId: string):
   return false;
 }
 
-function getSetting(db: DatabaseSync, key: string): string | undefined {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
-  return row?.value;
+function getSetting(db: DatabaseSync, key: string, taskId?: string): string | undefined {
+  return getTaskSetting(db, key, taskId);
 }
