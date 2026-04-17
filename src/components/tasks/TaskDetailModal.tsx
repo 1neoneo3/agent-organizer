@@ -99,6 +99,7 @@ interface TaskDetailModalProps {
   onClose: () => void;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
+  onResume?: (taskId: string, agentId: string) => void;
   layoutMode?: TaskDetailLayoutMode;
   onLayoutModeChange?: (mode: TaskDetailLayoutMode) => void;
 }
@@ -112,6 +113,7 @@ export function TaskDetailModal({
   onClose,
   onRun,
   onStop,
+  onResume,
   layoutMode = "modal",
   onLayoutModeChange,
 }: TaskDetailModalProps) {
@@ -668,6 +670,50 @@ export function TaskDetailModal({
                 Stop Task
               </button>
             )}
+            {task.status === "cancelled" && (() => {
+              const canUseAssigned = agent && agent.status !== "working";
+              const showSelector = !canUseAssigned && idleAgents.length > 0;
+              const resumeAgentId = canUseAssigned
+                ? agent!.id
+                : (idleAgents.find((a) => a.id === selectedAgentId)?.id ?? idleAgents[0]?.id ?? "");
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {showSelector && (
+                    <>
+                      <span style={{ fontSize: "12px", color: "var(--text-tertiary)", flexShrink: 0 }}>Restart with:</span>
+                      <select
+                        value={selectedAgentId}
+                        onChange={(e) => setSelectedAgentId(e.target.value)}
+                        style={{
+                          padding: "4px 8px",
+                          fontSize: "12px",
+                          borderRadius: "6px",
+                          border: "1px solid var(--border-default)",
+                          background: "var(--bg-tertiary)",
+                          color: "var(--text-primary)",
+                          outline: "none",
+                        }}
+                      >
+                        {idleAgents.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.avatar_emoji} {a.name}{agentView.roleLabelById.get(a.id) ? ` [${agentView.roleLabelById.get(a.id)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+                  <button
+                    onClick={() => { if (resumeAgentId) onResume?.(task.id, resumeAgentId); }}
+                    disabled={!resumeAgentId}
+                    className="eb-btn eb-btn--primary"
+                    style={{ fontSize: "12px" }}
+                    title={canUseAssigned ? `Restart with ${agent!.name}` : "Restart"}
+                  >
+                    Restart
+                  </button>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Interactive Prompt */}

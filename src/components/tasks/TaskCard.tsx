@@ -48,13 +48,14 @@ interface TaskCardProps {
   interactivePrompt?: InteractivePrompt;
   onRun?: (taskId: string, agentId: string) => void;
   onStop?: (taskId: string) => void;
+  onResume?: (taskId: string, agentId: string) => void;
   onDone?: (taskId: string) => void;
   onSelect?: (taskId: string) => void;
   onShowLog?: (taskId: string) => void;
   onDelete?: (taskId: string) => void;
 }
 
-function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, hasInteractivePrompt, interactivePrompt, onRun, onStop, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
+function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, hasInteractivePrompt, interactivePrompt, onRun, onStop, onResume, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
   const agent = assignedAgent;
   const roleLabel = agent ? roleLabelByAgentId.get(agent.id) ?? null : null;
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
@@ -456,6 +457,45 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           </div>
         )}
 
+        {/* Cancelled: Restart row (agent selector when assigned agent is busy/missing) */}
+        {task.status === "cancelled" && (() => {
+          const canUseAssigned = assignedAgent && assignedAgent.status !== "working";
+          const resumeAgentId = canUseAssigned
+            ? assignedAgent!.id
+            : (idleAgents.find((a) => a.id === selectedAgentId)?.id ?? idleAgents[0]?.id ?? "");
+          const showSelector = !canUseAssigned && idleAgents.length > 0;
+          return (
+            <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
+              {showSelector && (
+                <select
+                  value={selectedAgentId}
+                  onChange={(e) => { e.stopPropagation(); setSelectedAgentId(e.target.value); }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="eb-select"
+                  style={{ width: "100%", fontSize: "12px" }}
+                >
+                  {idleAgents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}{roleLabelByAgentId.get(a.id) ? ` [${roleLabelByAgentId.get(a.id)}]` : ""}{a.cli_model ? ` (${a.cli_model})` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <div style={{ display: "flex", gap: "4px" }}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); if (resumeAgentId) { play("confirm"); onResume?.(task.id, resumeAgentId); } }}
+                  disabled={!resumeAgentId}
+                  title={canUseAssigned ? `Restart with ${assignedAgent!.name}` : "Restart"}
+                  className="eb-btn eb-btn--primary"
+                  style={{ flex: 1, fontSize: "11px", padding: "4px 8px", opacity: resumeAgentId ? 1 : 0.5 }}
+                >
+                  Restart
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Non-inbox actions */}
         {task.status !== "inbox" && (
           <div style={{ marginTop: "8px", display: "flex", gap: "4px" }}>
@@ -565,6 +605,7 @@ function areTaskCardPropsEqual(prev: TaskCardProps, next: TaskCardProps): boolea
     && prev.interactivePrompt === next.interactivePrompt
     && prev.onRun === next.onRun
     && prev.onStop === next.onStop
+    && prev.onResume === next.onResume
     && prev.onDone === next.onDone
     && prev.onSelect === next.onSelect
     && prev.onShowLog === next.onShowLog
