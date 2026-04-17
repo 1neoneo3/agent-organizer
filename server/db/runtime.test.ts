@@ -173,4 +173,38 @@ describe("initializeDb", () => {
     assert.equal(marker.stage, "self_review");
     assert.equal(marker.agent_id, "agent-transition");
   });
+
+  it("preserves caller-provided stage regardless of tasks.status (no trigger override)", async () => {
+    // Regression test for PR 1 of issue #99 (refinement plan / Terminal Activity bug).
+    // The `task_logs_fill_metadata` trigger historically auto-filled stage from
+    // (SELECT status FROM tasks WHERE id = ?), which races with a concurrent
+    // status UPDATE in performFinalization. Spawn-path INSERTs now always
+    // provide `stage` explicitly; this test ensures the trigger leaves those
+    // values alone rather than overwriting them.
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    const agentName = `test-agent-stage-preserve-${now}`;
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("agent-stage-preserve", agentName, "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run("task-stage-preserve", "Stage Race", "in_progress", "agent-stage-preserve", "small", now, now);
+
+    // Caller passes stage='refinement' even though tasks.status='in_progress'.
+    // This mimics the refinement spawn emitting a late stdout chunk after the
+    // task has already been transitioned forward by performFinalization.
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'assistant', ?, 'refinement', ?)"
+    ).run("task-stage-preserve", "---REFINEMENT PLAN--- ... ---END REFINEMENT---", "agent-stage-preserve");
+
+    const row = db.prepare(
+      "SELECT stage, agent_id FROM task_logs WHERE task_id = ? AND kind = 'assistant' ORDER BY id DESC LIMIT 1"
+    ).get("task-stage-preserve") as { stage: string | null; agent_id: string | null };
+
+    assert.equal(row.stage, "refinement", "explicit stage must win over tasks.status fallback");
+    assert.equal(row.agent_id, "agent-stage-preserve");
+  });
 });

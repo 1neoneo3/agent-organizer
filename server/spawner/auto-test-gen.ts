@@ -75,7 +75,9 @@ function findTestGenAgent(
 }
 
 function logSystem(db: DatabaseSync, taskId: string, message: string): void {
+  // Auto-test-gen always runs for test_generation stage. Tag explicitly
+  // to avoid trigger-fallback race with a concurrent status UPDATE.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, 'test_generation')"
   ).run(taskId, message);
 }

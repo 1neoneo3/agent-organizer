@@ -101,9 +101,11 @@ export async function triggerAutoReview(
   // scoped to the current run via the standard `created_at >= started_at`
   // filter the aggregator already applies.
   const expectedRoles = assignments.map((a) => a.role);
+  // Auto-reviewer always runs during pr_review — tag the panel marker
+  // explicitly so the trigger fallback cannot mis-stage it on race.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
-  ).run(freshTask.id, `[REVIEWER_PANEL:${expectedRoles.join(",")}]`);
+    "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, 'pr_review', ?)",
+  ).run(freshTask.id, `[REVIEWER_PANEL:${expectedRoles.join(",")}]`, freshTask.assigned_agent_id ?? null);
 
   const panelDescription = assignments
     .map((a) => `${a.agent.name}(${a.role})`)
@@ -237,7 +239,10 @@ function getSetting(db: DatabaseSync, key: string): string | undefined {
 }
 
 function logSystem(db: DatabaseSync, taskId: string, message: string): void {
+  // Auto-reviewer always runs for pr_review stage. Tag explicitly so the
+  // trigger fallback cannot mis-stage if this INSERT races with a task
+  // status UPDATE in performFinalization.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, 'pr_review')"
   ).run(taskId, message);
 }

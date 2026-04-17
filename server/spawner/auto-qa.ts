@@ -105,7 +105,9 @@ function getSetting(db: DatabaseSync, key: string): string | undefined {
 }
 
 function logSystem(db: DatabaseSync, taskId: string, message: string): void {
+  // Auto-QA always runs for qa_testing stage. Tag explicitly to avoid
+  // trigger-fallback race with a concurrent status UPDATE.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, 'qa_testing')"
   ).run(taskId, message);
 }
