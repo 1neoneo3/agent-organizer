@@ -21,6 +21,12 @@ export function runExplorePhase(
   ws: WsHub,
   agent: Agent,
   task: Task,
+  // The stage of the spawn that owns this explore run (typically
+  // "in_progress", but "refinement" when explore precedes refinement).
+  // Passed from the caller so log rows carry the correct stage instead
+  // of relying on the trigger fallback, which races with status
+  // transitions later in performFinalization.
+  spawnStage: string,
 ): string | null {
   // Check if explore_phase is enabled
   const exploreSetting = db.prepare(
@@ -56,8 +62,8 @@ export function runExplorePhase(
 
   const logMsg = `[Explore Phase] Starting read-only investigation with ${agent.name}`;
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, 'in_progress', ?)"
-  ).run(task.id, logMsg, agent.id);
+    "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)"
+  ).run(task.id, logMsg, spawnStage, agent.id);
   ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: logMsg }], { taskId: task.id });
 
   try {
@@ -79,8 +85,8 @@ export function runExplorePhase(
     if (result.status !== 0 || !output) {
       const errMsg = `[Explore Phase] Failed (exit ${result.status}): ${(result.stderr ?? "").slice(0, 500)}`;
       db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, 'in_progress', ?)"
-      ).run(task.id, errMsg, agent.id);
+        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)"
+      ).run(task.id, errMsg, spawnStage, agent.id);
       ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: errMsg }], { taskId: task.id });
       return null;
     }
@@ -91,21 +97,21 @@ export function runExplorePhase(
 
     // Store as task log for the Implement phase
     db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, 'in_progress', ?)"
-    ).run(task.id, `[EXPLORE] ${exploreResult}`, agent.id);
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)"
+    ).run(task.id, `[EXPLORE] ${exploreResult}`, spawnStage, agent.id);
 
     const doneMsg = `[Explore Phase] Completed. ${exploreResult.length} chars of context captured.`;
     db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, 'in_progress', ?)"
-    ).run(task.id, doneMsg, agent.id);
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)"
+    ).run(task.id, doneMsg, spawnStage, agent.id);
     ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: doneMsg }], { taskId: task.id });
 
     return exploreResult;
   } catch (error) {
     const errMsg = `[Explore Phase] Error: ${error instanceof Error ? error.message : String(error)}`;
     db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, 'in_progress', ?)"
-    ).run(task.id, errMsg, agent.id);
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)"
+    ).run(task.id, errMsg, spawnStage, agent.id);
     ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: errMsg }], { taskId: task.id });
     return null;
   }

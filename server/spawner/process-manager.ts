@@ -609,7 +609,7 @@ export function spawnAgent(
       exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" +
         existingExplore.message.replace("[EXPLORE] ", "");
     } else {
-      const exploreResult = runExplorePhase(db, ws, agent, task);
+      const exploreResult = runExplorePhase(db, ws, agent, task, spawnStage);
       if (exploreResult) {
         exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" + exploreResult;
       }
@@ -673,9 +673,16 @@ export function spawnAgent(
   // Run before_run hooks (env setup, dependency install, etc.)
   if (workflow?.beforeRun.length && !isContinue) {
     const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd);
-    const logBefore = db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)");
+    const logBefore = db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
+    );
     for (const hr of beforeResults) {
-      logBefore.run(task.id, `[before_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`);
+      logBefore.run(
+        task.id,
+        `[before_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`,
+        spawnStage,
+        agent.id,
+      );
     }
   }
 
@@ -752,11 +759,18 @@ export function spawnAgent(
           );
           await triggerParallelTester(db, ws, freshTask, { cache });
         } catch (err) {
+          // Fires inside a 500ms setTimeout after the implementer spawn.
+          // By the time this runs, the implementer may already have moved
+          // the task forward in performFinalization. Tag with the
+          // implementer's spawnStage (captured at spawn time) so the
+          // trigger fallback can't race-stamp a post-transition stage.
           db.prepare(
-            "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+            "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
           ).run(
             task.id,
             `Parallel tester trigger failed: ${err instanceof Error ? err.message : String(err)}`,
+            spawnStage,
+            agent.id,
           );
         }
       }, 500);
@@ -1050,9 +1064,10 @@ export function spawnAgent(
       "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
     ).run(finishTime, agent.id);
 
-    db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, `Process spawn failed: ${message}`);
+    // Status was just UPDATEd to 'cancelled' a few lines above; use
+    // spawnStage (the stage this spawn represents) instead of letting the
+    // trigger fallback stamp 'cancelled'.
+    insertLogStmt.run(task.id, "system", `Process spawn failed: ${message}`, spawnStage, agent.id);
 
     invalidateCaches(cache);
     const failedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
@@ -1232,9 +1247,9 @@ export function spawnAgent(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
       ).run(finishTime, agent.id);
 
-      db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-      ).run(task.id, `Feedback response complete. Restored status: ${restoreStatus}`);
+      // Status was just UPDATEd to restoreStatus; use spawnStage so the
+      // trigger fallback can't stamp the post-transition stage.
+      insertLogStmt.run(task.id, "system", `Feedback response complete. Restored status: ${restoreStatus}`, spawnStage, agent.id);
 
       invalidateCaches(cache);
       const restoredTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
@@ -1354,9 +1369,12 @@ export function spawnAgent(
       "UPDATE agents SET status = 'idle', current_task_id = NULL, stats_tasks_done = stats_tasks_done + CASE WHEN ? = 'done' THEN 1 ELSE 0 END, updated_at = ? WHERE id = ?"
     ).run(finalStatus, finishTime, agent.id);
 
-    db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, `Process exited with code ${code}. Status: ${finalStatus}`);
+    // Status has just been UPDATEd to finalStatus a few lines above; the
+    // trigger fallback would stamp finalStatus (the NEXT stage) instead
+    // of spawnStage (the stage that just completed). Pass spawnStage
+    // explicitly so the "Process exited" marker belongs to the run that
+    // actually produced it.
+    insertLogStmt.run(task.id, "system", `Process exited with code ${code}. Status: ${finalStatus}`, spawnStage, agent.id);
 
     if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "ci_check" || finalStatus === "done")) {
       // Extract executed commands from task logs for PR verification section
@@ -1404,13 +1422,16 @@ export function spawnAgent(
         finishTime,
         task.id,
       );
-      db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-      ).run(
+      // Status was UPDATEd to finalStatus above; keep this artifact-sync
+      // marker on the completing spawn's timeline rather than the next one.
+      insertLogStmt.run(
         task.id,
+        "system",
         promotion.syncError
           ? `Review artifact sync: ${promotion.syncStatus} (${promotion.syncError})`
           : `Review artifact sync: ${promotion.syncStatus}${promotion.prUrl ? ` (${promotion.prUrl})` : ""}`,
+        spawnStage,
+        agent.id,
       );
     }
 
