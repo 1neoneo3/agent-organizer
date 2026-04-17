@@ -170,6 +170,11 @@ export function TaskDetailModal({
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "12px", padding: "20px 24px 12px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h2 style={{ fontSize: "16px", fontWeight: 600, color: "var(--text-primary)", lineHeight: 1.4, margin: 0 }}>
+              {task.task_number && (
+                <span style={{ color: "var(--text-secondary)", marginRight: "6px", fontFamily: "var(--font-mono)", fontWeight: 600 }}>
+                  {task.task_number}
+                </span>
+              )}
               {task.title}
             </h2>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
