@@ -5,6 +5,7 @@ import { SCHEMA_SQL } from "../db/schema.js";
 import {
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
+  extractRefinementPlanFromLogs,
   isReviewRunTask,
   resolveCompletionStatusAfterPromotion,
 } from "./process-manager.js";
@@ -631,5 +632,102 @@ describe("resolveCompletionStatusAfterPromotion", () => {
 
     assert.equal(resolution.status, "done");
     assert.equal(resolution.blockedReason, null);
+  });
+});
+
+// Helper: insert an assistant-kind log with explicit stage + created_at
+// (mimics how PR 1's spawnAgent now tags every insert).
+function insertStagedAssistantLog(
+  db: DatabaseSync,
+  taskId: string,
+  stage: string,
+  message: string,
+  createdAt: number,
+): void {
+  db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'assistant', ?, ?, ?)",
+  ).run(taskId, message, stage, createdAt);
+}
+
+describe("extractRefinementPlanFromLogs", () => {
+  it("returns the marker-bounded plan when the canonical block is present", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan", started_at: 1_000 });
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      "---REFINEMENT PLAN---\n## Requirements\n- X\n- Y\n---END REFINEMENT---",
+      2_000,
+    );
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "plan");
+    if (result.kind === "plan") {
+      assert.match(result.plan, /---REFINEMENT PLAN---/);
+      assert.match(result.plan, /---END REFINEMENT---/);
+      assert.match(result.plan, /## Requirements/);
+    }
+  });
+
+  it("falls back to the last 5000 chars when markers are missing but agent produced output", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tfb", started_at: 1_000 });
+    insertStagedAssistantLog(db, task.id, "refinement", "no markers here, just prose.", 2_000);
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "fallback");
+    if (result.kind === "fallback") {
+      assert.equal(result.plan, "no markers here, just prose.");
+    }
+  });
+
+  it("returns 'empty' when no assistant logs exist since spawnStartedAt", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tempty", started_at: 1_000 });
+    // Log from BEFORE the current spawn — must be excluded.
+    insertStagedAssistantLog(db, task.id, "refinement", "old run output", 500);
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "empty");
+  });
+
+  it("excludes non-refinement stages even when kind='assistant'", () => {
+    // This is the Bug 2 regression: previously the extraction query had
+    // no stage filter, so in_progress / pr_review logs could bleed in.
+    const db = createDb();
+    const task = insertTask(db, { id: "tbleed", started_at: 1_000 });
+    insertStagedAssistantLog(db, task.id, "in_progress", "implementation notes", 2_000);
+    insertStagedAssistantLog(db, task.id, "pr_review", "[REVIEW:code:PASS]", 2_500);
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    // No refinement-stage logs → empty (NOT fallback with bled-in content).
+    assert.equal(result.kind, "empty");
+  });
+
+  it("ignores refinement logs created before spawnStartedAt (previous run)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tprev", started_at: 1_000 });
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      "---REFINEMENT PLAN---\nfrom previous run\n---END REFINEMENT---",
+      500,
+    );
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      "---REFINEMENT PLAN---\nfrom current run\n---END REFINEMENT---",
+      2_000,
+    );
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "plan");
+    if (result.kind === "plan") {
+      assert.match(result.plan, /from current run/);
+      assert.doesNotMatch(result.plan, /from previous run/);
+    }
   });
 });
