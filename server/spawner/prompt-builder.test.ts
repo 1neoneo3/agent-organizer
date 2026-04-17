@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  buildDecomposePrompt,
   buildExplorePrompt,
   buildQaPrompt,
   buildRefinementPrompt,
@@ -589,5 +590,39 @@ describe("buildExplorePrompt English mode", () => {
   it("emits Japanese investigation header by default", () => {
     const prompt = buildExplorePrompt(task);
     assert.match(prompt, /調査/);
+  });
+});
+
+describe("buildDecomposePrompt language switching", () => {
+  const directive = {
+    id: "directive-lang",
+    title: "Language-aware task generation",
+    content: "Create decomposed tasks and plan output in the selected language.",
+    project_path: "/tmp/directive-lang",
+  } as never;
+
+  it("emits English decomposition instructions when language='en'", () => {
+    const prompt = buildDecomposePrompt(directive, "en");
+
+    assert.match(prompt, /Always respond and communicate in English/);
+    assert.match(prompt, /# Directive: Language-aware task generation/);
+    assert.match(prompt, /## Instructions/);
+    assert.match(prompt, /Break this directive into 2-8 concrete tasks/);
+    assert.match(prompt, /# Implementation Plan: \{directive title\}/);
+    assert.match(prompt, /---PLAN---/);
+    assert.doesNotMatch(prompt, /## 指示/);
+    assert.doesNotMatch(prompt, /この指示を2-8個の具体的なタスクに分解/);
+  });
+
+  it("emits Japanese decomposition instructions by default", () => {
+    const prompt = buildDecomposePrompt(directive);
+
+    assert.match(prompt, /Always respond and communicate in Japanese/);
+    assert.match(prompt, /# 指示: Language-aware task generation/);
+    assert.match(prompt, /## 指示/);
+    assert.match(prompt, /この指示を2-8個の具体的なタスクに分解/);
+    assert.match(prompt, /# 実装計画: \{directive title\}/);
+    assert.match(prompt, /---PLAN---/);
+    assert.doesNotMatch(prompt, /## Instructions/);
   });
 });

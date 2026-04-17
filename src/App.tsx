@@ -45,7 +45,7 @@ function AppRoutes() {
         }>
           <Route
             index
-            element={<TaskBoard tasks={tasks} agents={agents} interactivePrompts={interactivePrompts} onReload={reload} onSubscribeTask={subscribeTask} />}
+            element={<TaskBoard tasks={tasks} agents={agents} interactivePrompts={interactivePrompts} onReload={reload} onSubscribeTask={subscribeTask} onWsEvent={on} />}
           />
           <Route
             path="directives"

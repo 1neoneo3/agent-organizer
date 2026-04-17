@@ -1774,94 +1774,170 @@ export function buildDecomposePrompt(
   language: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
 ): string {
   const parts: string[] = [];
+  const isEn = language === "en";
 
   appendLanguageDirective(parts, language);
 
   // Inject CLAUDE.md + rules so decomposer understands project context
   appendSharedContext(parts, directive.project_path);
 
-  parts.push(
-    "You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks with numbered IDs and dependency tracking.",
-  );
-  parts.push("");
-  parts.push(`# Directive: ${directive.title}`);
-  parts.push("");
-  parts.push(directive.content);
-  parts.push("");
-  if (directive.project_path) {
-    parts.push(`Project path: ${directive.project_path}`);
+  if (isEn) {
+    parts.push(
+      "You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks with numbered IDs and dependency tracking.",
+    );
     parts.push("");
+    parts.push(`# Directive: ${directive.title}`);
+    parts.push("");
+    parts.push(directive.content);
+    parts.push("");
+    if (directive.project_path) {
+      parts.push(`Project path: ${directive.project_path}`);
+      parts.push("");
+    }
+    parts.push("## Instructions");
+    parts.push("");
+    parts.push(
+      "Break this directive into 2-8 concrete tasks. Each task should be:",
+    );
+    parts.push("- Specific and actionable (a single agent can complete it)");
+    parts.push("- Small to medium in scope");
+    parts.push("- Numbered sequentially (T01, T02, T03...)");
+    parts.push(
+      "- Include dependency information (which tasks must complete before this one)",
+    );
+    parts.push("");
+    parts.push(
+      "Respond with TWO sections separated by the exact line `---PLAN---`:",
+    );
+    parts.push("");
+    parts.push(
+      "**SECTION 1**: JSON array of tasks (no markdown fences, no extra text before or after the JSON):",
+    );
+    parts.push("```");
+    parts.push(
+      JSON.stringify(
+        [
+          {
+            task_id: "T01",
+            title: "Set up database schema",
+            description: "Detailed description of what to do",
+            task_size: "small",
+            priority: 10,
+            depends_on: [],
+          },
+          {
+            task_id: "T02",
+            title: "Implement API endpoints",
+            description: "Detailed description",
+            task_size: "medium",
+            priority: 8,
+            depends_on: ["T01"],
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    parts.push("```");
+    parts.push("");
+    parts.push("---PLAN---");
+    parts.push("");
+    parts.push("**SECTION 2**: Implementation plan in Markdown:");
+    parts.push("```");
+    parts.push("# Implementation Plan: {directive title}");
+    parts.push("## Overview");
+    parts.push("Brief summary of the implementation approach.");
+    parts.push("## Task Dependency Graph");
+    parts.push(
+      "Show which tasks depend on which (e.g. T01 → T02 → T03).",
+    );
+    parts.push("## Implementation Order");
+    parts.push("Recommended execution order with rationale.");
+    parts.push("## Risk Analysis");
+    parts.push("Potential risks and mitigations.");
+    parts.push("## Prerequisites");
+    parts.push("What needs to be in place before starting.");
+    parts.push("## Estimated Effort");
+    parts.push("Rough estimates per task.");
+    parts.push("```");
+    parts.push("");
+    parts.push(
+      "Output SECTION 1 (JSON) followed by ---PLAN--- followed by SECTION 2 (Markdown) now:",
+    );
+  } else {
+    parts.push(
+      "あなたはプロジェクトマネージャーAIです。以下の指示を、依存関係付きの具体的で実行可能なタスクへ分解してください。",
+    );
+    parts.push("");
+    parts.push(`# 指示: ${directive.title}`);
+    parts.push("");
+    parts.push(directive.content);
+    parts.push("");
+    if (directive.project_path) {
+      parts.push(`プロジェクトパス: ${directive.project_path}`);
+      parts.push("");
+    }
+    parts.push("## 指示");
+    parts.push("");
+    parts.push("この指示を2-8個の具体的なタスクに分解してください。各タスクは次を満たすこと:");
+    parts.push("- 具体的で実行可能であること（1人のエージェントで完了できる）");
+    parts.push("- スコープは small から medium に収まること");
+    parts.push("- 連番の task_id を持つこと（T01, T02, T03...）");
+    parts.push("- 依存関係を明記すること（どのタスク完了後に着手できるか）");
+    parts.push("");
+    parts.push("必ず `---PLAN---` の行で区切られた2つのセクションで回答してください:");
+    parts.push("");
+    parts.push("**SECTION 1**: タスクの JSON 配列（Markdown のフェンス禁止、JSON の前後に余計な文章を入れない）:");
+    parts.push("```");
+    parts.push(
+      JSON.stringify(
+        [
+          {
+            task_id: "T01",
+            title: "データベーススキーマを準備する",
+            description: "実施内容の詳細説明",
+            task_size: "small",
+            priority: 10,
+            depends_on: [],
+          },
+          {
+            task_id: "T02",
+            title: "API エンドポイントを実装する",
+            description: "実施内容の詳細説明",
+            task_size: "medium",
+            priority: 8,
+            depends_on: ["T01"],
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    parts.push("```");
+    parts.push("");
+    parts.push("---PLAN---");
+    parts.push("");
+    parts.push("**SECTION 2**: Markdown 形式の実装計画:");
+    parts.push("```");
+    parts.push("# 実装計画: {directive title}");
+    parts.push("## 概要");
+    parts.push("実装方針の要約。");
+    parts.push("## タスク依存グラフ");
+    parts.push("どのタスクがどのタスクに依存するかを示す（例: T01 → T02 → T03）。");
+    parts.push("## 実装順序");
+    parts.push("推奨する実行順序とその理由。");
+    parts.push("## リスク分析");
+    parts.push("想定されるリスクと対策。");
+    parts.push("## 前提条件");
+    parts.push("開始前に必要な準備。");
+    parts.push("## 見積もり");
+    parts.push("タスクごとのおおよその工数。");
+    parts.push("```");
+    parts.push("");
+    parts.push(
+      "SECTION 1 の JSON、`---PLAN---`、SECTION 2 の Markdown の順で今すぐ出力してください:",
+    );
   }
-  parts.push("## Instructions");
-  parts.push("");
-  parts.push(
-    "Break this directive into 2-8 concrete tasks. Each task should be:",
-  );
-  parts.push("- Specific and actionable (a single agent can complete it)");
-  parts.push("- Small to medium in scope");
-  parts.push("- Numbered sequentially (T01, T02, T03...)");
-  parts.push(
-    "- Include dependency information (which tasks must complete before this one)",
-  );
-  parts.push("");
-  parts.push(
-    "Respond with TWO sections separated by the exact line `---PLAN---`:",
-  );
-  parts.push("");
-  parts.push(
-    "**SECTION 1**: JSON array of tasks (no markdown fences, no extra text before or after the JSON):",
-  );
-  parts.push("```");
-  parts.push(
-    JSON.stringify(
-      [
-        {
-          task_id: "T01",
-          title: "Set up database schema",
-          description: "Detailed description of what to do",
-          task_size: "small",
-          priority: 10,
-          depends_on: [],
-        },
-        {
-          task_id: "T02",
-          title: "Implement API endpoints",
-          description: "Detailed description",
-          task_size: "medium",
-          priority: 8,
-          depends_on: ["T01"],
-        },
-      ],
-      null,
-      2,
-    ),
-  );
-  parts.push("```");
-  parts.push("");
-  parts.push("---PLAN---");
-  parts.push("");
-  parts.push("**SECTION 2**: Implementation plan in Markdown:");
-  parts.push("```");
-  parts.push("# Implementation Plan: {directive title}");
-  parts.push("## Overview");
-  parts.push("Brief summary of the implementation approach.");
-  parts.push("## Task Dependency Graph");
-  parts.push(
-    "Show which tasks depend on which (e.g. T01 → T02 → T03).",
-  );
-  parts.push("## Implementation Order");
-  parts.push("Recommended execution order with rationale.");
-  parts.push("## Risk Analysis");
-  parts.push("Potential risks and mitigations.");
-  parts.push("## Prerequisites");
-  parts.push("What needs to be in place before starting.");
-  parts.push("## Estimated Effort");
-  parts.push("Rough estimates per task.");
-  parts.push("```");
-  parts.push("");
-  parts.push(
-    "Output SECTION 1 (JSON) followed by ---PLAN--- followed by SECTION 2 (Markdown) now:",
-  );
 
   return parts.join("\n");
 }
