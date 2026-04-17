@@ -9,8 +9,7 @@ import { AgentForm, type AgentFormData } from "../agents/AgentForm.js";
 import { getRoleLabel } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
 import { useSfx } from "../../hooks/useSfx.js";
-import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
-import { useWebSocket } from "../../hooks/useWebSocket.js";
+import type { Task, Agent, InteractivePrompt, WSEventType } from "../../types/index.js";
 import { buildAgentViewState } from "./agent-view.js";
 import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
 
@@ -20,6 +19,13 @@ interface TaskBoardProps {
   interactivePrompts: Map<string, InteractivePrompt>;
   onReload: () => void;
   onSubscribeTask?: (taskId: string) => () => void;
+  // `on` must come from the same WebSocket instance that `onSubscribeTask`
+  // binds to (both sourced from the shared hook in useAppData). Using a
+  // locally-instantiated useWebSocket() here would open a second socket
+  // whose subscriptions are never set — so cli_output events for the
+  // TaskDetailModal's Activity tab would silently miss until a page
+  // reload coincidentally realigns the two connections.
+  onWsEvent: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
 }
 
 interface TaskColumnProps {
@@ -117,7 +123,7 @@ function loadDetailLayoutMode(): TaskDetailLayoutMode {
   return "modal";
 }
 
-export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubscribeTask }: TaskBoardProps) {
+export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubscribeTask, onWsEvent }: TaskBoardProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -133,7 +139,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
       window.localStorage.setItem(DETAIL_LAYOUT_STORAGE_KEY, mode);
     }
   }, []);
-  const { on } = useWebSocket();
+  const on = onWsEvent;
   const { play } = useSfx();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -145,6 +151,18 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
       setSearchParams({}, { replace: true });
     }
   }, [searchParams, tasks, setSearchParams]);
+
+  // Drop the selection when the underlying task disappears (e.g. the user
+  // hit Del on the card while the detail modal was pinned open). Without
+  // this, `selectedTaskId` lingers with no matching task, TaskDetailModal
+  // renders null, but `pinnedPanelVisible` stays true — leaving the board
+  // padded by PINNED_PANEL_WIDTH_PX and the leftmost columns pushed
+  // off-screen with no visible panel to explain the gap.
+  useEffect(() => {
+    if (selectedTaskId && !tasks.some((t) => t.id === selectedTaskId)) {
+      setSelectedTaskId(null);
+    }
+  }, [selectedTaskId, tasks]);
 
   // Listen for sidebar button events
   useEffect(() => {
