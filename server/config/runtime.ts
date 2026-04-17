@@ -123,6 +123,12 @@ export const GITHUB_SYNC_INTERVAL_MS = Number(process.env.GITHUB_SYNC_INTERVAL_M
 export const GITHUB_SYNC_PROJECT_PATH = process.env.GITHUB_SYNC_PROJECT_PATH ?? PROJECT_ROOT;
 export const AUTO_DISPATCH_INTERVAL_MS = Number(process.env.AUTO_DISPATCH_INTERVAL_MS ?? 60_000);
 
+// Maximum number of times orphan recovery may automatically re-spawn a parked
+// in_progress task. The counter resets on any forward stage transition
+// (in_progress → qa_testing, pr_review → in_progress rework, etc.), on
+// manual Run (POST /tasks/:id/run), and on manual feedback-rework.
+export const ORPHAN_AUTO_RESPAWN_MAX = Number(process.env.ORPHAN_AUTO_RESPAWN_MAX ?? 3);
+
 export const SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"
   review_count: 1,

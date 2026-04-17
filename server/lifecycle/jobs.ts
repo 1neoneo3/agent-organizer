@@ -1,8 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
-import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
+import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
+import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
+import type { Agent, Task } from "../types/runtime.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 
@@ -52,16 +54,32 @@ export function startOrphanRecovery(
   }, intervalMs);
 }
 
+export interface RecoverInProgressOrphansOptions {
+  spawnAgent?: typeof defaultSpawnAgent;
+  maxAutoRespawn?: number;
+}
+
 export function recoverInProgressOrphans(
   db: DatabaseSync,
   ws: WsHub,
   cache: CacheService | undefined,
   active: Map<string, unknown> | Set<string>,
+  options: RecoverInProgressOrphansOptions = {},
 ): void {
+  const spawnAgent = options.spawnAgent ?? defaultSpawnAgent;
+  const maxAutoRespawn = options.maxAutoRespawn ?? ORPHAN_AUTO_RESPAWN_MAX;
+
   // Recover both in_progress and refinement orphans
   const orphanCandidates = db.prepare(
-    "SELECT id, status, assigned_agent_id, refinement_plan FROM tasks WHERE status IN ('in_progress', 'refinement')",
-  ).all() as Array<{ id: string; status: string; assigned_agent_id: string | null; refinement_plan: string | null }>;
+    "SELECT id, status, assigned_agent_id, refinement_plan, started_at, auto_respawn_count FROM tasks WHERE status IN ('in_progress', 'refinement')",
+  ).all() as Array<{
+    id: string;
+    status: string;
+    assigned_agent_id: string | null;
+    refinement_plan: string | null;
+    started_at: number | null;
+    auto_respawn_count: number;
+  }>;
 
   for (const task of orphanCandidates) {
     if (hasActive(active, task.id)) continue;
@@ -115,11 +133,13 @@ export function recoverInProgressOrphans(
     // Spec: regressions from pr_review/ci_check/qa_testing/human_review may
     // land at in_progress but must never slip further back to inbox.
     //
-    // We deliberately do NOT re-spawn the agent here. Auto-respawn from
-    // inside a periodic timer is easy to misfire (e.g. a task the user
-    // just paused would silently restart on the next tick). The user can
-    // resume via the UI's Run control; the task is visible at in_progress
-    // with an idle agent assignment ready to pick it back up.
+    // Auto-respawn: when the assigned agent is idle (i.e. the previous
+    // crash released it) and the task has not exceeded its respawn budget,
+    // restart the agent so long-running tasks survive a crash without
+    // manual intervention. The budget resets on any forward stage
+    // transition (see process-manager close handler) and on manual Run /
+    // manual feedback-rework (see routes/tasks.ts), so only truly stuck
+    // tasks exhaust it.
     if (task.status === "in_progress") {
       if (task.assigned_agent_id) {
         db.prepare(
@@ -131,12 +151,44 @@ export function recoverInProgressOrphans(
       db.prepare(
         "UPDATE tasks SET started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ?",
       ).run(now, task.id);
+
+      // Evaluate auto-respawn eligibility. A pending interactive prompt
+      // that just timed out is cleared above and falls through here as a
+      // normal parked task.
+      const respawnDecision = evaluateAutoRespawn(db, task, maxAutoRespawn);
+
+      if (respawnDecision.kind === "respawn") {
+        const nextCount = task.auto_respawn_count + 1;
+        db.prepare(
+          "UPDATE tasks SET auto_respawn_count = ?, updated_at = ? WHERE id = ?",
+        ).run(nextCount, now, task.id);
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+        ).run(
+          task.id,
+          `Orphan recovery: auto-respawn attempt ${nextCount}/${maxAutoRespawn} with agent "${respawnDecision.agent.name}".`,
+        );
+        if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
+
+        const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+        try {
+          spawnAgent(db, ws, respawnDecision.agent, freshTask, { cache });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          db.prepare(
+            "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+          ).run(task.id, `Orphan recovery: auto-respawn failed: ${msg}. Will retry on next tick.`);
+        }
+        continue;
+      }
+
+      const parkReason =
+        respawnDecision.kind === "budget_exhausted"
+          ? `Orphan recovery: parked at in_progress. Auto-respawn budget exhausted (${task.auto_respawn_count}/${maxAutoRespawn}). Run the task again to resume.`
+          : "Orphan recovery: parked at in_progress (did not regress to inbox). Run the task again to resume.";
       db.prepare(
         "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
-      ).run(
-        task.id,
-        "Orphan recovery: parked at in_progress (did not regress to inbox). Run the task again to resume.",
-      );
+      ).run(task.id, parkReason);
       if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
       continue;
     }
@@ -225,4 +277,43 @@ export function recoverStuckAutoStages(
 function hasActive(active: Map<string, unknown> | Set<string>, id: string): boolean {
   if (active instanceof Map) return active.has(id);
   return active.has(id);
+}
+
+type AutoRespawnDecision =
+  | { kind: "respawn"; agent: Agent }
+  | { kind: "budget_exhausted" }
+  | { kind: "skip" };
+
+/**
+ * Decide whether an in_progress orphan should be auto-respawned this tick.
+ *
+ * Conditions for respawn:
+ *  - Task has an assigned agent (required to re-drive the pipeline).
+ *  - Assigned agent exists and is currently idle.
+ *  - `auto_respawn_count` is below the configured max.
+ *
+ * If the budget is already exhausted, return "budget_exhausted" so the
+ * caller can log a distinct "budget exhausted" park message. Any other
+ * ineligible reason (agent missing / not idle / no agent assigned) returns
+ * "skip" — the task stays parked quietly and will be re-evaluated on the
+ * next tick.
+ */
+function evaluateAutoRespawn(
+  db: DatabaseSync,
+  task: { id: string; assigned_agent_id: string | null; auto_respawn_count: number },
+  maxAutoRespawn: number,
+): AutoRespawnDecision {
+  if (task.auto_respawn_count >= maxAutoRespawn) {
+    return { kind: "budget_exhausted" };
+  }
+  if (!task.assigned_agent_id) {
+    return { kind: "skip" };
+  }
+  const agent = db.prepare(
+    "SELECT * FROM agents WHERE id = ?",
+  ).get(task.assigned_agent_id) as Agent | undefined;
+  if (!agent || agent.status !== "idle") {
+    return { kind: "skip" };
+  }
+  return { kind: "respawn", agent };
 }

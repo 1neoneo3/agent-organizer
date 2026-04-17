@@ -14,7 +14,7 @@
     "build": "vite build && tsc -p tsconfig.node.json --noEmit",
     "start": "NODE_ENV=production tsx server/index.ts",
     "check": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts server/**/*.test.ts",
+    "test": "tsx --test 'src/**/*.test.ts' 'server/**/*.test.ts'",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },

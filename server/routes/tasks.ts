@@ -436,7 +436,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET assigned_agent_id = ? WHERE id = ?").run(agentId, task.id);
     }
 
-    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId }, { cache });
+    // Manual Run is an explicit user intent — reset any prior orphan-recovery
+    // auto-respawn history so the task gets a fresh budget from zero.
+    db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
+
+    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
     res.json({ started: true, pid: result.pid });
   });
 
@@ -660,7 +664,27 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const offset = Number(req.query.offset ?? 0);
     const logs = db.prepare(
       "SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ? OFFSET ?"
-    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { message: string }>;
+    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { id: number; message: string }>;
+
+    // Stage transition markers are inserted by the tasks_log_stage_transition
+    // trigger on every status change. When a task is long-lived enough that
+    // in-stage logs exceed `limit`, the oldest transition markers fall
+    // outside the paginated window and the Activity terminal loses the
+    // earliest stage segments (e.g. inbox→refinement, refinement→in_progress).
+    // Always fold every transition marker for the task into the response so
+    // the client can rebuild the full stage timeline regardless of pagination.
+    const transitions = db.prepare(
+      "SELECT * FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC"
+    ).all(req.params.id) as Array<Record<string, unknown> & { id: number; message: string }>;
+
+    const seen = new Set<number>(logs.map((row) => row.id));
+    for (const row of transitions) {
+      if (!seen.has(row.id)) {
+        logs.push(row);
+        seen.add(row.id);
+      }
+    }
+    logs.sort((a, b) => Number(b.id) - Number(a.id));
 
     // Cap per-message length to keep the response payload bounded. Some rows
     // contain full tool-result JSON blobs (tens of KB each), which can push
@@ -816,7 +840,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "refinement" });
     } else {
-      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+      // Manual feedback-rework is an explicit user intent — reset the
+      // auto-respawn counter so a mid-rework crash gets a full retry budget.
+      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "in_progress" });
     }
 

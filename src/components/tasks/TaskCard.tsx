@@ -333,6 +333,23 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         </div>
       )}
 
+      {/* Auto-respawn status (parked task being retried) */}
+      {task.status === "in_progress" && task.started_at === null && task.auto_respawn_count > 0 && (
+        <div
+          style={{
+            padding: "6px 12px",
+            background: "var(--bg-tertiary)",
+            borderTop: "1px solid var(--border-default)",
+            borderBottom: "1px solid var(--border-default)",
+            textAlign: "center",
+          }}
+        >
+          <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-progress)" }}>
+            Resuming {task.auto_respawn_count}/3
+          </span>
+        </div>
+      )}
+
       {/* Agent Question / Text Input */}
       {(interactivePrompt?.promptType === "ask_user_question" || interactivePrompt?.promptType === "text_input_request") && (
         <div
