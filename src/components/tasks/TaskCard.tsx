@@ -1,9 +1,9 @@
 import { memo, useState, useRef, useEffect } from "react";
-import { getRoleColorClass } from "../../components/agents/roles.js";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
 import { sendTaskFeedback, sendInteractiveResponse, approveTask, rejectTask } from "../../api/endpoints.js";
 import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
+import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-time.js";
 
 const SIZE_LABEL: Record<string, string> = {
   small: "S",
@@ -128,6 +128,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
   };
 
   const statusColor = STATUS_COLORS[task.status] ?? "var(--status-inbox)";
+  const createdAtLabel = formatRelativeTaskTime(task.created_at);
+  const createdAtTooltip = formatTaskTimestamp(task.created_at);
 
   return (
     <div
@@ -537,6 +539,19 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             </button>
           </div>
         )}
+
+        <div
+          style={{
+            marginTop: "8px",
+            fontSize: "10px",
+            color: "var(--text-tertiary)",
+            borderTop: "1px solid var(--border-subtle, var(--border-default))",
+            paddingTop: "6px",
+          }}
+          title={createdAtTooltip}
+        >
+          Created {createdAtLabel}
+        </div>
       </div>
     </div>
   );
