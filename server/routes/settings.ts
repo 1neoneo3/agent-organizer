@@ -1,7 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { RuntimeContext } from "../types/runtime.js";
-import { SETTINGS_DEFAULTS, VALID_OUTPUT_LANGUAGES } from "../config/runtime.js";
+import {
+  SETTINGS_DEFAULTS,
+  VALID_OUTPUT_LANGUAGES,
+  VALID_WORKSPACE_MODES,
+} from "../config/runtime.js";
 
 const VALID_SETTINGS_KEYS = new Set([
   ...Object.keys(SETTINGS_DEFAULTS),
@@ -20,6 +24,7 @@ const VALID_SETTINGS_KEYS = new Set([
 // with the corresponding UI select options in SettingsPanel.tsx.
 const SETTINGS_ENUM_VALUES: Record<string, readonly string[]> = {
   output_language: VALID_OUTPUT_LANGUAGES,
+  default_workspace_mode: VALID_WORKSPACE_MODES,
 };
 
 const UpdateSettingsSchema = z.record(z.string(), z.string());

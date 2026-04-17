@@ -17,7 +17,16 @@ export interface ProjectWorkflow {
   e2eExecution: E2EExecutionMode;
   e2eCommand: string | null;
   gitWorkflow: "default" | "none";
-  workspaceMode: "shared" | "git-worktree";
+  /**
+   * Tri-state so callers can distinguish an explicit WORKFLOW.md opt-in
+   * or opt-out from "no value set":
+   *   - `"shared"`       — explicitly run every task in the main checkout
+   *   - `"git-worktree"` — explicitly isolate each task in a worktree
+   *   - `null`           — not specified in WORKFLOW.md; callers fall
+   *                        back to the `default_workspace_mode` global
+   *                        setting (default: `"git-worktree"`).
+   */
+  workspaceMode: "shared" | "git-worktree" | null;
   branchPrefix: string;
   beforeRun: string[];
   afterRun: string[];
@@ -66,7 +75,7 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   e2eExecution: "host",
   e2eCommand: null,
   gitWorkflow: "default",
-  workspaceMode: "shared",
+  workspaceMode: null,
   branchPrefix: "ao",
   beforeRun: [],
   afterRun: [],

@@ -650,7 +650,7 @@ export function spawnAgent(
   cleanEnv.CI = "1";
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
-  const workspace = prepareTaskWorkspace(task, workflow);
+  const workspace = prepareTaskWorkspace(task, workflow, db);
 
   // Run before_run hooks (env setup, dependency install, etc.)
   if (workflow?.beforeRun.length && !isContinue) {
@@ -1565,7 +1565,7 @@ export function spawnSecondaryReviewer(
   cleanEnv.CI = "1";
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
-  const workspace = prepareTaskWorkspace(task, workflow);
+  const workspace = prepareTaskWorkspace(task, workflow, db);
 
   const child = spawn(args[0], args.slice(1), {
     cwd: workspace.cwd,
