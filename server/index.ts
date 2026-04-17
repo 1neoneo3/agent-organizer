@@ -8,6 +8,7 @@ import { initializeDb } from "./db/runtime.js";
 import { createWsHub } from "./ws/hub.js";
 import { createRedisClient, createCacheService } from "./cache/index.js";
 import { mountRoutes } from "./routes/index.js";
+import { mountStatic } from "./static-handlers.js";
 import { authMiddleware } from "./security/auth.js";
 import { startOrphanRecovery } from "./lifecycle/jobs.js";
 import { restorePendingInteractivePrompts } from "./spawner/process-manager.js";
@@ -48,10 +49,7 @@ app.use("/api", mountRoutes(ctx));
 
 // Serve static files from dist/ when it exists
 const distPath = resolve(__dirname, "..", "dist");
-app.use(express.static(distPath));
-app.get("/{*splat}", (_req, res) => {
-  res.sendFile(resolve(distPath, "index.html"));
-});
+mountStatic(app, distPath);
 
 // HTTP server
 const server = createServer(app);
