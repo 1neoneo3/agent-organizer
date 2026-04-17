@@ -192,11 +192,75 @@ describe("groupLogsByStage", () => {
     const segments = groupLogsByStage(logs);
     assert.equal(segments.length, 3);
     assert.equal(segments[0]?.stage, "in_progress");
+    assert.equal(segments[0]?.fromStage, null);
     assert.match(segments[0]?.text ?? "", /working/);
     assert.equal(segments[1]?.stage, "self_review");
+    assert.equal(segments[1]?.fromStage, "in_progress");
     assert.match(segments[1]?.text ?? "", /reviewing/);
     assert.equal(segments[2]?.stage, "qa_testing");
+    assert.equal(segments[2]?.fromStage, "self_review");
     assert.match(segments[2]?.text ?? "", /testing/);
+  });
+
+  it("emits a segment for every transition even when a stage produces no displayable logs", () => {
+    // Simulates the #412 scenario: inbox→refinement→in_progress→test_generation
+    // where refinement produced no assistant logs. Every transition must
+    // still result in its own segment so the terminal can show the full
+    // stage history.
+    const logs: TaskLog[] = [
+      createLog(1, {
+        stage: "refinement",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}inbox→refinement`,
+      }),
+      createLog(2, {
+        stage: "in_progress",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}refinement→in_progress`,
+      }),
+      createLog(3, { stage: "in_progress", message: "doing work" }),
+      createLog(4, {
+        stage: "test_generation",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→test_generation`,
+      }),
+      createLog(5, { stage: "test_generation", message: "writing tests" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 3);
+    // refinement stage had no displayable logs but still gets its own segment.
+    assert.equal(segments[0]?.stage, "refinement");
+    assert.equal(segments[0]?.fromStage, "inbox");
+    assert.equal(segments[0]?.entryCount, 0);
+    assert.equal(segments[1]?.stage, "in_progress");
+    assert.equal(segments[1]?.fromStage, "refinement");
+    assert.match(segments[1]?.text ?? "", /doing work/);
+    assert.equal(segments[2]?.stage, "test_generation");
+    assert.equal(segments[2]?.fromStage, "in_progress");
+    assert.match(segments[2]?.text ?? "", /writing tests/);
+  });
+
+  it("merges a transition marker into the current implicit segment when the stage matches", () => {
+    // If the client has been streaming logs with stage=in_progress and the
+    // (delayed) transition marker then arrives, we must NOT open a second,
+    // duplicate in_progress segment. Instead, backfill fromStage on the
+    // existing segment and keep it going.
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", message: "already working" }),
+      createLog(2, {
+        stage: "in_progress",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}refinement→in_progress`,
+      }),
+      createLog(3, { stage: "in_progress", message: "still working" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 1);
+    assert.equal(segments[0]?.stage, "in_progress");
+    assert.equal(segments[0]?.fromStage, "refinement");
+    assert.equal(segments[0]?.entryCount, 2);
   });
 
   it("splits segments when stage changes without an explicit marker", () => {
