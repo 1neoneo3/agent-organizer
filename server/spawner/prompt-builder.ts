@@ -562,7 +562,16 @@ export interface ActiveTaskContext {
   description: string | null;
 }
 
-export function buildRefinementPrompt(task: Task, activeTasks?: ActiveTaskContext[]): string {
+export interface BuildRefinementPromptOptions {
+  asPr?: boolean;
+}
+
+export function buildRefinementPrompt(
+  task: Task,
+  activeTasks?: ActiveTaskContext[],
+  options: BuildRefinementPromptOptions = {},
+): string {
+  const refinementAsPr = options.asPr ?? false;
   const parts: string[] = [];
 
   parts.push("## Language");
@@ -587,7 +596,11 @@ export function buildRefinementPrompt(task: Task, activeTasks?: ActiveTaskContex
 
   parts.push("# 調整フェーズ: タスク計画の策定");
   parts.push("");
-  parts.push("**重要な制約: コードの変更は行わないでください。分析と計画策定のみ。**");
+  parts.push(
+    refinementAsPr
+      ? "**重要な制約: 実装コードは変更しないでください。計画書の作成・保存・PR 化のみ許可されます。**"
+      : "**重要な制約: コードの変更は行わないでください。分析と計画策定のみ。**",
+  );
   parts.push("");
   parts.push(`## タスク: ${task.title}`);
   parts.push("");
@@ -702,7 +715,11 @@ export function buildRefinementPrompt(task: Task, activeTasks?: ActiveTaskContex
   parts.push("");
   parts.push("---END REFINEMENT---");
   parts.push("");
-  parts.push("重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。");
+  parts.push(
+    refinementAsPr
+      ? "重要: 実装コードは変更しないこと。計画書 Markdown の作成・更新、git 操作、PR 作成のみ許可されます。"
+      : "重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。",
+  );
 
   return parts.join("\n");
 }

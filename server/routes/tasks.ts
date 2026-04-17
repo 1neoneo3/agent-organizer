@@ -121,6 +121,13 @@ export function buildContinuePromptFromInteractiveResponse({
     : "The user acknowledged your question without a specific answer.";
 }
 
+export function resolveRequestedAgentId(
+  taskAssignedAgentId: string | null | undefined,
+  requestedAgentId: string | null | undefined,
+): string | undefined {
+  return requestedAgentId ?? taskAssignedAgentId ?? undefined;
+}
+
 function nextTaskNumber(db: RuntimeContext["db"]): string {
   const row = db.prepare(
     "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
@@ -417,7 +424,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") return res.status(409).json({ error: "already_running" });
 
-    const agentId = task.assigned_agent_id ?? (req.body as { agent_id?: string }).agent_id;
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
     if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
@@ -455,6 +462,32 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     await cache.del("agents:all");
     ws.broadcast("task_update", { id: req.params.id, status: "cancelled" });
     res.json({ stopped: true });
+  });
+
+  // Resume a cancelled task: re-assign agent and spawn back to in_progress
+  router.post("/tasks/:id/resume", async (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (task.status !== "cancelled") return res.status(409).json({ error: "not_cancelled" });
+
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
+    if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
+
+    const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
+    if (!agent) return res.status(404).json({ error: "agent_not_found" });
+    if (agent.status === "working") return res.status(409).json({ error: "agent_busy" });
+
+    const now = Date.now();
+    db.prepare(
+      "UPDATE tasks SET status = 'in_progress', completed_at = NULL, assigned_agent_id = ?, updated_at = ? WHERE id = ?"
+    ).run(agentId, now, task.id);
+
+    const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+    const result = spawnAgent(db, ws, agent, freshTask, { cache });
+
+    await invalidateTaskCaches();
+    res.json({ resumed: true, pid: result.pid });
   });
 
   // Approve a task in human_review or refinement — advance to next stage

@@ -10,10 +10,11 @@
     "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
+    "lint": "tsc --noEmit",
     "build": "vite build && tsc -p tsconfig.node.json --noEmit",
     "start": "NODE_ENV=production tsx server/index.ts",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test server/__tests__/static-cache-headers.test.ts",
+    "test": "tsx --test 'src/**/*.test.ts' 'server/**/*.test.ts'",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },

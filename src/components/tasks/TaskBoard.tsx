@@ -4,7 +4,7 @@ import { TaskCard } from "./TaskCard.js";
 import { CreateTaskModal } from "./CreateTaskModal.js";
 import { TaskDetailModal, PINNED_PANEL_WIDTH_PX, type TaskDetailLayoutMode } from "./TaskDetailModal.js";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
-import { createTask, runTask, stopTask, updateTask, deleteTask, createAgent } from "../../api/endpoints.js";
+import { createTask, runTask, stopTask, resumeTask, updateTask, deleteTask, createAgent } from "../../api/endpoints.js";
 import { AgentForm, type AgentFormData } from "../agents/AgentForm.js";
 import { getRoleLabel } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
@@ -39,6 +39,7 @@ interface TaskColumnProps {
   interactivePrompts: Map<string, InteractivePrompt>;
   onRun: (taskId: string, agentId: string) => Promise<void>;
   onStop: (taskId: string) => Promise<void>;
+  onResume: (taskId: string, agentId: string) => Promise<void>;
   onDone: (taskId: string) => Promise<void>;
   onSelect: (taskId: string) => void;
   onShowLog: (taskId: string) => void;
@@ -56,6 +57,7 @@ const TaskColumn = memo(function TaskColumn({
   interactivePrompts,
   onRun,
   onStop,
+  onResume,
   onDone,
   onSelect,
   onShowLog,
@@ -101,6 +103,7 @@ const TaskColumn = memo(function TaskColumn({
             interactivePrompt={interactivePrompts.get(task.id)}
             onRun={onRun}
             onStop={onStop}
+            onResume={onResume}
             onDone={onDone}
             onSelect={onSelect}
             onShowLog={onShowLog}
@@ -192,6 +195,12 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   const handleStop = useCallback(async (taskId: string) => {
     play("cancel");
     await stopTask(taskId);
+    onReload();
+  }, [onReload, play]);
+
+  const handleResume = useCallback(async (taskId: string, agentId: string) => {
+    play("confirm");
+    await resumeTask(taskId, agentId);
     onReload();
   }, [onReload, play]);
 
@@ -289,6 +298,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
               interactivePrompts={interactivePrompts}
               onRun={handleRun}
               onStop={handleStop}
+              onResume={handleResume}
               onDone={handleDone}
               onSelect={setSelectedTaskId}
               onShowLog={setLogTaskId}
@@ -313,6 +323,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
             onClose={() => setSelectedTaskId(null)}
             onRun={handleRun}
             onStop={handleStop}
+            onResume={handleResume}
             layoutMode={detailLayoutMode}
             onLayoutModeChange={setDetailLayoutMode}
           />
