@@ -209,7 +209,7 @@ src/
 e2e/                 # Playwright E2E tests
 data/
   agent-organizer.db # SQLite database
-  .ao-worktrees/     # Per-task git worktrees (when workspace_mode = git-worktree)
+.ao-worktrees/       # Per-task git worktrees at repo root (when workspace_mode = git-worktree)
 ```
 
 ## API Endpoints
