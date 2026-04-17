@@ -34,6 +34,8 @@ import type { TaskLogKind } from "../types/runtime.js";
 import {
   TASK_RUN_IDLE_TIMEOUT_MS,
   TASK_RUN_HARD_TIMEOUT_MS,
+  isOutputLanguage,
+  type OutputLanguage,
 } from "../config/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
@@ -584,6 +586,11 @@ export function spawnAgent(
     }
   }
 
+  const outputLanguage: OutputLanguage = (() => {
+    const raw = getSetting(db, "output_language", task.id);
+    return raw && isOutputLanguage(raw) ? raw : "ja";
+  })();
+
   const prompt = isContinue
     ? options!.continuePrompt!
     : (isRefinementRun
@@ -592,22 +599,27 @@ export function spawnAgent(
             "SELECT task_number, title, status, project_path, description FROM tasks WHERE status NOT IN ('done','cancelled') AND id != ? ORDER BY created_at DESC LIMIT 20"
           ).all(task.id) as Array<{ task_number: string; title: string; status: string; project_path: string | null; description: string | null }>;
           return rows;
-        })(), { asPr: refinementAsPr })
+        })(), { asPr: refinementAsPr, language: outputLanguage })
       : (isTestGenRun
         ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
             parallel: isParallelTester,
+            language: outputLanguage,
           }) + handoffContext
         : (isQaRun
-          ? buildQaPrompt(task, workflow?.projectType ?? "generic") + handoffContext
+          ? buildQaPrompt(task, workflow?.projectType ?? "generic", outputLanguage) + handoffContext
           : (isCiCheckRun
-            ? buildCiCheckPrompt(task) + handoffContext
+            ? buildCiCheckPrompt(task, outputLanguage) + handoffContext
             : (isReviewRun
-              ? buildReviewPrompt(task, { reviewerRole: options?.reviewerRole ?? "code" }) + handoffContext
+              ? buildReviewPrompt(task, {
+                  reviewerRole: options?.reviewerRole ?? "code",
+                  language: outputLanguage,
+                }) + handoffContext
               : buildTaskPrompt(task, {
                   selfReview,
                   workflow,
                   runtimePolicy,
                   parallelScope: parallelImplEnabled ? "implementer" : undefined,
+                  language: outputLanguage,
                 }) + exploreContext)))));
 
   // Log directory
@@ -1294,7 +1306,10 @@ export function spawnAgent(
     if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "ci_check" || finalStatus === "done")) {
       // Extract executed commands from task logs for PR verification section
       const executedCommands = extractExecutedCommands(db, task.id, task.started_at ?? 0);
-      const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, { executedCommands });
+      const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, {
+        executedCommands,
+        language: outputLanguage,
+      });
 
       // Fallback: when promoteTaskReviewArtifact can't run (workspaceMode
       // !== "git-worktree", or the agent created a nested repository

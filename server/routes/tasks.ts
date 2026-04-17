@@ -532,7 +532,10 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Parse implementation steps from the refinement plan
     const plan = task.refinement_plan;
-    const implMatch = plan.match(/## 実装計画 \(Implementation Plan\)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
+    // Match both Japanese and English refinement-plan section headings.
+    // Legacy plans used `## 実装計画 (Implementation Plan)`; current plans
+    // emit either `## 実装計画` (ja) or `## Implementation Plan` (en).
+    const implMatch = plan.match(/## (?:実装計画(?: \(Implementation Plan\))?|Implementation Plan)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
     if (!implMatch) return res.status(400).json({ error: "no_implementation_steps" });
 
     const stepsRaw = implMatch[1].trim();

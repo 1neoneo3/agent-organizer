@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { RuntimeContext, Directive } from "../types/runtime.js";
 import { buildDecomposePrompt } from "./prompt-builder.js";
 import { withCliPathFallback } from "./cli-tools.js";
+import { isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 
 const PLAN_SEPARATOR = "---PLAN---";
 const MAX_LOG_LINES = 500;
@@ -76,7 +77,15 @@ export async function decomposeDirective(
     const startEntry = appendLog(directive.id, "system", "Decomposition started");
     ws.broadcast("decompose_output", startEntry);
 
-    const prompt = buildDecomposePrompt(directive);
+    const languageRow = db.prepare(
+      "SELECT value FROM settings WHERE key = 'output_language'",
+    ).get() as { value: string } | undefined;
+    const language: OutputLanguage =
+      languageRow?.value && isOutputLanguage(languageRow.value)
+        ? languageRow.value
+        : "ja";
+
+    const prompt = buildDecomposePrompt(directive, language);
     const output = await runClaudeprint({
       prompt,
       cwd: directive.project_path,

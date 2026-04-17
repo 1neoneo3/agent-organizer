@@ -4,6 +4,7 @@ import type { Task, Agent } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { buildAgentArgs, EXPLORE_ALLOWED_TOOLS } from "./cli-tools.js";
 import { buildExplorePrompt } from "./prompt-builder.js";
+import { isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 
 const EXPLORE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes max
 
@@ -39,7 +40,15 @@ export function runExplorePhase(
     return null;
   }
 
-  const prompt = buildExplorePrompt(task);
+  const languageSetting = db.prepare(
+    "SELECT value FROM settings WHERE key = 'output_language'",
+  ).get() as { value: string } | undefined;
+  const language: OutputLanguage =
+    languageSetting?.value && isOutputLanguage(languageSetting.value)
+      ? languageSetting.value
+      : "ja";
+
+  const prompt = buildExplorePrompt(task, language);
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
     allowedTools: EXPLORE_ALLOWED_TOOLS,
