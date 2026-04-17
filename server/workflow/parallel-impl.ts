@@ -67,8 +67,12 @@ export function recordParallelTestCompletion(
   taskId: string,
   verdict: "pass" | "fail",
 ): void {
+  // Parallel tester runs the test_generation prompt while the implementer
+  // task stays in in_progress. Tag the DONE marker as test_generation so
+  // log filters and the plan-extraction query can distinguish it from
+  // implementer output without depending on the trigger fallback.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, 'test_generation')",
   ).run(taskId, `${PARALLEL_TEST_DONE_MARKER} ${verdict}`);
 }
 
@@ -204,7 +208,10 @@ function findTesterAgent(
 }
 
 function logSystem(db: DatabaseSync, taskId: string, message: string): void {
+  // Parallel-impl trigger runs during in_progress (the implementer's stage).
+  // Tag explicitly so orchestration messages ("parallel tester started", etc.)
+  // land on the implementer's timeline without trigger-fallback race.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, 'in_progress')",
   ).run(taskId, message);
 }

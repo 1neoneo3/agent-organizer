@@ -543,6 +543,24 @@ export function spawnAgent(
   const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
   const hasExistingPlan = !!task.refinement_plan;
   const isRefinementRun = !hasExistingPlan && (task.status === "refinement" || (task.status === "inbox" && activeStages[0] === "refinement"));
+
+  // Capture the stage this spawn represents once, at spawn time. Every
+  // task_logs INSERT emitted during the spawn lifecycle uses this value
+  // so that late-arriving stdout (or any DB write that races with a
+  // status UPDATE in performFinalization) cannot be mis-tagged by the
+  // `task_logs_fill_metadata` trigger's SELECT-from-tasks fallback.
+  //
+  // Parallel tester spawns share the worktree with the implementer but
+  // they run the test-generation prompt, so tag their logs as
+  // `test_generation` even though `task.status` stays `in_progress`.
+  const spawnStage: string =
+    isParallelTester ? "test_generation"
+    : isRefinementRun ? "refinement"
+    : isReviewRun ? "pr_review"
+    : isQaRun ? "qa_testing"
+    : isCiCheckRun ? "ci_check"
+    : isTestGenRun ? "test_generation"
+    : "in_progress";
   // When enabled, the refinement agent commits the plan to a Markdown
   // file on a fresh branch and opens a PR. This requires write + git
   // access, so the read-only tool restriction must be lifted.
@@ -774,17 +792,21 @@ export function spawnAgent(
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
 
-  // Pre-compile prepared statements (avoid re-compiling in hot data handler)
+  // Pre-compile prepared statements (avoid re-compiling in hot data handler).
+  // Both statements include `stage` and `agent_id` so that they are never
+  // filled by the `task_logs_fill_metadata` trigger, which would otherwise
+  // race with a mid-stream status UPDATE in performFinalization and mis-tag
+  // late-arriving logs.
   const insertLogStmt = db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, ?, ?)"
+    "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)"
   );
   const insertStderrStmt = db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'stderr', ?)"
+    "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'stderr', ?, ?, ?)"
   );
 
   if (!isContinue) {
     const runtimeMessage = `[Runtime] ${runtimePolicy.summary}`;
-    insertLogStmt.run(task.id, "system", runtimeMessage);
+    insertLogStmt.run(task.id, "system", runtimeMessage, spawnStage, agent.id);
     ws.broadcast(
       "cli_output",
       [{ task_id: task.id, kind: "system", message: runtimeMessage }],
@@ -801,7 +823,7 @@ export function spawnAgent(
     db.exec("BEGIN");
     try {
       for (const entry of entries) {
-        insertLogStmt.run(task.id, entry.kind, entry.message);
+        insertLogStmt.run(task.id, entry.kind, entry.message, spawnStage, agent.id);
       }
       db.exec("COMMIT");
     } catch (error) {
@@ -910,7 +932,7 @@ export function spawnAgent(
           pendingInteractivePrompts.set(task.id, entry);
           persistPromptToDb(db, task.id, entry);
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
-          insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`);
+          insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`, spawnStage, agent.id);
 
           // Kill the process so it can't auto-resolve the prompt
           interactivePromptKilled = true;
@@ -927,7 +949,7 @@ export function spawnAgent(
             pendingInteractivePrompts.set(task.id, entry);
             persistPromptToDb(db, task.id, entry);
             ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
-            insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`);
+            insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`, spawnStage, agent.id);
 
             interactivePromptKilled = true;
             try { child.kill("SIGTERM"); } catch { /* already dead */ }
@@ -980,7 +1002,7 @@ export function spawnAgent(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
     logStream.write(`[stderr] ${text}`);
-    insertStderrStmt.run(task.id, text);
+    insertStderrStmt.run(task.id, text, spawnStage, agent.id);
     ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
 
     // Loop detection: normalize and count repeated error patterns
@@ -993,7 +1015,7 @@ export function spawnAgent(
           loopDetected = true;
           const msg = `[Loop Detection] Same error repeated ${count} times, terminating process. Pattern: ${normalized.slice(0, 200)}`;
           logStream.write(`${msg}\n`);
-          insertLogStmt.run(task.id, "system", msg);
+          insertLogStmt.run(task.id, "system", msg, spawnStage, agent.id);
           ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: msg }], { taskId: task.id });
           child.kill("SIGTERM");
         }
@@ -1069,12 +1091,16 @@ export function spawnAgent(
           task.id,
           "system",
           `Parallel tester completion logging failed: ${err instanceof Error ? err.message : String(err)}`,
+          spawnStage,
+          agent.id,
         );
       }
       insertLogStmt.run(
         task.id,
         "system",
         `Parallel tester process exited with code ${code}. Verdict: ${verdict}`,
+        spawnStage,
+        agent.id,
       );
       db.prepare(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
@@ -1095,7 +1121,7 @@ export function spawnAgent(
       db.prepare(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
       ).run(finishTime, agent.id);
-      insertLogStmt.run(task.id, "system", "Agent awaiting user input (interactive prompt). Task remains in_progress.");
+      insertLogStmt.run(task.id, "system", "Agent awaiting user input (interactive prompt). Task remains in_progress.", spawnStage, agent.id);
       invalidateCaches(cache);
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
@@ -1106,7 +1132,7 @@ export function spawnAgent(
     if (feedback) {
       pendingFeedback.delete(task.id);
 
-      insertLogStmt.run(task.id, "system", "Restarting with user feedback (--resume)");
+      insertLogStmt.run(task.id, "system", "Restarting with user feedback (--resume)", spawnStage, agent.id);
       ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: "Restarting with user feedback..." }], { taskId: task.id });
 
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
@@ -1139,7 +1165,7 @@ export function spawnAgent(
       if (resetCount >= MAX_CONTEXT_RESETS) {
         // Max resets reached — actually cancel
         const cancelMsg = `[Context Reset] Max resets (${MAX_CONTEXT_RESETS}) reached. Cancelling task.`;
-        insertLogStmt.run(task.id, "system", cancelMsg);
+        insertLogStmt.run(task.id, "system", cancelMsg, spawnStage, agent.id);
 
         db.prepare(
           "UPDATE tasks SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE id = ?"
@@ -1172,10 +1198,10 @@ export function spawnAgent(
         resetNumber: resetCount + 1,
         summary: handoffSummary || "No assistant output captured before timeout.",
       };
-      insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`);
+      insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`, spawnStage, agent.id);
 
       const resetMsg = `[Context Reset] ${timeoutReason === "idle_timeout" ? "Idle" : "Hard"} timeout after ${timeoutMs}ms. Resetting context for fresh agent. (reset ${resetCount + 1}/${MAX_CONTEXT_RESETS})`;
-      insertLogStmt.run(task.id, "system", resetMsg);
+      insertLogStmt.run(task.id, "system", resetMsg, spawnStage, agent.id);
 
       // Reset task to inbox for auto-dispatcher to pick up
       db.prepare(
@@ -1241,6 +1267,8 @@ export function spawnAgent(
             task.id,
             "system",
             `[Reviewer Panel] primary reviewer finished (exit ${code}); awaiting ${session.secondaries.size} secondary reviewer(s) before task advance`,
+            spawnStage,
+            agent.id,
           );
           return;
         }
@@ -1293,7 +1321,7 @@ export function spawnAgent(
     if (code === 0 && workflow?.afterRun.length) {
       const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd);
       for (const hr of hookResults) {
-        insertLogStmt.run(task.id, "system", `[after_run] ${hr.command}: ${hr.ok ? "OK" : "WARNING"}${hr.output ? `\n${hr.output}` : ""}`);
+        insertLogStmt.run(task.id, "system", `[after_run] ${hr.command}: ${hr.ok ? "OK" : "WARNING"}${hr.output ? `\n${hr.output}` : ""}`, spawnStage, agent.id);
       }
     }
 
@@ -1305,7 +1333,7 @@ export function spawnAgent(
         filesModified: [] as string[],
         summary: `Implementation completed. Moving to ${finalStatus}.`,
       };
-      insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`);
+      insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`, spawnStage, agent.id);
     }
 
     // Any successful stage transition (including pr_review → in_progress rework)
@@ -1585,11 +1613,14 @@ export function spawnSecondaryReviewer(
   invalidateCaches(cache);
   ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
 
+  // Secondary reviewers always run during the pr_review stage. Tag their
+  // logs explicitly so they never get mis-attributed by the trigger fallback.
+  const secondaryStage = "pr_review";
   const insertLogStmt = db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, ?, ?)"
+    "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)"
   );
 
-  insertLogStmt.run(task.id, "system", `[Runtime:${role}] ${runtimePolicy.summary}`);
+  insertLogStmt.run(task.id, "system", `[Runtime:${role}] ${runtimePolicy.summary}`, secondaryStage, agent.id);
 
   // Send prompt via stdin
   if (child.stdin) {
@@ -1644,7 +1675,7 @@ export function spawnSecondaryReviewer(
       db.exec("BEGIN");
       try {
         for (const entry of classified) {
-          insertLogStmt.run(task.id, entry.kind, entry.message);
+          insertLogStmt.run(task.id, entry.kind, entry.message, secondaryStage, agent.id);
         }
         db.exec("COMMIT");
       } catch {
@@ -1662,7 +1693,7 @@ export function spawnSecondaryReviewer(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
     logStream.write(`[stderr:${role}] ${text}`);
-    insertLogStmt.run(task.id, "stderr", text);
+    insertLogStmt.run(task.id, "stderr", text, secondaryStage, agent.id);
   });
 
   child.on("error", () => {
@@ -1688,7 +1719,7 @@ export function spawnSecondaryReviewer(
 
     const finishTime = Date.now();
     db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(finishTime, agent.id);
-    insertLogStmt.run(task.id, "system", `Secondary reviewer (${role}) exited with code ${code}.`);
+    insertLogStmt.run(task.id, "system", `Secondary reviewer (${role}) exited with code ${code}.`, secondaryStage, agent.id);
 
     invalidateCaches(cache);
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
