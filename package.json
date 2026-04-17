@@ -13,6 +13,7 @@
     "build": "vite build && tsc -p tsconfig.node.json --noEmit",
     "start": "NODE_ENV=production tsx server/index.ts",
     "check": "tsc --noEmit",
+    "test": "node --import tsx --test server/__tests__/static-cache-headers.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
