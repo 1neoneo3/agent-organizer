@@ -730,4 +730,47 @@ describe("extractRefinementPlanFromLogs", () => {
       assert.doesNotMatch(result.plan, /from previous run/);
     }
   });
+
+  it("captures logs inserted via DEFAULT created_at within the same wall-second (precision alignment)", () => {
+    // Regression test for Bug 2's second-precision trap: task_logs.created_at
+    // defaults to `unixepoch() * 1000` (second-granular ms, sub-second
+    // portion always zero). If `spawnStartedAt` is captured as raw
+    // `Date.now()`, it is up to 999ms ahead of the DEFAULT, which
+    // excludes any log inserted inside the same wall-second as the
+    // spawn — exactly when refinement agents emit their first output.
+    // spawnAgent now floors `Date.now()` to the second so the `>=`
+    // filter is inclusive. This test locks that invariant in.
+    const db = createDb();
+    const task = insertTask(db, { id: "tprec" });
+    const spawnStartedAt = Math.floor(Date.now() / 1000) * 1000;
+
+    // Production-path insert: rely on DEFAULT created_at. No explicit
+    // created_at argument — this is what the real insertLogStmt does.
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'assistant', ?, 'refinement')",
+    ).run(task.id, "---REFINEMENT PLAN---\nX\n---END REFINEMENT---");
+
+    const result = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
+    assert.equal(result.kind, "plan", "plan must be captured even when created_at == floor(spawnStartedAt)");
+  });
+
+  it("returns the LAST plan block when agent emits multiple drafts", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tmulti" });
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      "---REFINEMENT PLAN---\nDRAFT v1\n---END REFINEMENT---\n\nOn second thought...\n\n" +
+        "---REFINEMENT PLAN---\nFINAL v2\n---END REFINEMENT---",
+      2_000,
+    );
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "plan");
+    if (result.kind === "plan") {
+      assert.match(result.plan, /FINAL v2/);
+      assert.doesNotMatch(result.plan, /DRAFT v1/);
+    }
+  });
 });

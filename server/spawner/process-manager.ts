@@ -381,9 +381,17 @@ export function extractRefinementPlanFromLogs(
     .all(taskId, spawnStartedAt) as Array<{ message: string }>;
 
   const combined = refLogs.map((l) => l.message).join("\n");
-  const planMatch = combined.match(/---REFINEMENT PLAN---([\s\S]*?)---END REFINEMENT---/);
+  // Match ALL plan blocks and take the LAST one. Agents sometimes emit
+  // a draft plan, then a revised final plan in the same run; taking the
+  // first match would freeze the draft. Using the last match aligns with
+  // the user-visible "final answer" semantics.
+  const planMatches = Array.from(
+    combined.matchAll(/---REFINEMENT PLAN---([\s\S]*?)---END REFINEMENT---/g),
+  );
 
-  if (planMatch) return { kind: "plan", plan: planMatch[0] };
+  if (planMatches.length > 0) {
+    return { kind: "plan", plan: planMatches[planMatches.length - 1][0] };
+  }
   if (combined.length > 0) return { kind: "fallback", plan: combined.slice(-5000) };
   return { kind: "empty" };
 }
@@ -619,7 +627,15 @@ export function spawnAgent(
   // may overwrite the task row's started_at before or while the
   // extraction query runs, which would cause the refinement plan
   // extraction in performFinalization to miss its own logs.
-  const spawnStartedAt = Date.now();
+  //
+  // Precision alignment: `task_logs.created_at` defaults to
+  // `unixepoch() * 1000` which is **second-granular** ms (sub-second
+  // portion always zero). `Date.now()` is true ms, so using it raw as a
+  // lower bound drops any log inserted inside the same wall-second as
+  // the spawn (the window in which refinement agents most frequently
+  // emit their first output). Floor to the second to match the DEFAULT
+  // so `created_at >= spawnStartedAt` is inclusive for the current run.
+  const spawnStartedAt = Math.floor(Date.now() / 1000) * 1000;
   // When enabled, the refinement agent commits the plan to a Markdown
   // file on a fresh branch and opens a PR. This requires write + git
   // access, so the read-only tool restriction must be lifted.
@@ -1387,18 +1403,37 @@ export function spawnAgent(
     // `extractRefinementPlanFromLogs` for the query contract.
     if (isRefinementRun && code === 0) {
       const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
+      const updatePlanStmt = db.prepare("UPDATE tasks SET refinement_plan = ? WHERE id = ?");
 
       if (extraction.kind === "plan") {
-        db.prepare("UPDATE tasks SET refinement_plan = ? WHERE id = ?").run(extraction.plan, task.id);
+        updatePlanStmt.run(extraction.plan, task.id);
       } else if (extraction.kind === "fallback") {
-        db.prepare("UPDATE tasks SET refinement_plan = ? WHERE id = ?").run(extraction.plan, task.id);
-        insertLogStmt.run(
-          task.id,
-          "system",
-          "[refinement] plan markers (---REFINEMENT PLAN--- ... ---END REFINEMENT---) not found; saved last 5000 chars as fallback",
-          spawnStage,
-          agent.id,
-        );
+        // Fallback guard: if a valid plan already exists, do NOT replace
+        // it with the marker-less tail. Normally `hasExistingPlan` short-
+        // circuits a second refinement spawn, but paths like manual Run
+        // or `refinement_as_pr` can still enter this branch with a
+        // populated plan — we must not silently corrupt it.
+        const existing = (db
+          .prepare("SELECT refinement_plan FROM tasks WHERE id = ?")
+          .get(task.id) as { refinement_plan: string | null } | undefined)?.refinement_plan;
+        if (existing && existing.length > 0) {
+          insertLogStmt.run(
+            task.id,
+            "system",
+            "[refinement] plan markers missing in this run; existing refinement_plan preserved (no overwrite)",
+            spawnStage,
+            agent.id,
+          );
+        } else {
+          updatePlanStmt.run(extraction.plan, task.id);
+          insertLogStmt.run(
+            task.id,
+            "system",
+            "[refinement] plan markers (---REFINEMENT PLAN--- ... ---END REFINEMENT---) not found; saved last 5000 chars as fallback",
+            spawnStage,
+            agent.id,
+          );
+        }
       } else {
         // No assistant output captured for this run. Do NOT overwrite
         // refinement_plan with "" — a previous run may have produced a
