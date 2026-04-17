@@ -503,6 +503,18 @@ export function spawnAgent(
   const isParallelTester = options?.parallelTester === true;
   const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
+
+  // Duplicate-spawn guard: if a process is already running for this task
+  // (parallelTester shares a worktree with the implementer and is allowed
+  // to overlap), short-circuit instead of starting a second one. This
+  // protects against orphan-recovery re-spawn racing with a user Run click
+  // or a stale active-process entry.
+  if (!isParallelTester && !isContinue) {
+    const existing = activeProcesses.get(task.id);
+    if (existing && existing.pid !== undefined && !existing.killed) {
+      return { pid: existing.pid };
+    }
+  }
   const projectPath = task.project_path ?? process.cwd();
   const workflow = loadProjectWorkflow(projectPath);
   const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
@@ -668,7 +680,18 @@ export function spawnAgent(
     } else {
       db.prepare("UPDATE tasks SET assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
     }
-    db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
+    // Atomic idle guard: only transition the agent if it is currently idle.
+    // If another spawn grabbed it first (race with orphan-recovery tick /
+    // user Run click / auto-dispatcher), abort this spawn cleanly so we
+    // do not double-drive the same agent.
+    const agentUpdate = db.prepare(
+      "UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ? AND status = 'idle'",
+    ).run(task.id, now, agent.id);
+    if (agentUpdate.changes === 0) {
+      activeProcesses.delete(task.id);
+      try { child.kill("SIGKILL"); } catch { /* child may already be gone */ }
+      throw new Error(`spawnAgent aborted: agent ${agent.id} is not idle`);
+    }
 
     invalidateCaches(cache);
     const startedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
@@ -1273,13 +1296,17 @@ export function spawnAgent(
       insertLogStmt.run(task.id, "system", `[HANDOFF] ${JSON.stringify(handoff)}`);
     }
 
+    // Any successful stage transition (including pr_review → in_progress rework)
+    // resets auto_respawn_count — ステージ前進の実績があった証なので、次回
+    // parkされた時は再び3回の予算を獲得する。inbox への差し戻しや done も
+    // 同じく「このspawnは完走してcloseまで到達した」実績なのでリセット。
     if (finalStatus === "inbox") {
       db.prepare(
-        "UPDATE tasks SET status = 'inbox', started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ?"
+        "UPDATE tasks SET status = 'inbox', started_at = NULL, completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?"
       ).run(finishTime, task.id);
     } else {
       db.prepare(
-        "UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?"
+        "UPDATE tasks SET status = ?, completed_at = ?, auto_respawn_count = 0, updated_at = ? WHERE id = ?"
       ).run(finalStatus, finishTime, finishTime, task.id);
     }
 

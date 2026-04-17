@@ -38,6 +38,7 @@ export interface Task {
   pr_urls: string | null;
   started_at: number | null;
   completed_at: number | null;
+  auto_respawn_count: number;
   created_at: number;
   updated_at: number;
 }

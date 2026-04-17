@@ -429,7 +429,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET assigned_agent_id = ? WHERE id = ?").run(agentId, task.id);
     }
 
-    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId }, { cache });
+    // Manual Run is an explicit user intent — reset any prior orphan-recovery
+    // auto-respawn history so the task gets a fresh budget from zero.
+    db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
+
+    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
     res.json({ started: true, pid: result.pid });
   });
 
@@ -803,7 +807,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "refinement" });
     } else {
-      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+      // Manual feedback-rework is an explicit user intent — reset the
+      // auto-respawn counter so a mid-rework crash gets a full retry budget.
+      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "in_progress" });
     }
 

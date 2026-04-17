@@ -27,6 +27,7 @@ function createTask(): Task {
     pr_urls: null,
     started_at: null,
     completed_at: null,
+    auto_respawn_count: 0,
     created_at: 1,
     updated_at: 1,
   };
