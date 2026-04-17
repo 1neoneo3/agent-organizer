@@ -301,13 +301,30 @@ function TerminalView({
     // emit a bogus `null → refinement` marker when the component mounts
     // on an already-advanced task.
     if (prev !== undefined && prev !== next) {
-      setLogs((current) => appendLiveLogs(current, [{
-        task_id: taskId,
-        kind: "system",
-        message: `${STAGE_TRANSITION_PREFIX}${prev ?? "null"}→${next ?? "null"}`,
-        stage: next,
-        agent_id: currentAgentId ?? null,
-      }]));
+      const expectedMessage = `${STAGE_TRANSITION_PREFIX}${prev ?? "null"}→${next ?? "null"}`;
+      setLogs((current) => {
+        // Dedup guard: if a matching transition marker is already sitting at
+        // the tail of logs — which happens when a fetch/WS replay brought in
+        // the DB-trigger-inserted row before our synthetic write settled —
+        // skip the synthetic insert so groupLogsByStage does not render two
+        // consecutive segments for the same `from → to` event.
+        for (let i = current.length - 1; i >= 0 && i >= current.length - 10; i--) {
+          const log = current[i];
+          if (!log) continue;
+          if (log.message === expectedMessage) {
+            return current;
+          }
+          // Stop scanning once we pass the likely window for this transition.
+          if (log.message.startsWith(STAGE_TRANSITION_PREFIX)) break;
+        }
+        return appendLiveLogs(current, [{
+          task_id: taskId,
+          kind: "system",
+          message: expectedMessage,
+          stage: next,
+          agent_id: currentAgentId ?? null,
+        }]);
+      });
     }
     prevStageRef.current = next;
   }, [currentStage, currentAgentId, taskId]);
