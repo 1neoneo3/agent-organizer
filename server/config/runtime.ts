@@ -150,6 +150,14 @@ export const SETTINGS_DEFAULTS = {
   default_enable_test_generation: "true" as const, // "true" | "false"
   default_enable_refinement: "false" as const, // "true" | "false" — run planning agent before implementation
   refinement_auto_approve: "false" as const, // "true" | "false" — skip human approval of refinement plan
+  // Optional quality-gate stages. Defaults match the fallback branch of
+  // `resolveWorkflowToggle` (stage-pipeline.ts) and the `?? "false"`
+  // defaults of the Settings UI, so seeding these keys does not alter
+  // the out-of-the-box behavior. WORKFLOW.md can still turn them on via
+  // the Settings UI (SSOT); operators who previously relied on
+  // WORKFLOW.md-only toggles should move those flags to Settings.
+  default_enable_ci_check: "false" as const, // "true" | "false" — run CI verification stage
+  default_enable_human_review: "false" as const, // "true" | "false" — require human approval before done
   // Output language for agent-generated artifacts (task titles, task
   // descriptions, refinement plans, review/QA narrative text, and PR
   // titles/bodies). "ja" preserves the historical Japanese output;

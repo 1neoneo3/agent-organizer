@@ -9,8 +9,9 @@ import {
 
 const VALID_SETTINGS_KEYS = new Set([
   ...Object.keys(SETTINGS_DEFAULTS),
-  "default_enable_ci_check",
-  "default_enable_human_review",
+  // Additional keys that have no seeded default but are still accepted
+  // by the settings API (read via getTaskSetting which returns undefined
+  // when the row is absent).
   "explore_phase",
   "github_write_mode",
   "github_write_allowed_repos",
