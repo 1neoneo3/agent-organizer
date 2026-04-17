@@ -7,6 +7,7 @@ import {
   countLogsByTab,
   groupLogsByStage,
   parseStageTransition,
+  STAGE_TRANSITION_PREFIX,
   type StageSegment,
 } from "./log-state.js";
 
@@ -283,6 +284,33 @@ function TerminalView({
   useEffect(() => {
     doFetch();
   }, [doFetch]);
+
+  // Stage transitions are recorded by a DB trigger but are NOT broadcast
+  // over WebSocket (the trigger has no access to the hub). Without this
+  // effect the Activity tab would stay pinned to the stage that was
+  // active when the modal opened — new segments only appeared after a
+  // re-fetch (page reload or tab switch). Detect currentStage changes
+  // here and append a synthetic transition marker so `groupLogsByStage`
+  // opens a fresh segment immediately. The real DB row still exists and
+  // will replace the synthetic one on the next mount-driven fetch.
+  const prevStageRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevStageRef.current;
+    const next = currentStage ?? null;
+    // Skip the very first effect run (prev === undefined) so we do not
+    // emit a bogus `null → refinement` marker when the component mounts
+    // on an already-advanced task.
+    if (prev !== undefined && prev !== next) {
+      setLogs((current) => appendLiveLogs(current, [{
+        task_id: taskId,
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}${prev ?? "null"}→${next ?? "null"}`,
+        stage: next,
+        agent_id: currentAgentId ?? null,
+      }]));
+    }
+    prevStageRef.current = next;
+  }, [currentStage, currentAgentId, taskId]);
 
   useEffect(() => {
     return on("cli_output", (payload) => {
