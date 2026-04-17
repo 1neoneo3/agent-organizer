@@ -303,11 +303,17 @@ function migrateAddRefinementCompletedAt(db: DatabaseSync): void {
   // Backfill: existing rows with a populated `refinement_plan` must not
   // be treated as "never refined" on first boot after the upgrade — or
   // the re-spawn logic in spawnAgent would queue a fresh refinement run
-  // for every in-flight task. Best-effort timestamp based on whatever
-  // monotonic field the row still has.
+  // for every in-flight task.
+  //
+  // Source ordering: prefer `started_at` over `completed_at` because
+  // completed_at can carry garbage (future dates, 0, etc.) from legacy
+  // writes — refinement by definition happened *after* the task started,
+  // so started_at is a safer monotonic proxy. Fall back to updated_at /
+  // created_at only when started_at is null (inbox-born rows that
+  // somehow have a plan).
   db.exec(`
     UPDATE tasks
-    SET refinement_completed_at = COALESCE(completed_at, started_at, updated_at, created_at)
+    SET refinement_completed_at = COALESCE(started_at, updated_at, created_at)
     WHERE refinement_completed_at IS NULL
       AND refinement_plan IS NOT NULL
       AND refinement_plan <> ''

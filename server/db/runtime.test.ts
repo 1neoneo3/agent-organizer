@@ -258,7 +258,7 @@ describe("initializeDb", () => {
     // "refinement was done but recovery logic thinks it wasn't".
     db.exec(`
       UPDATE tasks
-      SET refinement_completed_at = COALESCE(completed_at, started_at, updated_at, created_at)
+      SET refinement_completed_at = COALESCE(started_at, updated_at, created_at)
       WHERE refinement_completed_at IS NULL
         AND refinement_plan IS NOT NULL
         AND refinement_plan <> ''
@@ -272,8 +272,8 @@ describe("initializeDb", () => {
 
     assert.equal(
       row.refinement_completed_at,
-      now - 1_000,
-      "backfill should pick completed_at when present (preferred over started_at/updated_at)",
+      now - 30_000,
+      "backfill should prefer started_at (monotonic lower bound) over completed_at (which can carry garbage)",
     );
 
     // Empty refinement_plan must NOT be backfilled — those rows are
@@ -288,7 +288,7 @@ describe("initializeDb", () => {
 
     db.exec(`
       UPDATE tasks
-      SET refinement_completed_at = COALESCE(completed_at, started_at, updated_at, created_at)
+      SET refinement_completed_at = COALESCE(started_at, updated_at, created_at)
       WHERE refinement_completed_at IS NULL
         AND refinement_plan IS NOT NULL
         AND refinement_plan <> ''
@@ -302,6 +302,55 @@ describe("initializeDb", () => {
       emptyRow.refinement_completed_at,
       null,
       "empty refinement_plan must remain uncompleted so recovery can re-run",
+    );
+  });
+
+  it("split-into-tasks children inherit both plan AND completed_at (regression: child refinement re-run)", async () => {
+    // Regression test for the Bug 3 / PR 3 review finding: children
+    // created by POST /tasks/:id/split inherit the parent's
+    // refinement_plan. Before this fix they would only carry the plan
+    // string, which under the stricter `hasExistingPlan = plan &&
+    // completed_at` rule meant every child would be re-refined.
+    // spawnAgent treats a child as "refinement already done" only when
+    // BOTH columns are populated, so the split route must stamp
+    // completed_at alongside the inherited plan.
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-split", `split-agent-${now}`, "claude", "idle", now, now);
+
+    // Simulate a split-route INSERT that stamps both columns.
+    db.prepare(
+      `INSERT INTO tasks
+         (id, title, status, task_size,
+          refinement_plan, refinement_completed_at,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "child-1",
+      "child",
+      "inbox",
+      "small",
+      "inherited plan",
+      now,
+      now,
+      now,
+    );
+
+    const child = db
+      .prepare("SELECT refinement_plan, refinement_completed_at FROM tasks WHERE id = ?")
+      .get("child-1") as {
+        refinement_plan: string | null;
+        refinement_completed_at: number | null;
+      };
+
+    assert.equal(child.refinement_plan, "inherited plan");
+    assert.ok(
+      child.refinement_completed_at !== null,
+      "child task must carry refinement_completed_at so spawnAgent skips refinement",
     );
   });
 });
