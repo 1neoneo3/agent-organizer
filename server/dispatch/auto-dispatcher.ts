@@ -160,11 +160,17 @@ function resolveRefinementAgentForInbox(
   if (!override) return undefined;
   if (!availableAgents.has(override.id)) return undefined;
 
+  // When the task has no project_path we cannot load a project workflow,
+  // so fall back to the built-in defaults (workflow = null). We never read
+  // the dispatcher's own CWD: that would silently apply AO's workflow to
+  // a task that belongs to an unrelated or unconfigured repo.
   let workflow = null;
-  try {
-    workflow = loadProjectWorkflow(task.project_path ?? process.cwd());
-  } catch {
-    workflow = null;
+  if (task.project_path) {
+    try {
+      workflow = loadProjectWorkflow(task.project_path);
+    } catch {
+      workflow = null;
+    }
   }
   const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
   if (activeStages[0] !== "refinement") return undefined;

@@ -6,8 +6,7 @@ export type StageSettingKey =
   | "review_agent_id"
   | "qa_agent_id"
   | "test_generation_agent_id"
-  | "ci_check_agent_id"
-  | "human_review_agent_id";
+  | "ci_check_agent_id";
 
 /**
  * Resolve a stage-specific default agent override from the settings

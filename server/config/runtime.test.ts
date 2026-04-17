@@ -3,7 +3,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { loadProjectEnv } from "./runtime.js";
+import {
+  loadProjectEnv,
+  isOutputLanguage,
+  VALID_OUTPUT_LANGUAGES,
+  SETTINGS_DEFAULTS,
+} from "./runtime.js";
 
 const ORIGINAL_ENV = {
   REDIS_ENABLED: process.env.REDIS_ENABLED,
@@ -51,5 +56,38 @@ describe("loadProjectEnv", () => {
 
     assert.equal(process.env.REDIS_ENABLED, "true");
     assert.equal(process.env.PORT, "1234");
+  });
+});
+
+describe("VALID_OUTPUT_LANGUAGES", () => {
+  it("contains exactly ja and en", () => {
+    assert.deepEqual([...VALID_OUTPUT_LANGUAGES], ["ja", "en"]);
+  });
+});
+
+describe("SETTINGS_DEFAULTS.output_language", () => {
+  it("defaults to ja", () => {
+    assert.equal(SETTINGS_DEFAULTS.output_language, "ja");
+  });
+});
+
+describe("isOutputLanguage", () => {
+  it("returns true for 'ja'", () => {
+    assert.equal(isOutputLanguage("ja"), true);
+  });
+
+  it("returns true for 'en'", () => {
+    assert.equal(isOutputLanguage("en"), true);
+  });
+
+  it("returns false for unsupported languages", () => {
+    assert.equal(isOutputLanguage("fr"), false);
+    assert.equal(isOutputLanguage("zh"), false);
+    assert.equal(isOutputLanguage(""), false);
+  });
+
+  it("returns false for mixed-case variants", () => {
+    assert.equal(isOutputLanguage("JA"), false);
+    assert.equal(isOutputLanguage("En"), false);
   });
 });

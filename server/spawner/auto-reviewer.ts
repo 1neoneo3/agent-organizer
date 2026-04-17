@@ -182,8 +182,9 @@ export function findReviewAgents(
     assignments.push({ agent: overrideReviewer, role: "code" });
   }
 
-  // 1. Primary slot: idle code_reviewer (excluding the implementer)
-  const codeReviewer = assignments.some((a) => a.role === "code")
+  // 1. Primary slot: idle code_reviewer (excluding the implementer).
+  // Skipped when the settings override already filled the code slot.
+  const codeReviewer = overrideReviewer
     ? undefined
     : (db
         .prepare(

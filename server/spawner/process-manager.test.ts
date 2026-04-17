@@ -46,6 +46,7 @@ function insertTask(db: DatabaseSync, overrides: Partial<Task> = {}): Task {
     pr_urls: null,
     started_at: 2_000,
     completed_at: null,
+    auto_respawn_count: 0,
     created_at: 1_000,
     updated_at: 2_000,
     ...overrides,

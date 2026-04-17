@@ -39,11 +39,6 @@ const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
     label: "CI Check Stage",
     description: "Preferred agent for the ci_check stage. Falls back to devops role, then any idle worker.",
   },
-  {
-    key: "human_review_agent_id",
-    label: "Human Review Stage",
-    description: "Agent reserved for human_review coordination. Informational; no auto-spawn runs for this stage today.",
-  },
 ];
 
 const inputStyle = {
@@ -102,6 +97,26 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
       <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-primary)", margin: "0 0 24px 0" }}>Settings</h2>
 
       <div style={{ maxWidth: "480px", display: "flex", flexDirection: "column", gap: "28px" }}>
+        <section>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Language</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Output Language</span>
+              <select
+                style={inputStyle}
+                value={local.output_language ?? "ja"}
+                onChange={(e) => update("output_language", e.target.value)}
+              >
+                <option value="ja">日本語 (Japanese)</option>
+                <option value="en">English</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Language used for agent-generated artifacts: task titles, task descriptions, refinement plans, review/QA narrative text, and PR titles/bodies. Control tokens (SPRINT CONTRACT markers, review verdicts, REFINEMENT fences) stay fixed so downstream parsers keep working.
+              </p>
+            </label>
+          </div>
+        </section>
+
         <section>
           <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Review Settings</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>

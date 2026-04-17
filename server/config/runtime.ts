@@ -123,6 +123,12 @@ export const GITHUB_SYNC_INTERVAL_MS = Number(process.env.GITHUB_SYNC_INTERVAL_M
 export const GITHUB_SYNC_PROJECT_PATH = process.env.GITHUB_SYNC_PROJECT_PATH ?? PROJECT_ROOT;
 export const AUTO_DISPATCH_INTERVAL_MS = Number(process.env.AUTO_DISPATCH_INTERVAL_MS ?? 60_000);
 
+// Maximum number of times orphan recovery may automatically re-spawn a parked
+// in_progress task. The counter resets on any forward stage transition
+// (in_progress → qa_testing, pr_review → in_progress rework, etc.), on
+// manual Run (POST /tasks/:id/run), and on manual feedback-rework.
+export const ORPHAN_AUTO_RESPAWN_MAX = Number(process.env.ORPHAN_AUTO_RESPAWN_MAX ?? 3);
+
 export const SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"
   review_count: 1,
@@ -144,19 +150,35 @@ export const SETTINGS_DEFAULTS = {
   default_enable_test_generation: "true" as const, // "true" | "false"
   default_enable_refinement: "false" as const, // "true" | "false" — run planning agent before implementation
   refinement_auto_approve: "false" as const, // "true" | "false" — skip human approval of refinement plan
+  // Output language for agent-generated artifacts (task titles, task
+  // descriptions, refinement plans, review/QA narrative text, and PR
+  // titles/bodies). "ja" preserves the historical Japanese output;
+  // "en" switches the natural-language portions of every agent prompt
+  // and PR body template to English. Control tokens / marker tags
+  // (SPRINT CONTRACT, [REVIEW:<role>:PASS], ---REFINEMENT PLAN---,
+  // ---END REFINEMENT--- etc.) remain stable across languages so that
+  // downstream parsers keep working.
+  output_language: "ja" as const, // "ja" | "en"
   // Stage-specific default agent overrides. Empty string means "no
   // override" — the existing role-based resolver is used. When set, the
   // value is an agent id; the auto-* spawn paths prefer that agent when
   // it is idle and not the task's implementer. `assigned_agent_id` on
   // the task continues to represent the implementer (in_progress) and
-  // is unaffected by these settings.
+  // is unaffected by these settings. human_review has no auto-spawn
+  // path today, so no setting is exposed for it.
   refinement_agent_id: "" as const,
   review_agent_id: "" as const,
   qa_agent_id: "" as const,
   test_generation_agent_id: "" as const,
   ci_check_agent_id: "" as const,
-  human_review_agent_id: "" as const,
 };
+
+export const VALID_OUTPUT_LANGUAGES = ["ja", "en"] as const;
+export type OutputLanguage = (typeof VALID_OUTPUT_LANGUAGES)[number];
+
+export function isOutputLanguage(value: string): value is OutputLanguage {
+  return (VALID_OUTPUT_LANGUAGES as readonly string[]).includes(value);
+}
 
 
 export const AUTO_ASSIGN_TASK_ON_CREATE = process.env.AUTO_ASSIGN_TASK_ON_CREATE !== "false";

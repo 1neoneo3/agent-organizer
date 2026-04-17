@@ -4,6 +4,34 @@ import { homedir } from "node:os";
 import type { Task, Directive } from "../types/runtime.js";
 import type { ProjectWorkflow, ProjectType } from "../workflow/loader.js";
 import type { AgentRuntimePolicy } from "../workflow/runtime-policy.js";
+import type { OutputLanguage } from "../config/runtime.js";
+
+// ---------------------------------------------------------------------------
+// Language helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Output language for the natural-language portions of every agent prompt
+ * and for PR body templates. Control tokens (SPRINT CONTRACT, review
+ * verdict tags, ---REFINEMENT PLAN--- fences) stay fixed across languages
+ * so parsers remain stable.
+ */
+export const DEFAULT_OUTPUT_LANGUAGE: OutputLanguage = "ja";
+
+/** Emit the top-of-prompt "## Language" directive in the selected language. */
+function appendLanguageDirective(parts: string[], language: OutputLanguage): void {
+  parts.push("## Language");
+  if (language === "en") {
+    parts.push(
+      "Always respond and communicate in English. Code comments, variable names, and commit messages should remain in English.",
+    );
+  } else {
+    parts.push(
+      "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
+    );
+  }
+  parts.push("");
+}
 
 // ---------------------------------------------------------------------------
 // Shared context loaders
@@ -32,7 +60,10 @@ function loadRules(): RuleSnippet[] {
  * Extract file paths mentioned in task description and search for
  * recent merged PRs touching those paths to inject as context.
  */
-function extractContextFromTask(task: Task): string {
+function extractContextFromTask(
+  task: Task,
+  language: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
+): string {
   if (!task.description || !task.project_path) return "";
 
   // Extract file paths from description
@@ -40,10 +71,18 @@ function extractContextFromTask(task: Task): string {
   const paths = [...new Set(task.description.match(pathPattern) ?? [])];
   if (paths.length === 0) return "";
 
+  const isEn = language === "en";
+
   const parts: string[] = [];
-  parts.push("## 自動検出コンテキスト");
-  parts.push("");
-  parts.push("タスク説明から以下のファイルパスが検出されました:");
+  if (isEn) {
+    parts.push("## Auto-detected Context");
+    parts.push("");
+    parts.push("The following file paths were detected from the task description:");
+  } else {
+    parts.push("## 自動検出コンテキスト");
+    parts.push("");
+    parts.push("タスク説明から以下のファイルパスが検出されました:");
+  }
   for (const p of paths.slice(0, 10)) {
     parts.push(`- \`${p}\``);
   }
@@ -52,7 +91,6 @@ function extractContextFromTask(task: Task): string {
   // Try to find recent merged PRs touching these paths
   try {
     const { execFileSync } = require("node:child_process");
-    const pathArgs = paths.slice(0, 5).map(p => `-- ${p}`).join(" ");
     const gitLog = execFileSync("git", [
       "log", "--oneline", "--merges", "-10",
       "--", ...paths.slice(0, 5),
@@ -64,7 +102,11 @@ function extractContextFromTask(task: Task): string {
     }).trim();
 
     if (gitLog) {
-      parts.push("これらのファイルに関連する最近のマージコミット:");
+      parts.push(
+        isEn
+          ? "Recent merge commits touching these files:"
+          : "これらのファイルに関連する最近のマージコミット:",
+      );
       parts.push("```");
       parts.push(gitLog);
       parts.push("```");
@@ -256,8 +298,17 @@ export function buildTaskPrompt(
      * historical serial behavior — when parallel mode is disabled.
      */
     parallelScope?: "implementer" | "tester";
+    /**
+     * Output language for the natural-language portions of the prompt.
+     * Defaults to Japanese to preserve historical behavior for existing
+     * installations. Control tokens (SPRINT CONTRACT, REVIEW verdicts)
+     * remain unchanged regardless of this setting.
+     */
+    language?: OutputLanguage;
   },
 ): string {
+  const language: OutputLanguage = opts?.language ?? DEFAULT_OUTPUT_LANGUAGE;
+  const isEn = language === "en";
   // Prompt is built in two halves and joined at the end:
   //   1. `staticParts` — everything that is the same across every task
   //      run for a given project: language, CLAUDE.md + rules, contract
@@ -274,36 +325,56 @@ export function buildTaskPrompt(
   const staticParts: string[] = [];
   const dynamicParts: string[] = [];
 
-  staticParts.push("## Language");
-  staticParts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  staticParts.push("");
+  appendLanguageDirective(staticParts, language);
 
   // Inject CLAUDE.md + rules (static per project).
   appendSharedContext(staticParts, task.project_path);
 
-  staticParts.push("## スプリント契約（実装前に必須）");
-  staticParts.push("");
-  staticParts.push("コードを書く前に、以下の形式でスプリント契約を出力してください:");
-  staticParts.push("");
-  staticParts.push("---SPRINT CONTRACT---");
-  staticParts.push("**成果物:**");
-  staticParts.push("1. [具体的なファイル/機能]");
-  staticParts.push("2. [具体的なファイル/機能]");
-  staticParts.push("");
-  staticParts.push("**受け入れ基準:**");
-  staticParts.push("- [ ] [テスト可能な基準1]");
-  staticParts.push("- [ ] [テスト可能な基準2]");
-  staticParts.push("- [ ] [テスト可能な基準3]");
-  staticParts.push("");
-  staticParts.push("**スコープ外:**");
-  staticParts.push("- [やらないこと]");
-  staticParts.push("---END CONTRACT---");
-  staticParts.push("");
-  staticParts.push("この契約はQAエージェントが作業を検証する際に使用されます。");
-  staticParts.push("契約を出力した後、実装に進んでください。");
-  staticParts.push("");
+  if (isEn) {
+    staticParts.push("## Sprint Contract (required before implementation)");
+    staticParts.push("");
+    staticParts.push("Before writing any code, output a sprint contract in the following format:");
+    staticParts.push("");
+    staticParts.push("---SPRINT CONTRACT---");
+    staticParts.push("**Deliverables:**");
+    staticParts.push("1. [specific file / feature]");
+    staticParts.push("2. [specific file / feature]");
+    staticParts.push("");
+    staticParts.push("**Acceptance Criteria:**");
+    staticParts.push("- [ ] [testable criterion 1]");
+    staticParts.push("- [ ] [testable criterion 2]");
+    staticParts.push("- [ ] [testable criterion 3]");
+    staticParts.push("");
+    staticParts.push("**Out of Scope:**");
+    staticParts.push("- [things you will not do]");
+    staticParts.push("---END CONTRACT---");
+    staticParts.push("");
+    staticParts.push("The QA agent uses this contract to validate your work.");
+    staticParts.push("After emitting the contract, proceed with the implementation.");
+    staticParts.push("");
+  } else {
+    staticParts.push("## スプリント契約（実装前に必須）");
+    staticParts.push("");
+    staticParts.push("コードを書く前に、以下の形式でスプリント契約を出力してください:");
+    staticParts.push("");
+    staticParts.push("---SPRINT CONTRACT---");
+    staticParts.push("**成果物:**");
+    staticParts.push("1. [具体的なファイル/機能]");
+    staticParts.push("2. [具体的なファイル/機能]");
+    staticParts.push("");
+    staticParts.push("**受け入れ基準:**");
+    staticParts.push("- [ ] [テスト可能な基準1]");
+    staticParts.push("- [ ] [テスト可能な基準2]");
+    staticParts.push("- [ ] [テスト可能な基準3]");
+    staticParts.push("");
+    staticParts.push("**スコープ外:**");
+    staticParts.push("- [やらないこと]");
+    staticParts.push("---END CONTRACT---");
+    staticParts.push("");
+    staticParts.push("この契約はQAエージェントが作業を検証する際に使用されます。");
+    staticParts.push("契約を出力した後、実装に進んでください。");
+    staticParts.push("");
+  }
   // Inject format command if configured in WORKFLOW.md. This is
   // per-project-workflow static content, so it still belongs in the
   // cachable prefix as long as the same workflow is reused.
@@ -316,42 +387,81 @@ export function buildTaskPrompt(
     staticParts.push("");
   }
 
-  staticParts.push("## 完了前チェックリスト（必須）");
-  staticParts.push("");
-  staticParts.push("作業完了を宣言する前に、以下を全て実行し、問題があれば修正してください:");
-  staticParts.push("");
-  staticParts.push("1. **Lint**: `npm run lint`（またはプロジェクトのlintコマンド）を実行。エラー・警告ゼロにすること。");
-  staticParts.push("2. **ビルド**: `npm run build`（またはプロジェクトのビルドコマンド）を実行。エラーゼロで成功すること。");
-  staticParts.push("3. **型チェック**: TypeScriptの場合 `npx tsc --noEmit` を実行。型エラーを全て修正。");
-  staticParts.push("4. **動作確認**: 実際にコード/アプリを実行し、動作を確認すること。推測ではなく検証する。");
-  staticParts.push("5. **コンソールエラー**: Webアプリの場合、ブラウザコンソールのエラー（hydration、ランタイム等）を確認。");
-  staticParts.push("6. **フレームワーク互換性**: 実際にインストールされているバージョン（package.json参照）との互換性を確認。非推奨APIを使わない。");
-  staticParts.push("");
-  staticParts.push("いずれかのチェックが失敗した場合、完了前に修正すること。既知の問題を残さない。");
-  staticParts.push("lintエラー、ビルド失敗、ランタイムエラーを含むタスクは完了ではなく壊れている。");
-  staticParts.push("");
-  staticParts.push("## 言語別の慣例 (必須)");
-  staticParts.push("");
-  staticParts.push("### Python (src レイアウトを使う場合)");
-  staticParts.push("Python で `src/<package>/` レイアウトを採用する場合、**`pyproject.toml` に以下の pytest 設定を必ず含めること**。");
-  staticParts.push("これがないと `pip install -e .` を先に実行しない限り `pytest` が `ModuleNotFoundError` で失敗し、レビュー時にブロック要因になります:");
-  staticParts.push("");
-  staticParts.push("```toml");
-  staticParts.push("[tool.pytest.ini_options]");
-  staticParts.push("pythonpath = [\"src\"]");
-  staticParts.push("testpaths = [\"tests\"]");
-  staticParts.push("```");
-  staticParts.push("");
-  staticParts.push("これによって、クローン直後に `cd <repo> && pytest` が editable install なしで通るようになります。");
-  staticParts.push("");
-  staticParts.push("### Node.js / TypeScript");
-  staticParts.push("- `package.json` に `\"lint\"`, `\"build\"`, `\"test\"` の scripts を定義すること。`npm run lint`/`npm run build`/`npm test` が直接通ること。");
-  staticParts.push("- TypeScript プロジェクトは `tsconfig.json` を含め、`npx tsc --noEmit` が通ること。");
-  staticParts.push("");
-  staticParts.push("## 禁止事項");
-  staticParts.push("- Agent Organizerに新しいタスクを作成しない（ao-cli.sh、POST /api/tasks 禁止）");
-  staticParts.push("- AO APIエンドポイントを呼び出さない — あなたの仕事は現在のタスクの実装のみ");
-  staticParts.push("");
+  if (isEn) {
+    staticParts.push("## Pre-Completion Checklist (required)");
+    staticParts.push("");
+    staticParts.push("Before declaring the work complete, run the following and fix any issues:");
+    staticParts.push("");
+    staticParts.push("1. **Lint**: run `npm run lint` (or the project's lint command). Zero errors / warnings.");
+    staticParts.push("2. **Build**: run `npm run build` (or the project's build command). Must succeed with zero errors.");
+    staticParts.push("3. **Type check**: for TypeScript, run `npx tsc --noEmit`. Fix all type errors.");
+    staticParts.push("4. **Runtime check**: actually execute the code / app and verify behavior. Verify, do not guess.");
+    staticParts.push("5. **Console errors**: for web apps, check the browser console for hydration / runtime errors.");
+    staticParts.push("6. **Framework compatibility**: confirm the installed version (see package.json) — no deprecated APIs.");
+    staticParts.push("");
+    staticParts.push("If any check fails, fix it before declaring completion. Do not leave known issues behind.");
+    staticParts.push("A task with lint errors, build failures, or runtime errors is broken, not done.");
+    staticParts.push("");
+    staticParts.push("## Language-specific Conventions (required)");
+    staticParts.push("");
+    staticParts.push("### Python (when using the src layout)");
+    staticParts.push("When a Python project uses the `src/<package>/` layout, **you must include the following pytest configuration in `pyproject.toml`**.");
+    staticParts.push("Without it, `pytest` fails with `ModuleNotFoundError` unless `pip install -e .` is run first, which blocks reviews:");
+    staticParts.push("");
+    staticParts.push("```toml");
+    staticParts.push("[tool.pytest.ini_options]");
+    staticParts.push("pythonpath = [\"src\"]");
+    staticParts.push("testpaths = [\"tests\"]");
+    staticParts.push("```");
+    staticParts.push("");
+    staticParts.push("This lets a fresh clone run `cd <repo> && pytest` without an editable install.");
+    staticParts.push("");
+    staticParts.push("### Node.js / TypeScript");
+    staticParts.push("- Define `\"lint\"`, `\"build\"`, and `\"test\"` scripts in `package.json`. `npm run lint` / `npm run build` / `npm test` must run directly.");
+    staticParts.push("- TypeScript projects must ship a `tsconfig.json` and pass `npx tsc --noEmit`.");
+    staticParts.push("");
+    staticParts.push("## Prohibitions");
+    staticParts.push("- Do not create new tasks in Agent Organizer (no ao-cli.sh, no POST /api/tasks).");
+    staticParts.push("- Do not call AO API endpoints — your job is to implement the current task only.");
+    staticParts.push("");
+  } else {
+    staticParts.push("## 完了前チェックリスト（必須）");
+    staticParts.push("");
+    staticParts.push("作業完了を宣言する前に、以下を全て実行し、問題があれば修正してください:");
+    staticParts.push("");
+    staticParts.push("1. **Lint**: `npm run lint`（またはプロジェクトのlintコマンド）を実行。エラー・警告ゼロにすること。");
+    staticParts.push("2. **ビルド**: `npm run build`（またはプロジェクトのビルドコマンド）を実行。エラーゼロで成功すること。");
+    staticParts.push("3. **型チェック**: TypeScriptの場合 `npx tsc --noEmit` を実行。型エラーを全て修正。");
+    staticParts.push("4. **動作確認**: 実際にコード/アプリを実行し、動作を確認すること。推測ではなく検証する。");
+    staticParts.push("5. **コンソールエラー**: Webアプリの場合、ブラウザコンソールのエラー（hydration、ランタイム等）を確認。");
+    staticParts.push("6. **フレームワーク互換性**: 実際にインストールされているバージョン（package.json参照）との互換性を確認。非推奨APIを使わない。");
+    staticParts.push("");
+    staticParts.push("いずれかのチェックが失敗した場合、完了前に修正すること。既知の問題を残さない。");
+    staticParts.push("lintエラー、ビルド失敗、ランタイムエラーを含むタスクは完了ではなく壊れている。");
+    staticParts.push("");
+    staticParts.push("## 言語別の慣例 (必須)");
+    staticParts.push("");
+    staticParts.push("### Python (src レイアウトを使う場合)");
+    staticParts.push("Python で `src/<package>/` レイアウトを採用する場合、**`pyproject.toml` に以下の pytest 設定を必ず含めること**。");
+    staticParts.push("これがないと `pip install -e .` を先に実行しない限り `pytest` が `ModuleNotFoundError` で失敗し、レビュー時にブロック要因になります:");
+    staticParts.push("");
+    staticParts.push("```toml");
+    staticParts.push("[tool.pytest.ini_options]");
+    staticParts.push("pythonpath = [\"src\"]");
+    staticParts.push("testpaths = [\"tests\"]");
+    staticParts.push("```");
+    staticParts.push("");
+    staticParts.push("これによって、クローン直後に `cd <repo> && pytest` が editable install なしで通るようになります。");
+    staticParts.push("");
+    staticParts.push("### Node.js / TypeScript");
+    staticParts.push("- `package.json` に `\"lint\"`, `\"build\"`, `\"test\"` の scripts を定義すること。`npm run lint`/`npm run build`/`npm test` が直接通ること。");
+    staticParts.push("- TypeScript プロジェクトは `tsconfig.json` を含め、`npx tsc --noEmit` が通ること。");
+    staticParts.push("");
+    staticParts.push("## 禁止事項");
+    staticParts.push("- Agent Organizerに新しいタスクを作成しない（ao-cli.sh、POST /api/tasks 禁止）");
+    staticParts.push("- AO APIエンドポイントを呼び出さない — あなたの仕事は現在のタスクの実装のみ");
+    staticParts.push("");
+  }
 
   // AO Phase 3: parallel implementer + tester mode.
   //
@@ -363,43 +473,83 @@ export function buildTaskPrompt(
   // matches how `auto-test-gen.ts` already shares the worktree for serial
   // test generation.
   if (opts?.parallelScope === "implementer") {
-    staticParts.push("## IMPL_SCOPE（並列モード: 実装担当の作業範囲）");
-    staticParts.push("");
-    staticParts.push(
-      "このタスクは **並列 implementer + tester モード** で実行されています。",
-    );
-    staticParts.push(
-      "別の tester エージェントが同じ worktree で並行してテストを生成しています。",
-    );
-    staticParts.push("");
-    staticParts.push("### あなた（implementer）の作業範囲");
-    staticParts.push(
-      "- **実装ファイルのみ** を編集する: `src/`, `lib/`, `app/`, `server/`, `client/`, ルート配下のプロダクションコード",
-    );
-    staticParts.push(
-      "- **テストファイルは絶対に編集しない** (do not edit test files):",
-    );
-    staticParts.push(
-      "  - `tests/`, `test/`, `spec/`, `__tests__/` 配下のファイル",
-    );
-    staticParts.push(
-      "  - `*.test.*`, `*.spec.*`, `*_test.py`, `test_*.py` にマッチするファイル",
-    );
-    staticParts.push(
-      "- 既存のテストが壊れた場合も、自分で直さず `[TEST_BREAK] <理由>` とログに書き残して tester に引き継ぐ",
-    );
-    staticParts.push("");
-    staticParts.push("### 衝突回避ルール");
-    staticParts.push(
-      "- tester が先に触ったファイルを上書きしない（git status で未ステージの変更を尊重する）",
-    );
-    staticParts.push(
-      "- 新規ファイルは自分のスコープ（実装ディレクトリ）内にのみ作成する",
-    );
-    staticParts.push(
-      "- コミット粒度は細かく刻み、テストとの競合が起きたら rebase ではなく追加コミットで解決する",
-    );
-    staticParts.push("");
+    if (isEn) {
+      staticParts.push("## IMPL_SCOPE (parallel mode: implementer boundary)");
+      staticParts.push("");
+      staticParts.push(
+        "This task is running in **parallel implementer + tester mode**.",
+      );
+      staticParts.push(
+        "A separate tester agent is generating tests concurrently in the same worktree.",
+      );
+      staticParts.push("");
+      staticParts.push("### Your scope (implementer)");
+      staticParts.push(
+        "- Edit **implementation files only**: `src/`, `lib/`, `app/`, `server/`, `client/`, and other production code under the repo root.",
+      );
+      staticParts.push(
+        "- **Never edit test files** (do not edit test files):",
+      );
+      staticParts.push(
+        "  - Anything under `tests/`, `test/`, `spec/`, `__tests__/`.",
+      );
+      staticParts.push(
+        "  - Files matching `*.test.*`, `*.spec.*`, `*_test.py`, `test_*.py`.",
+      );
+      staticParts.push(
+        "- If existing tests break, do not fix them yourself. Log `[TEST_BREAK] <reason>` and hand off to the tester.",
+      );
+      staticParts.push("");
+      staticParts.push("### Conflict-avoidance rules");
+      staticParts.push(
+        "- Do not overwrite files the tester has already touched (respect unstaged changes in `git status`).",
+      );
+      staticParts.push(
+        "- Create new files only within your scope (implementation directories).",
+      );
+      staticParts.push(
+        "- Keep commits small; resolve conflicts with the tester via additional commits, not rebases.",
+      );
+      staticParts.push("");
+    } else {
+      staticParts.push("## IMPL_SCOPE（並列モード: 実装担当の作業範囲）");
+      staticParts.push("");
+      staticParts.push(
+        "このタスクは **並列 implementer + tester モード** で実行されています。",
+      );
+      staticParts.push(
+        "別の tester エージェントが同じ worktree で並行してテストを生成しています。",
+      );
+      staticParts.push("");
+      staticParts.push("### あなた（implementer）の作業範囲");
+      staticParts.push(
+        "- **実装ファイルのみ** を編集する: `src/`, `lib/`, `app/`, `server/`, `client/`, ルート配下のプロダクションコード",
+      );
+      staticParts.push(
+        "- **テストファイルは絶対に編集しない** (do not edit test files):",
+      );
+      staticParts.push(
+        "  - `tests/`, `test/`, `spec/`, `__tests__/` 配下のファイル",
+      );
+      staticParts.push(
+        "  - `*.test.*`, `*.spec.*`, `*_test.py`, `test_*.py` にマッチするファイル",
+      );
+      staticParts.push(
+        "- 既存のテストが壊れた場合も、自分で直さず `[TEST_BREAK] <理由>` とログに書き残して tester に引き継ぐ",
+      );
+      staticParts.push("");
+      staticParts.push("### 衝突回避ルール");
+      staticParts.push(
+        "- tester が先に触ったファイルを上書きしない（git status で未ステージの変更を尊重する）",
+      );
+      staticParts.push(
+        "- 新規ファイルは自分のスコープ（実装ディレクトリ）内にのみ作成する",
+      );
+      staticParts.push(
+        "- コミット粒度は細かく刻み、テストとの競合が起きたら rebase ではなく追加コミットで解決する",
+      );
+      staticParts.push("");
+    }
   }
 
   // Per-workflow static context (sandbox mode, localhost allowance, e2e
@@ -422,18 +572,34 @@ export function buildTaskPrompt(
   }
 
   // PR creation workflow (default for tasks that produce file changes).
-  staticParts.push("## Gitワークフロー");
-  staticParts.push("");
-  staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
-  staticParts.push("1. mainからブランチを作成: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
-  staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
-  staticParts.push("2. 変更をコミット（conventional commits形式）");
-  staticParts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
-  staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
-  staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
-  staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
-  staticParts.push("5. **mainに直接コミットしない**");
-  staticParts.push("");
+  if (isEn) {
+    const backgroundSectionLabel = "Background";
+    staticParts.push("## Git Workflow");
+    staticParts.push("");
+    staticParts.push("When the task changes files, follow this workflow:");
+    staticParts.push("1. Create a branch from main: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
+    staticParts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
+    staticParts.push("2. Commit changes (conventional commits format).");
+    staticParts.push("3. Push the branch: `git push -u origin <branch-name>`");
+    staticParts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`");
+    staticParts.push(`   - **Important**: do not write a \`## ${backgroundSectionLabel}\` section in the PR body (the system injects it automatically — avoid duplication).`);
+    staticParts.push("   - Keep the PR body focused on \"Changes\" and \"Verification\" only.");
+    staticParts.push("5. **Never commit directly to main.**");
+    staticParts.push("");
+  } else {
+    staticParts.push("## Gitワークフロー");
+    staticParts.push("");
+    staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
+    staticParts.push("1. mainからブランチを作成: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
+    staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
+    staticParts.push("2. 変更をコミット（conventional commits形式）");
+    staticParts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
+    staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
+    staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
+    staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
+    staticParts.push("5. **mainに直接コミットしない**");
+    staticParts.push("");
+  }
 
   // Inject relevant skills (static across tasks in a given environment).
   const skills = loadSkillSnippets();
@@ -464,7 +630,7 @@ export function buildTaskPrompt(
 
   // Auto-detected context (file paths, recent PRs, git info). Stays at
   // the tail because it derives from the current task state.
-  const autoContext = extractContextFromTask(task);
+  const autoContext = extractContextFromTask(task, language);
   if (autoContext) {
     dynamicParts.push(autoContext);
     dynamicParts.push("");
@@ -496,60 +662,103 @@ export function buildTaskPrompt(
  * The agent investigates the codebase without making any changes,
  * then outputs a structured implementation plan.
  */
-export function buildExplorePrompt(task: Task): string {
+export function buildExplorePrompt(
+  task: Task,
+  language: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
+): string {
   const parts: string[] = [];
+  const isEn = language === "en";
 
-  parts.push("## Language");
-  parts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  parts.push("");
-
+  appendLanguageDirective(parts, language);
   appendSharedContext(parts, task.project_path);
 
-  parts.push("# 探索フェーズ: 調査のみ");
-  parts.push("");
-  parts.push("**重要な制約: ファイルを変更しないでください。読み取り専用の調査のみ。**");
-  parts.push("");
-  parts.push(`## タスク: ${task.title}`);
-  parts.push("");
-  if (task.description) {
-    parts.push(task.description);
+  if (isEn) {
+    parts.push("# Explore Phase: Investigation Only");
     parts.push("");
-  }
-  if (task.project_path) {
-    parts.push(`プロジェクトパス: ${task.project_path}`);
+    parts.push("**Hard constraint: do not modify any files. Read-only investigation only.**");
     parts.push("");
+    parts.push(`## Task: ${task.title}`);
+    parts.push("");
+    if (task.description) {
+      parts.push(task.description);
+      parts.push("");
+    }
+    if (task.project_path) {
+      parts.push(`Project path: ${task.project_path}`);
+      parts.push("");
+    }
+    parts.push("## Mission");
+    parts.push("");
+    parts.push("1. Read and understand the relevant code, dependencies, and patterns.");
+    parts.push("2. Identify every file that needs to be created or changed.");
+    parts.push("3. Review existing patterns, conventions, and similar implementations.");
+    parts.push("4. Surface potential risks and edge cases.");
+    parts.push("");
+    parts.push("## Output Format");
+    parts.push("");
+    parts.push("Emit your findings as a structured plan:");
+    parts.push("");
+    parts.push("---EXPLORE RESULT---");
+    parts.push("**Related files:**");
+    parts.push("- path/to/file.ts (why it matters)");
+    parts.push("");
+    parts.push("**Existing patterns:**");
+    parts.push("- Pattern description (file reference)");
+    parts.push("");
+    parts.push("**Implementation plan:**");
+    parts.push("1. Step 1: what to do and where");
+    parts.push("2. Step 2: ...");
+    parts.push("");
+    parts.push("**Risks / edge cases:**");
+    parts.push("- Risk description");
+    parts.push("---END EXPLORE---");
+    parts.push("");
+    parts.push("Important: do not create, edit, or write files. Read and analyze only.");
+  } else {
+    parts.push("# 探索フェーズ: 調査のみ");
+    parts.push("");
+    parts.push("**重要な制約: ファイルを変更しないでください。読み取り専用の調査のみ。**");
+    parts.push("");
+    parts.push(`## タスク: ${task.title}`);
+    parts.push("");
+    if (task.description) {
+      parts.push(task.description);
+      parts.push("");
+    }
+    if (task.project_path) {
+      parts.push(`プロジェクトパス: ${task.project_path}`);
+      parts.push("");
+    }
+
+    parts.push("## ミッション");
+    parts.push("");
+    parts.push("1. 関連するコード、依存関係、パターンを読んで理解する");
+    parts.push("2. 作成または変更が必要なファイルを全て特定する");
+    parts.push("3. 既存のパターン、規約、類似実装を確認する");
+    parts.push("4. 潜在的なリスクとエッジケースを特定する");
+    parts.push("");
+
+    parts.push("## 出力形式");
+    parts.push("");
+    parts.push("調査結果を構造化された計画として出力:");
+    parts.push("");
+    parts.push("---EXPLORE RESULT---");
+    parts.push("**関連ファイル:**");
+    parts.push("- path/to/file.ts (関連する理由)");
+    parts.push("");
+    parts.push("**既存パターン:**");
+    parts.push("- パターンの説明 (ファイル参照)");
+    parts.push("");
+    parts.push("**実装計画:**");
+    parts.push("1. ステップ1: 何をどこで行うか");
+    parts.push("2. ステップ2: ...");
+    parts.push("");
+    parts.push("**リスク/エッジケース:**");
+    parts.push("- リスクの説明");
+    parts.push("---END EXPLORE---");
+    parts.push("");
+    parts.push("重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。");
   }
-
-  parts.push("## ミッション");
-  parts.push("");
-  parts.push("1. 関連するコード、依存関係、パターンを読んで理解する");
-  parts.push("2. 作成または変更が必要なファイルを全て特定する");
-  parts.push("3. 既存のパターン、規約、類似実装を確認する");
-  parts.push("4. 潜在的なリスクとエッジケースを特定する");
-  parts.push("");
-
-  parts.push("## 出力形式");
-  parts.push("");
-  parts.push("調査結果を構造化された計画として出力:");
-  parts.push("");
-  parts.push("---EXPLORE RESULT---");
-  parts.push("**関連ファイル:**");
-  parts.push("- path/to/file.ts (関連する理由)");
-  parts.push("");
-  parts.push("**既存パターン:**");
-  parts.push("- パターンの説明 (ファイル参照)");
-  parts.push("");
-  parts.push("**実装計画:**");
-  parts.push("1. ステップ1: 何をどこで行うか");
-  parts.push("2. ステップ2: ...");
-  parts.push("");
-  parts.push("**リスク/エッジケース:**");
-  parts.push("- リスクの説明");
-  parts.push("---END EXPLORE---");
-  parts.push("");
-  parts.push("重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。");
 
   return parts.join("\n");
 }
@@ -562,22 +771,47 @@ export interface ActiveTaskContext {
   description: string | null;
 }
 
-export function buildRefinementPrompt(task: Task, activeTasks?: ActiveTaskContext[]): string {
-  const parts: string[] = [];
+export interface BuildRefinementPromptOptions {
+  /**
+   * When true, the refinement agent is expected to commit the plan to
+   * a Markdown file on a fresh branch and open a PR. The prompt body
+   * switches wording to allow plan-file creation + git/PR operations
+   * while still forbidding implementation-code edits.
+   */
+  asPr?: boolean;
+  /** Output language for the natural-language portions. */
+  language?: OutputLanguage;
+}
 
-  parts.push("## Language");
-  parts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  parts.push("");
+export function buildRefinementPrompt(
+  task: Task,
+  activeTasks?: ActiveTaskContext[],
+  opts: BuildRefinementPromptOptions = {},
+): string {
+  const refinementAsPr = opts.asPr ?? false;
+  const parts: string[] = [];
+  const language: OutputLanguage = opts.language ?? DEFAULT_OUTPUT_LANGUAGE;
+  const isEn = language === "en";
+
+  appendLanguageDirective(parts, language);
 
   appendSharedContext(parts, task.project_path);
 
   // Inject active tasks context for dependency analysis
   if (activeTasks && activeTasks.length > 0) {
-    parts.push("## 現在アクティブなタスク (Active Tasks)");
-    parts.push("");
-    parts.push("以下のタスクが現在進行中または待機中です。新しいタスクの計画時に、これらとのファイル変更の競合や依存関係を分析してください:");
+    if (isEn) {
+      parts.push("## Active Tasks");
+      parts.push("");
+      parts.push(
+        "The following tasks are currently in progress or pending. When planning this new task, analyze potential file-change conflicts and dependencies against them:",
+      );
+    } else {
+      parts.push("## 現在アクティブなタスク (Active Tasks)");
+      parts.push("");
+      parts.push(
+        "以下のタスクが現在進行中または待機中です。新しいタスクの計画時に、これらとのファイル変更の競合や依存関係を分析してください:",
+      );
+    }
     parts.push("");
     for (const at of activeTasks) {
       parts.push(`- ${at.task_number} **${at.title}** (${at.status})${at.description ? ` — ${at.description.slice(0, 150)}` : ""}`);
@@ -585,124 +819,274 @@ export function buildRefinementPrompt(task: Task, activeTasks?: ActiveTaskContex
     parts.push("");
   }
 
-  parts.push("# 調整フェーズ: タスク計画の策定");
-  parts.push("");
-  parts.push("**重要な制約: コードの変更は行わないでください。分析と計画策定のみ。**");
-  parts.push("");
-  parts.push(`## タスク: ${task.title}`);
-  parts.push("");
-  if (task.description) {
-    parts.push(task.description);
+  if (isEn) {
+    parts.push("# Refinement Phase: Task Planning");
     parts.push("");
-  }
-  if (task.project_path) {
-    parts.push(`プロジェクトパス: ${task.project_path}`);
+    parts.push(
+      refinementAsPr
+        ? "**Hard constraint: do not modify implementation code. Only plan-document creation, saving, and PR operations are allowed.**"
+        : "**Hard constraint: do not modify any code. Analysis and planning only.**");
     parts.push("");
-  }
+    parts.push(`## Task: ${task.title}`);
+    parts.push("");
+    if (task.description) {
+      parts.push(task.description);
+      parts.push("");
+    }
+    if (task.project_path) {
+      parts.push(`Project path: ${task.project_path}`);
+      parts.push("");
+    }
 
-  const contextSnippet = extractContextFromTask(task);
-  if (contextSnippet) {
-    parts.push(contextSnippet);
-    parts.push("");
-  }
+    const contextSnippet = extractContextFromTask(task, language);
+    if (contextSnippet) {
+      parts.push(contextSnippet);
+      parts.push("");
+    }
 
-  parts.push("## ミッション");
-  parts.push("");
-  parts.push("タスクを分析し、以下の構造化された計画を策定してください。");
-  parts.push("コードベースを読み取り、関連ファイル・依存関係・既存パターンを調査した上で、");
-  parts.push("具体的かつ実行可能な計画を立ててください。");
-  parts.push("");
-  parts.push("## 出力形式");
-  parts.push("");
-  parts.push("以下のフォーマットで出力してください:");
-  parts.push("");
-  parts.push("---REFINEMENT PLAN---");
-  parts.push("");
-  parts.push("## 背景 (Background)");
-  parts.push("");
-  parts.push("このタスクが必要になった経緯・動機を簡潔に説明する（2-3文程度）:");
-  parts.push("");
-  parts.push("- なぜこの変更が必要なのか");
-  parts.push("- 現状の問題点や不足している点");
-  parts.push("- このタスクが解決する課題");
-  parts.push("");
-  parts.push("## 要求 (Business Requirements)");
-  parts.push("");
-  parts.push("ユーザー・ビジネス視点で「何を実現したいか」を箇条書きで列挙する。技術用語は使わない。");
-  parts.push("各項目は `- ` で始める:");
-  parts.push("");
-  parts.push("- 〇〇画面で△△したい");
-  parts.push("- 操作結果が即座に反映されてほしい");
-  parts.push("- 設定がブラウザを閉じても保持されてほしい");
-  parts.push("- 既存の〇〇機能の動きは変わらないでほしい");
-  parts.push("");
-  parts.push("## 技術要件 (Technical Requirements)");
-  parts.push("");
-  parts.push("エンジニア視点で「どう実現するか」の技術的な制約・方針を箇条書きで列挙する。");
-  parts.push("各項目は `- ` で始める:");
-  parts.push("");
-  parts.push("- 使用する既存フック・ライブラリ・パターン");
-  parts.push("- データの保存先（localStorage, DB, API等）");
-  parts.push("- 状態管理の方式（props, context, store等）");
-  parts.push("- API/DB変更の有無");
-  parts.push("");
-  parts.push("## 受け入れ条件 (Acceptance Criteria)");
-  parts.push("");
-  parts.push("完了判定の条件をチェックリスト形式で列挙する。");
-  parts.push("各項目は `- [ ] ` で始める:");
-  parts.push("");
-  parts.push("- [ ] 条件1");
-  parts.push("- [ ] 条件2");
-  parts.push("");
-  parts.push("## 期待値 (Expected Outcomes)");
-  parts.push("");
-  parts.push("完了後の状態を箇条書きで列挙する。");
-  parts.push("各項目は `- ` で始める:");
-  parts.push("");
-  parts.push("- 完了後のユーザー体験");
-  parts.push("- 完了後のシステム動作");
-  parts.push("- 影響範囲の予測");
-  parts.push("");
-  parts.push("## 変更対象ファイル (Files to Modify)");
-  parts.push("");
-  parts.push("既存リポジトリの場合、変更が必要なファイルを全て箇条書きで列挙する。");
-  parts.push("各項目は `- ` で始める:");
-  parts.push("");
-  parts.push("- `path/to/file.ts` — 変更内容の要約");
-  parts.push("- `path/to/new-file.ts` — (新規作成) 目的の説明");
-  parts.push("");
-  parts.push("## 実装計画 (Implementation Plan)");
-  parts.push("");
-  parts.push("具体的な変更手順を番号付きリストで列挙する。各ステップに対象ファイルを明記する。");
-  parts.push("各項目は `1. ` `2. ` のように番号で始める:");
-  parts.push("");
-  parts.push("1. 対象ファイルと具体的な変更内容");
-  parts.push("2. 対象ファイルと具体的な変更内容");
-  parts.push("");
-  parts.push("## リスク・注意点 (Risks & Considerations)");
-  parts.push("");
-  parts.push("潜在的なリスクやエッジケースを箇条書きで列挙する。");
-  parts.push("各項目は `- ` で始める:");
-  parts.push("");
-  parts.push("- リスクや注意点");
-  parts.push("- 回帰テストが必要な既存機能");
-  parts.push("");
-  parts.push("## 依存関係・コンフリクト (Dependencies & Conflicts)");
-  parts.push("");
-  parts.push("現在アクティブなタスクとの関係を分析する。");
-  parts.push("各項目は `- ` で始める:");
-  parts.push("");
-  parts.push("- このタスクの前に完了すべきタスク（依存先）があれば `Blocked by #XX: 理由` で記載");
-  parts.push("- 同じファイルを変更するタスクがあれば `Conflicts with #XX: 対象ファイルと競合内容` で記載");
-  parts.push("- 並行実行可能な場合は `No conflicts` と記載");
-  parts.push("");
-  parts.push("## 更新されたタスク説明 (Updated Description)");
-  parts.push("");
-  parts.push("上記を踏まえた、より詳細で明確なタスク説明文。");
-  parts.push("");
-  parts.push("---END REFINEMENT---");
-  parts.push("");
-  parts.push("重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。");
+    parts.push("## Mission");
+    parts.push("");
+    parts.push("Analyze the task and produce the structured plan below.");
+    parts.push("Read the codebase, investigate related files, dependencies, and existing patterns,");
+    parts.push("then draft a concrete and executable plan.");
+    parts.push("");
+    parts.push("## Output Format");
+    parts.push("");
+    parts.push("Emit your plan in the following format:");
+    parts.push("");
+    parts.push("---REFINEMENT PLAN---");
+    parts.push("");
+    parts.push("## Background");
+    parts.push("");
+    parts.push("Briefly describe why this task is needed (2-3 sentences):");
+    parts.push("");
+    parts.push("- Why this change is required");
+    parts.push("- Current problems or gaps");
+    parts.push("- The issue this task resolves");
+    parts.push("");
+    parts.push("## Business Requirements");
+    parts.push("");
+    parts.push(
+      "List what the user / business wants to achieve, from their perspective. Avoid technical jargon.",
+    );
+    parts.push("Each item must start with `- `:");
+    parts.push("");
+    parts.push("- Users want to do X on the Y screen");
+    parts.push("- Actions should be reflected immediately");
+    parts.push("- Settings should persist across browser restarts");
+    parts.push("- Existing behavior of feature Z must stay unchanged");
+    parts.push("");
+    parts.push("## Technical Requirements");
+    parts.push("");
+    parts.push(
+      "List the technical constraints and direction from an engineer's perspective — how to implement it.",
+    );
+    parts.push("Each item must start with `- `:");
+    parts.push("");
+    parts.push("- Existing hooks / libraries / patterns to reuse");
+    parts.push("- Persistence target (localStorage, DB, API, etc.)");
+    parts.push("- State management approach (props, context, store, etc.)");
+    parts.push("- Whether API / DB changes are involved");
+    parts.push("");
+    parts.push("## Acceptance Criteria");
+    parts.push("");
+    parts.push("List completion criteria as a checklist.");
+    parts.push("Each item must start with `- [ ] `:");
+    parts.push("");
+    parts.push("- [ ] Criterion 1");
+    parts.push("- [ ] Criterion 2");
+    parts.push("");
+    parts.push("## Expected Outcomes");
+    parts.push("");
+    parts.push("Describe the post-completion state as bullet points.");
+    parts.push("Each item must start with `- `:");
+    parts.push("");
+    parts.push("- Post-completion user experience");
+    parts.push("- Post-completion system behavior");
+    parts.push("- Predicted impact surface");
+    parts.push("");
+    parts.push("## Files to Modify");
+    parts.push("");
+    parts.push(
+      "For existing repositories, list every file that needs to be changed.",
+    );
+    parts.push("Each item must start with `- `:");
+    parts.push("");
+    parts.push("- `path/to/file.ts` — summary of the change");
+    parts.push("- `path/to/new-file.ts` — (new file) purpose");
+    parts.push("");
+    parts.push("## Implementation Plan");
+    parts.push("");
+    parts.push(
+      "Give concrete, numbered steps for the change. Each step must name the target file(s).",
+    );
+    parts.push("Each item must start with `1. ` `2. ` etc.:");
+    parts.push("");
+    parts.push("1. Target file and specific change");
+    parts.push("2. Target file and specific change");
+    parts.push("");
+    parts.push("## Risks & Considerations");
+    parts.push("");
+    parts.push("List potential risks and edge cases.");
+    parts.push("Each item must start with `- `:");
+    parts.push("");
+    parts.push("- Risk or caveat");
+    parts.push("- Existing feature that needs regression testing");
+    parts.push("");
+    parts.push("## Dependencies & Conflicts");
+    parts.push("");
+    parts.push("Analyze relationships against currently active tasks.");
+    parts.push("Each item must start with `- `:");
+    parts.push("");
+    parts.push(
+      "- If this task is blocked by another task, write `Blocked by #XX: reason`",
+    );
+    parts.push(
+      "- If another task edits the same files, write `Conflicts with #XX: files and nature of conflict`",
+    );
+    parts.push("- If it can run in parallel, write `No conflicts`");
+    parts.push("");
+    parts.push("## Updated Description");
+    parts.push("");
+    parts.push(
+      "A refined, detailed, and unambiguous task description based on the analysis above.",
+    );
+    parts.push("");
+    parts.push("---END REFINEMENT---");
+    parts.push("");
+    parts.push(
+      refinementAsPr
+        ? "Important: do not modify implementation code. Only plan-document Markdown creation / updates, git operations, and PR creation are allowed."
+        : "Important: do not create, edit, or write files. Read and analyze only.",
+    );
+  } else {
+    parts.push("# 調整フェーズ: タスク計画の策定");
+    parts.push("");
+    parts.push(
+      refinementAsPr
+        ? "**重要な制約: 実装コードは変更しないでください。計画書の作成・保存・PR 化のみ許可されます。**"
+        : "**重要な制約: コードの変更は行わないでください。分析と計画策定のみ。**",
+    );
+    parts.push("");
+    parts.push(`## タスク: ${task.title}`);
+    parts.push("");
+    if (task.description) {
+      parts.push(task.description);
+      parts.push("");
+    }
+    if (task.project_path) {
+      parts.push(`プロジェクトパス: ${task.project_path}`);
+      parts.push("");
+    }
+
+    const contextSnippet = extractContextFromTask(task, language);
+    if (contextSnippet) {
+      parts.push(contextSnippet);
+      parts.push("");
+    }
+
+    parts.push("## ミッション");
+    parts.push("");
+    parts.push("タスクを分析し、以下の構造化された計画を策定してください。");
+    parts.push("コードベースを読み取り、関連ファイル・依存関係・既存パターンを調査した上で、");
+    parts.push("具体的かつ実行可能な計画を立ててください。");
+    parts.push("");
+    parts.push("## 出力形式");
+    parts.push("");
+    parts.push("以下のフォーマットで出力してください:");
+    parts.push("");
+    parts.push("---REFINEMENT PLAN---");
+    parts.push("");
+    parts.push("## 背景");
+    parts.push("");
+    parts.push("このタスクが必要になった経緯・動機を簡潔に説明する（2-3文程度）:");
+    parts.push("");
+    parts.push("- なぜこの変更が必要なのか");
+    parts.push("- 現状の問題点や不足している点");
+    parts.push("- このタスクが解決する課題");
+    parts.push("");
+    parts.push("## 要求");
+    parts.push("");
+    parts.push("ユーザー・ビジネス視点で「何を実現したいか」を箇条書きで列挙する。技術用語は使わない。");
+    parts.push("各項目は `- ` で始める:");
+    parts.push("");
+    parts.push("- 〇〇画面で△△したい");
+    parts.push("- 操作結果が即座に反映されてほしい");
+    parts.push("- 設定がブラウザを閉じても保持されてほしい");
+    parts.push("- 既存の〇〇機能の動きは変わらないでほしい");
+    parts.push("");
+    parts.push("## 技術要件");
+    parts.push("");
+    parts.push("エンジニア視点で「どう実現するか」の技術的な制約・方針を箇条書きで列挙する。");
+    parts.push("各項目は `- ` で始める:");
+    parts.push("");
+    parts.push("- 使用する既存フック・ライブラリ・パターン");
+    parts.push("- データの保存先（localStorage, DB, API等）");
+    parts.push("- 状態管理の方式（props, context, store等）");
+    parts.push("- API/DB変更の有無");
+    parts.push("");
+    parts.push("## 受け入れ条件");
+    parts.push("");
+    parts.push("完了判定の条件をチェックリスト形式で列挙する。");
+    parts.push("各項目は `- [ ] ` で始める:");
+    parts.push("");
+    parts.push("- [ ] 条件1");
+    parts.push("- [ ] 条件2");
+    parts.push("");
+    parts.push("## 期待値");
+    parts.push("");
+    parts.push("完了後の状態を箇条書きで列挙する。");
+    parts.push("各項目は `- ` で始める:");
+    parts.push("");
+    parts.push("- 完了後のユーザー体験");
+    parts.push("- 完了後のシステム動作");
+    parts.push("- 影響範囲の予測");
+    parts.push("");
+    parts.push("## 変更対象ファイル");
+    parts.push("");
+    parts.push("既存リポジトリの場合、変更が必要なファイルを全て箇条書きで列挙する。");
+    parts.push("各項目は `- ` で始める:");
+    parts.push("");
+    parts.push("- `path/to/file.ts` — 変更内容の要約");
+    parts.push("- `path/to/new-file.ts` — (新規作成) 目的の説明");
+    parts.push("");
+    parts.push("## 実装計画");
+    parts.push("");
+    parts.push("具体的な変更手順を番号付きリストで列挙する。各ステップに対象ファイルを明記する。");
+    parts.push("各項目は `1. ` `2. ` のように番号で始める:");
+    parts.push("");
+    parts.push("1. 対象ファイルと具体的な変更内容");
+    parts.push("2. 対象ファイルと具体的な変更内容");
+    parts.push("");
+    parts.push("## リスク・注意点");
+    parts.push("");
+    parts.push("潜在的なリスクやエッジケースを箇条書きで列挙する。");
+    parts.push("各項目は `- ` で始める:");
+    parts.push("");
+    parts.push("- リスクや注意点");
+    parts.push("- 回帰テストが必要な既存機能");
+    parts.push("");
+    parts.push("## 依存関係・コンフリクト");
+    parts.push("");
+    parts.push("現在アクティブなタスクとの関係を分析する。");
+    parts.push("各項目は `- ` で始める:");
+    parts.push("");
+    parts.push("- このタスクの前に完了すべきタスク（依存先）があれば `Blocked by #XX: 理由` で記載");
+    parts.push("- 同じファイルを変更するタスクがあれば `Conflicts with #XX: 対象ファイルと競合内容` で記載");
+    parts.push("- 並行実行可能な場合は `No conflicts` と記載");
+    parts.push("");
+    parts.push("## 更新されたタスク説明");
+    parts.push("");
+    parts.push("上記を踏まえた、より詳細で明確なタスク説明文。");
+    parts.push("");
+    parts.push("---END REFINEMENT---");
+    parts.push("");
+    parts.push(
+      refinementAsPr
+        ? "重要: 実装コードは変更しないこと。計画書 Markdown の作成・更新、git 操作、PR 作成のみ許可されます。"
+        : "重要: ファイルの作成・編集・書き込みをしないこと。読み取りと分析のみ。",
+    );
+  }
 
   return parts.join("\n");
 }
@@ -725,6 +1109,11 @@ export interface BuildReviewPromptOptions {
    * backward compatibility with the pre-panel single-reviewer flow.
    */
   reviewerRole?: ReviewerRole;
+  /**
+   * Output language for the natural-language portions of the prompt.
+   * Control tokens (`[REVIEW:code:PASS]`, etc.) stay fixed regardless.
+   */
+  language?: OutputLanguage;
 }
 
 /**
@@ -743,13 +1132,10 @@ export function buildReviewPrompt(
 ): string {
   const reviewerRole: ReviewerRole = options.reviewerRole ?? "code";
   const isSecurityReviewer = reviewerRole === "security";
+  const language: OutputLanguage = options.language ?? DEFAULT_OUTPUT_LANGUAGE;
   const parts: string[] = [];
 
-  parts.push("## Language");
-  parts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  parts.push("");
+  appendLanguageDirective(parts, language);
 
   // Inject CLAUDE.md + rules
   appendSharedContext(parts, task.project_path);
@@ -949,14 +1335,14 @@ export function buildReviewPrompt(
  * Build a prompt for an automated QA testing run.
  * The QA agent verifies the implementation and outputs a verdict marker.
  */
-export function buildQaPrompt(task: Task, projectType: ProjectType = "generic"): string {
+export function buildQaPrompt(
+  task: Task,
+  projectType: ProjectType = "generic",
+  language: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
+): string {
   const parts: string[] = [];
 
-  parts.push("## Language");
-  parts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  parts.push("");
+  appendLanguageDirective(parts, language);
 
   // Inject CLAUDE.md + rules
   appendSharedContext(parts, task.project_path);
@@ -1160,15 +1546,14 @@ export function buildTestGenerationPrompt(
      * serial behavior: runs after implementer, no scope restriction).
      */
     parallel?: boolean;
+    /** Output language for natural-language portions of the prompt. */
+    language?: OutputLanguage;
   },
 ): string {
   const parts: string[] = [];
+  const language: OutputLanguage = opts?.language ?? DEFAULT_OUTPUT_LANGUAGE;
 
-  parts.push("## Language");
-  parts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  parts.push("");
+  appendLanguageDirective(parts, language);
 
   appendSharedContext(parts, task.project_path);
 
@@ -1347,14 +1732,13 @@ function appendGenericTestGeneration(parts: string[]): void {
   parts.push("");
 }
 
-export function buildCiCheckPrompt(task: Task): string {
+export function buildCiCheckPrompt(
+  task: Task,
+  language: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
+): string {
   const parts: string[] = [];
 
-  parts.push("## Language");
-  parts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  parts.push("");
+  appendLanguageDirective(parts, language);
 
   appendSharedContext(parts, task.project_path);
 
@@ -1402,100 +1786,175 @@ export function buildCiCheckPrompt(task: Task): string {
   return parts.join("\n");
 }
 
-export function buildDecomposePrompt(directive: Directive): string {
+export function buildDecomposePrompt(
+  directive: Directive,
+  language: OutputLanguage = DEFAULT_OUTPUT_LANGUAGE,
+): string {
   const parts: string[] = [];
+  const isEn = language === "en";
 
-  parts.push("## Language");
-  parts.push(
-    "Always respond and communicate in Japanese (日本語). Code comments, variable names, and commit messages should remain in English.",
-  );
-  parts.push("");
+  appendLanguageDirective(parts, language);
 
   // Inject CLAUDE.md + rules so decomposer understands project context
   appendSharedContext(parts, directive.project_path);
 
-  parts.push(
-    "You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks with numbered IDs and dependency tracking.",
-  );
-  parts.push("");
-  parts.push(`# Directive: ${directive.title}`);
-  parts.push("");
-  parts.push(directive.content);
-  parts.push("");
-  if (directive.project_path) {
-    parts.push(`Project path: ${directive.project_path}`);
+  if (isEn) {
+    parts.push(
+      "You are a project manager AI. Your job is to decompose the following directive into concrete, actionable tasks with numbered IDs and dependency tracking.",
+    );
     parts.push("");
+    parts.push(`# Directive: ${directive.title}`);
+    parts.push("");
+    parts.push(directive.content);
+    parts.push("");
+    if (directive.project_path) {
+      parts.push(`Project path: ${directive.project_path}`);
+      parts.push("");
+    }
+    parts.push("## Instructions");
+    parts.push("");
+    parts.push(
+      "Break this directive into 2-8 concrete tasks. Each task should be:",
+    );
+    parts.push("- Specific and actionable (a single agent can complete it)");
+    parts.push("- Small to medium in scope");
+    parts.push("- Numbered sequentially (T01, T02, T03...)");
+    parts.push(
+      "- Include dependency information (which tasks must complete before this one)",
+    );
+    parts.push("");
+    parts.push(
+      "Respond with TWO sections separated by the exact line `---PLAN---`:",
+    );
+    parts.push("");
+    parts.push(
+      "**SECTION 1**: JSON array of tasks (no markdown fences, no extra text before or after the JSON):",
+    );
+    parts.push("```");
+    parts.push(
+      JSON.stringify(
+        [
+          {
+            task_id: "T01",
+            title: "Set up database schema",
+            description: "Detailed description of what to do",
+            task_size: "small",
+            priority: 10,
+            depends_on: [],
+          },
+          {
+            task_id: "T02",
+            title: "Implement API endpoints",
+            description: "Detailed description",
+            task_size: "medium",
+            priority: 8,
+            depends_on: ["T01"],
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    parts.push("```");
+    parts.push("");
+    parts.push("---PLAN---");
+    parts.push("");
+    parts.push("**SECTION 2**: Implementation plan in Markdown:");
+    parts.push("```");
+    parts.push("# Implementation Plan: {directive title}");
+    parts.push("## Overview");
+    parts.push("Brief summary of the implementation approach.");
+    parts.push("## Task Dependency Graph");
+    parts.push(
+      "Show which tasks depend on which (e.g. T01 → T02 → T03).",
+    );
+    parts.push("## Implementation Order");
+    parts.push("Recommended execution order with rationale.");
+    parts.push("## Risk Analysis");
+    parts.push("Potential risks and mitigations.");
+    parts.push("## Prerequisites");
+    parts.push("What needs to be in place before starting.");
+    parts.push("## Estimated Effort");
+    parts.push("Rough estimates per task.");
+    parts.push("```");
+    parts.push("");
+    parts.push(
+      "Output SECTION 1 (JSON) followed by ---PLAN--- followed by SECTION 2 (Markdown) now:",
+    );
+  } else {
+    parts.push(
+      "あなたはプロジェクトマネージャーAIです。以下の指示を、依存関係付きの具体的で実行可能なタスクへ分解してください。",
+    );
+    parts.push("");
+    parts.push(`# 指示: ${directive.title}`);
+    parts.push("");
+    parts.push(directive.content);
+    parts.push("");
+    if (directive.project_path) {
+      parts.push(`プロジェクトパス: ${directive.project_path}`);
+      parts.push("");
+    }
+    parts.push("## 指示");
+    parts.push("");
+    parts.push("この指示を2-8個の具体的なタスクに分解してください。各タスクは次を満たすこと:");
+    parts.push("- 具体的で実行可能であること（1人のエージェントで完了できる）");
+    parts.push("- スコープは small から medium に収まること");
+    parts.push("- 連番の task_id を持つこと（T01, T02, T03...）");
+    parts.push("- 依存関係を明記すること（どのタスク完了後に着手できるか）");
+    parts.push("");
+    parts.push("必ず `---PLAN---` の行で区切られた2つのセクションで回答してください:");
+    parts.push("");
+    parts.push("**SECTION 1**: タスクの JSON 配列（Markdown のフェンス禁止、JSON の前後に余計な文章を入れない）:");
+    parts.push("```");
+    parts.push(
+      JSON.stringify(
+        [
+          {
+            task_id: "T01",
+            title: "データベーススキーマを準備する",
+            description: "実施内容の詳細説明",
+            task_size: "small",
+            priority: 10,
+            depends_on: [],
+          },
+          {
+            task_id: "T02",
+            title: "API エンドポイントを実装する",
+            description: "実施内容の詳細説明",
+            task_size: "medium",
+            priority: 8,
+            depends_on: ["T01"],
+          },
+        ],
+        null,
+        2,
+      ),
+    );
+    parts.push("```");
+    parts.push("");
+    parts.push("---PLAN---");
+    parts.push("");
+    parts.push("**SECTION 2**: Markdown 形式の実装計画:");
+    parts.push("```");
+    parts.push("# 実装計画: {directive title}");
+    parts.push("## 概要");
+    parts.push("実装方針の要約。");
+    parts.push("## タスク依存グラフ");
+    parts.push("どのタスクがどのタスクに依存するかを示す（例: T01 → T02 → T03）。");
+    parts.push("## 実装順序");
+    parts.push("推奨する実行順序とその理由。");
+    parts.push("## リスク分析");
+    parts.push("想定されるリスクと対策。");
+    parts.push("## 前提条件");
+    parts.push("開始前に必要な準備。");
+    parts.push("## 見積もり");
+    parts.push("タスクごとのおおよその工数。");
+    parts.push("```");
+    parts.push("");
+    parts.push(
+      "SECTION 1 の JSON、`---PLAN---`、SECTION 2 の Markdown の順で今すぐ出力してください:",
+    );
   }
-  parts.push("## Instructions");
-  parts.push("");
-  parts.push(
-    "Break this directive into 2-8 concrete tasks. Each task should be:",
-  );
-  parts.push("- Specific and actionable (a single agent can complete it)");
-  parts.push("- Small to medium in scope");
-  parts.push("- Numbered sequentially (T01, T02, T03...)");
-  parts.push(
-    "- Include dependency information (which tasks must complete before this one)",
-  );
-  parts.push("");
-  parts.push(
-    "Respond with TWO sections separated by the exact line `---PLAN---`:",
-  );
-  parts.push("");
-  parts.push(
-    "**SECTION 1**: JSON array of tasks (no markdown fences, no extra text before or after the JSON):",
-  );
-  parts.push("```");
-  parts.push(
-    JSON.stringify(
-      [
-        {
-          task_id: "T01",
-          title: "Set up database schema",
-          description: "Detailed description of what to do",
-          task_size: "small",
-          priority: 10,
-          depends_on: [],
-        },
-        {
-          task_id: "T02",
-          title: "Implement API endpoints",
-          description: "Detailed description",
-          task_size: "medium",
-          priority: 8,
-          depends_on: ["T01"],
-        },
-      ],
-      null,
-      2,
-    ),
-  );
-  parts.push("```");
-  parts.push("");
-  parts.push("---PLAN---");
-  parts.push("");
-  parts.push("**SECTION 2**: Implementation plan in Markdown:");
-  parts.push("```");
-  parts.push("# Implementation Plan: {directive title}");
-  parts.push("## Overview");
-  parts.push("Brief summary of the implementation approach.");
-  parts.push("## Task Dependency Graph");
-  parts.push(
-    "Show which tasks depend on which (e.g. T01 → T02 → T03).",
-  );
-  parts.push("## Implementation Order");
-  parts.push("Recommended execution order with rationale.");
-  parts.push("## Risk Analysis");
-  parts.push("Potential risks and mitigations.");
-  parts.push("## Prerequisites");
-  parts.push("What needs to be in place before starting.");
-  parts.push("## Estimated Effort");
-  parts.push("Rough estimates per task.");
-  parts.push("```");
-  parts.push("");
-  parts.push(
-    "Output SECTION 1 (JSON) followed by ---PLAN--- followed by SECTION 2 (Markdown) now:",
-  );
 
   return parts.join("\n");
 }

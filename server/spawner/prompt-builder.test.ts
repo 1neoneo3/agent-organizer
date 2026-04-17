@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  buildDecomposePrompt,
+  buildExplorePrompt,
   buildQaPrompt,
+  buildRefinementPrompt,
   buildReviewPrompt,
   buildTaskPrompt,
   buildTestGenerationPrompt,
+  DEFAULT_OUTPUT_LANGUAGE,
 } from "./prompt-builder.js";
 
 describe("buildTaskPrompt", () => {
@@ -42,7 +46,7 @@ describe("buildTaskPrompt", () => {
           includeReview: true,
           includeDecompose: true,
           enableRefinement: null,
-  enableTestGeneration: false,
+          enableTestGeneration: false,
           enableHumanReview: false,
           enableCiCheck: false,
           projectType: "generic" as const,
@@ -216,6 +220,38 @@ describe("buildTestGenerationPrompt", () => {
   });
 });
 
+describe("buildRefinementPrompt", () => {
+  it("keeps refinement read-only by default", () => {
+    const prompt = buildRefinementPrompt({
+      id: "task-refinement-default",
+      title: "Plan the work",
+      description: "Draft a refinement plan.",
+      project_path: "/tmp/project",
+      status: "refinement",
+    } as never);
+
+    assert.match(prompt, /コードの変更は行わないでください。分析と計画策定のみ。/);
+    assert.match(prompt, /ファイルの作成・編集・書き込みをしないこと。/);
+  });
+
+  it("allows plan-file creation when refinement_as_pr is enabled", () => {
+    const prompt = buildRefinementPrompt(
+      {
+        id: "task-refinement-pr",
+        title: "Plan the work",
+        description: "Draft a refinement plan.",
+        project_path: "/tmp/project",
+        status: "refinement",
+      } as never,
+      undefined,
+      { asPr: true },
+    );
+
+    assert.match(prompt, /計画書の作成・保存・PR 化のみ許可されます/);
+    assert.match(prompt, /計画書 Markdown の作成・更新、git 操作、PR 作成のみ許可されます/);
+  });
+});
+
 describe("buildReviewPrompt", () => {
   // Coverage for the regression we saw with verify1-12: reviewers were
   // blindly running `npm run lint` in Python projects, walking up to an
@@ -341,5 +377,284 @@ describe("buildQaPrompt", () => {
     assert.match(prompt, /dbt compile/);
     assert.match(prompt, /dbt test/);
     assert.match(prompt, /dbt build/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Output-language switching — every builder must honor the language flag by
+// emitting the correct "## Language" directive. The directive drives the
+// agent's response language; control tokens (SPRINT CONTRACT, ---REFINEMENT
+// PLAN---, [REVIEW:<role>:PASS], ---EXPLORE RESULT---) must stay stable
+// across languages so downstream parsers keep working.
+// ---------------------------------------------------------------------------
+describe("output language directive", () => {
+  const task = {
+    id: "lang-task",
+    title: "Switch language",
+    description: "Ensure language handling works.",
+    project_path: "/tmp/lang",
+    task_size: "small",
+  } as never;
+
+  it("buildTaskPrompt emits Japanese directive by default", () => {
+    const prompt = buildTaskPrompt(task);
+    assert.match(prompt, /Always respond and communicate in Japanese/);
+  });
+
+  it("buildTaskPrompt emits English directive when language='en'", () => {
+    const prompt = buildTaskPrompt(task, { language: "en" });
+    assert.match(prompt, /Always respond and communicate in English/);
+    assert.doesNotMatch(prompt, /Always respond and communicate in Japanese/);
+    // Control tokens must remain stable.
+    assert.match(prompt, /---SPRINT CONTRACT---/);
+    assert.match(prompt, /---END CONTRACT---/);
+  });
+
+  it("buildRefinementPrompt emits English section headers when language='en'", () => {
+    const prompt = buildRefinementPrompt(task, undefined, { language: "en" });
+    assert.match(prompt, /Always respond and communicate in English/);
+    assert.match(prompt, /## Background/);
+    assert.match(prompt, /## Business Requirements/);
+    assert.match(prompt, /## Acceptance Criteria/);
+    assert.match(prompt, /## Implementation Plan/);
+    assert.match(prompt, /## Updated Description/);
+    // Fence tokens are parser-critical — must be unchanged.
+    assert.match(prompt, /---REFINEMENT PLAN---/);
+    assert.match(prompt, /---END REFINEMENT---/);
+  });
+
+  it("buildRefinementPrompt emits Japanese section headers by default", () => {
+    const prompt = buildRefinementPrompt(task);
+    assert.match(prompt, /## 背景/);
+    assert.match(prompt, /## 実装計画/);
+    assert.match(prompt, /## 更新されたタスク説明/);
+    assert.match(prompt, /---REFINEMENT PLAN---/);
+    assert.match(prompt, /---END REFINEMENT---/);
+  });
+
+  it("buildExplorePrompt emits English body when language='en' while keeping EXPLORE fences", () => {
+    const prompt = buildExplorePrompt(task, "en");
+    assert.match(prompt, /# Explore Phase: Investigation Only/);
+    assert.match(prompt, /---EXPLORE RESULT---/);
+    assert.match(prompt, /---END EXPLORE---/);
+  });
+
+  it("buildQaPrompt / buildReviewPrompt / buildTestGenerationPrompt honor the language flag", () => {
+    const qa = buildQaPrompt(task, "generic", "en");
+    assert.match(qa, /Always respond and communicate in English/);
+
+    const review = buildReviewPrompt(task, { language: "en" });
+    assert.match(review, /Always respond and communicate in English/);
+    // Verdict control tokens are language-agnostic.
+    assert.match(review, /\[REVIEW:code:PASS\]/);
+
+    const testGen = buildTestGenerationPrompt(task, "generic", { language: "en" });
+    assert.match(testGen, /Always respond and communicate in English/);
+  });
+});
+
+describe("DEFAULT_OUTPUT_LANGUAGE", () => {
+  it("is 'ja' (preserving historical default)", () => {
+    assert.equal(DEFAULT_OUTPUT_LANGUAGE, "ja");
+  });
+});
+
+describe("language directive completeness", () => {
+  const task = {
+    id: "lang-complete",
+    title: "Completeness check",
+    description: "Verify all builders emit exactly one language directive.",
+    project_path: "/tmp/lang",
+    task_size: "small",
+  } as never;
+
+  it("buildTaskPrompt never includes both language directives simultaneously", () => {
+    const jaPrompt = buildTaskPrompt(task);
+    assert.match(jaPrompt, /Always respond and communicate in Japanese/);
+    assert.doesNotMatch(jaPrompt, /Always respond and communicate in English/);
+
+    const enPrompt = buildTaskPrompt(task, { language: "en" });
+    assert.match(enPrompt, /Always respond and communicate in English/);
+    assert.doesNotMatch(enPrompt, /Always respond and communicate in Japanese/);
+  });
+
+  it("buildRefinementPrompt never includes both language directives simultaneously", () => {
+    const jaPrompt = buildRefinementPrompt(task);
+    assert.match(jaPrompt, /Always respond and communicate in Japanese/);
+    assert.doesNotMatch(jaPrompt, /Always respond and communicate in English/);
+
+    const enPrompt = buildRefinementPrompt(task, undefined, { language: "en" });
+    assert.match(enPrompt, /Always respond and communicate in English/);
+    assert.doesNotMatch(enPrompt, /Always respond and communicate in Japanese/);
+  });
+
+  it("buildExplorePrompt never includes both language directives simultaneously", () => {
+    const jaPrompt = buildExplorePrompt(task);
+    assert.match(jaPrompt, /Always respond and communicate in Japanese/);
+    assert.doesNotMatch(jaPrompt, /Always respond and communicate in English/);
+
+    const enPrompt = buildExplorePrompt(task, "en");
+    assert.match(enPrompt, /Always respond and communicate in English/);
+    assert.doesNotMatch(enPrompt, /Always respond and communicate in Japanese/);
+  });
+
+  it("buildQaPrompt never includes both language directives simultaneously", () => {
+    const jaPrompt = buildQaPrompt(task, "generic");
+    assert.match(jaPrompt, /Always respond and communicate in Japanese/);
+    assert.doesNotMatch(jaPrompt, /Always respond and communicate in English/);
+
+    const enPrompt = buildQaPrompt(task, "generic", "en");
+    assert.match(enPrompt, /Always respond and communicate in English/);
+    assert.doesNotMatch(enPrompt, /Always respond and communicate in Japanese/);
+  });
+
+  it("buildReviewPrompt never includes both language directives simultaneously", () => {
+    const jaPrompt = buildReviewPrompt(task);
+    assert.match(jaPrompt, /Always respond and communicate in Japanese/);
+    assert.doesNotMatch(jaPrompt, /Always respond and communicate in English/);
+
+    const enPrompt = buildReviewPrompt(task, { language: "en" });
+    assert.match(enPrompt, /Always respond and communicate in English/);
+    assert.doesNotMatch(enPrompt, /Always respond and communicate in Japanese/);
+  });
+
+  it("buildTestGenerationPrompt never includes both language directives simultaneously", () => {
+    const jaPrompt = buildTestGenerationPrompt(task, "generic");
+    assert.match(jaPrompt, /Always respond and communicate in Japanese/);
+    assert.doesNotMatch(jaPrompt, /Always respond and communicate in English/);
+
+    const enPrompt = buildTestGenerationPrompt(task, "generic", { language: "en" });
+    assert.match(enPrompt, /Always respond and communicate in English/);
+    assert.doesNotMatch(enPrompt, /Always respond and communicate in Japanese/);
+  });
+});
+
+describe("control tokens remain stable across languages", () => {
+  const task = {
+    id: "token-stability",
+    title: "Token stability",
+    description: "Ensure control tokens are language-independent.",
+    project_path: "/tmp/tokens",
+    task_size: "small",
+  } as never;
+
+  it("buildTaskPrompt preserves SPRINT CONTRACT tokens in both languages", () => {
+    const ja = buildTaskPrompt(task);
+    const en = buildTaskPrompt(task, { language: "en" });
+
+    for (const prompt of [ja, en]) {
+      assert.match(prompt, /---SPRINT CONTRACT---/);
+      assert.match(prompt, /---END CONTRACT---/);
+    }
+  });
+
+  it("buildRefinementPrompt preserves REFINEMENT fence tokens in both languages", () => {
+    const ja = buildRefinementPrompt(task);
+    const en = buildRefinementPrompt(task, undefined, { language: "en" });
+
+    for (const prompt of [ja, en]) {
+      assert.match(prompt, /---REFINEMENT PLAN---/);
+      assert.match(prompt, /---END REFINEMENT---/);
+    }
+  });
+
+  it("buildExplorePrompt preserves EXPLORE fence tokens in both languages", () => {
+    const ja = buildExplorePrompt(task);
+    const en = buildExplorePrompt(task, "en");
+
+    for (const prompt of [ja, en]) {
+      assert.match(prompt, /---EXPLORE RESULT---/);
+      assert.match(prompt, /---END EXPLORE---/);
+    }
+  });
+
+  it("buildReviewPrompt preserves REVIEW verdict tokens in both languages", () => {
+    const ja = buildReviewPrompt(task);
+    const en = buildReviewPrompt(task, { language: "en" });
+
+    for (const prompt of [ja, en]) {
+      assert.match(prompt, /\[REVIEW:code:PASS\]/);
+    }
+  });
+});
+
+describe("buildRefinementPrompt English section headers completeness", () => {
+  const task = {
+    id: "refinement-en-headers",
+    title: "Headers test",
+    description: "Test all section headers switch.",
+    project_path: "/tmp/headers",
+    task_size: "medium",
+  } as never;
+
+  it("English mode emits all required English headers", () => {
+    const prompt = buildRefinementPrompt(task, undefined, { language: "en" });
+
+    assert.match(prompt, /## Background/);
+    assert.match(prompt, /## Business Requirements/);
+    assert.match(prompt, /## Acceptance Criteria/);
+    assert.match(prompt, /## Implementation Plan/);
+    assert.match(prompt, /## Updated Description/);
+  });
+
+  it("Japanese mode emits all required Japanese headers", () => {
+    const prompt = buildRefinementPrompt(task);
+
+    assert.match(prompt, /## 背景/);
+    assert.match(prompt, /## 実装計画/);
+    assert.match(prompt, /## 更新されたタスク説明/);
+  });
+});
+
+describe("buildExplorePrompt English mode", () => {
+  const task = {
+    id: "explore-en",
+    title: "Explore EN",
+    description: "Test explore English mode.",
+    project_path: "/tmp/explore",
+  } as never;
+
+  it("emits English investigation header", () => {
+    const prompt = buildExplorePrompt(task, "en");
+    assert.match(prompt, /# Explore Phase: Investigation Only/);
+  });
+
+  it("emits Japanese investigation header by default", () => {
+    const prompt = buildExplorePrompt(task);
+    assert.match(prompt, /調査/);
+  });
+});
+
+describe("buildDecomposePrompt language switching", () => {
+  const directive = {
+    id: "directive-lang",
+    title: "Language-aware task generation",
+    content: "Create decomposed tasks and plan output in the selected language.",
+    project_path: "/tmp/directive-lang",
+  } as never;
+
+  it("emits English decomposition instructions when language='en'", () => {
+    const prompt = buildDecomposePrompt(directive, "en");
+
+    assert.match(prompt, /Always respond and communicate in English/);
+    assert.match(prompt, /# Directive: Language-aware task generation/);
+    assert.match(prompt, /## Instructions/);
+    assert.match(prompt, /Break this directive into 2-8 concrete tasks/);
+    assert.match(prompt, /# Implementation Plan: \{directive title\}/);
+    assert.match(prompt, /---PLAN---/);
+    assert.doesNotMatch(prompt, /## 指示/);
+    assert.doesNotMatch(prompt, /この指示を2-8個の具体的なタスクに分解/);
+  });
+
+  it("emits Japanese decomposition instructions by default", () => {
+    const prompt = buildDecomposePrompt(directive);
+
+    assert.match(prompt, /Always respond and communicate in Japanese/);
+    assert.match(prompt, /# 指示: Language-aware task generation/);
+    assert.match(prompt, /## 指示/);
+    assert.match(prompt, /この指示を2-8個の具体的なタスクに分解/);
+    assert.match(prompt, /# 実装計画: \{directive title\}/);
+    assert.match(prompt, /---PLAN---/);
+    assert.doesNotMatch(prompt, /## Instructions/);
   });
 });

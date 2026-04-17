@@ -13,10 +13,11 @@ import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransi
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
-import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE } from "../config/runtime.js";
+import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE, isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
+import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
 import {
   isTaskOverridableKey,
@@ -71,6 +72,31 @@ function resolveRepositoryUrl(
   return null;
 }
 
+function resolveTaskOutputLanguage(
+  db: RuntimeContext["db"],
+  taskId: string,
+): OutputLanguage {
+  const taskRow = db
+    .prepare("SELECT settings_overrides FROM tasks WHERE id = ?")
+    .get(taskId) as { settings_overrides: string | null } | undefined;
+
+  const overrideValue = taskRow
+    ? safeParseOverrides(taskRow.settings_overrides)?.output_language
+    : undefined;
+  if (typeof overrideValue === "string" && isOutputLanguage(overrideValue)) {
+    return overrideValue;
+  }
+
+  const globalRow = db
+    .prepare("SELECT value FROM settings WHERE key = 'output_language'")
+    .get() as { value: string } | undefined;
+  if (globalRow?.value && isOutputLanguage(globalRow.value)) {
+    return globalRow.value;
+  }
+
+  return "ja";
+}
+
 type InteractivePromptType = "exit_plan_mode" | "ask_user_question" | "text_input_request";
 
 interface InteractiveResponseInput {
@@ -119,6 +145,13 @@ export function buildContinuePromptFromInteractiveResponse({
   return parts.length > 0
     ? `The user has responded to your questions:\n\n${parts.join("\n\n")}`
     : "The user acknowledged your question without a specific answer.";
+}
+
+export function resolveRequestedAgentId(
+  taskAssignedAgentId: string | null | undefined,
+  requestedAgentId: string | null | undefined,
+): string | undefined {
+  return requestedAgentId ?? taskAssignedAgentId ?? undefined;
 }
 
 function nextTaskNumber(db: RuntimeContext["db"]): string {
@@ -417,7 +450,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") return res.status(409).json({ error: "already_running" });
 
-    const agentId = task.assigned_agent_id ?? (req.body as { agent_id?: string }).agent_id;
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
     if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
@@ -429,7 +462,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET assigned_agent_id = ? WHERE id = ?").run(agentId, task.id);
     }
 
-    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId }, { cache });
+    // Manual Run is an explicit user intent — reset any prior orphan-recovery
+    // auto-respawn history so the task gets a fresh budget from zero.
+    db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
+
+    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
     res.json({ started: true, pid: result.pid });
   });
 
@@ -451,6 +488,32 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     await cache.del("agents:all");
     ws.broadcast("task_update", { id: req.params.id, status: "cancelled" });
     res.json({ stopped: true });
+  });
+
+  // Resume a cancelled task: re-assign agent and spawn back to in_progress
+  router.post("/tasks/:id/resume", async (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (task.status !== "cancelled") return res.status(409).json({ error: "not_cancelled" });
+
+    const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
+    if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
+
+    const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
+    if (!agent) return res.status(404).json({ error: "agent_not_found" });
+    if (agent.status === "working") return res.status(409).json({ error: "agent_busy" });
+
+    const now = Date.now();
+    db.prepare(
+      "UPDATE tasks SET status = 'in_progress', completed_at = NULL, assigned_agent_id = ?, updated_at = ? WHERE id = ?"
+    ).run(agentId, now, task.id);
+
+    const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+    const result = spawnAgent(db, ws, agent, freshTask, { cache });
+
+    await invalidateTaskCaches();
+    res.json({ resumed: true, pid: result.pid });
   });
 
   // Approve a task in human_review or refinement — advance to next stage
@@ -532,7 +595,10 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Parse implementation steps from the refinement plan
     const plan = task.refinement_plan;
-    const implMatch = plan.match(/## 実装計画 \(Implementation Plan\)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
+    // Match both Japanese and English refinement-plan section headings.
+    // Legacy plans used `## 実装計画 (Implementation Plan)`; current plans
+    // emit either `## 実装計画` (ja) or `## Implementation Plan` (en).
+    const implMatch = plan.match(/## (?:実装計画(?: \(Implementation Plan\))?|Implementation Plan)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
     if (!implMatch) return res.status(400).json({ error: "no_implementation_steps" });
 
     const stepsRaw = implMatch[1].trim();
@@ -561,6 +627,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const now = Date.now();
     const childTasks: Task[] = [];
     const taskNumberMap = new Map<number, string>(); // step num -> task_number
+    const outputLanguage = resolveTaskOutputLanguage(db, task.id);
 
     for (const step of steps) {
       const childId = randomUUID();
@@ -575,10 +642,18 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       }
       const depsJson = deps.length > 0 ? JSON.stringify(deps) : null;
       const hasDeps = deps.length > 0;
-
-      const description = `Step ${step.num} of ${task.task_number}: ${step.text}${planPath ? `\n\nRefinement Plan: ${planPath}` : ""}`;
+      const splitArtifacts = buildRefinementSplitArtifacts({
+        language: outputLanguage,
+        parentTaskNumber: task.task_number,
+        stepNumber: step.num,
+        totalSteps: steps.length,
+        stepText: step.text,
+        childNumbers: childNumber,
+        planPath,
+      });
+      const description = splitArtifacts.description;
       // Inherit parent's refinement plan so child tasks skip refinement stage
-      const childPlan = `Parent ${task.task_number} — Step ${step.num}/${steps.length}: ${step.text}\n\n${parentPlanClean}`;
+      const childPlan = `${splitArtifacts.childPlan}\n\n${parentPlanClean}`;
       const repoUrl = task.repository_url ?? (task.project_path ? detectRepositoryUrl(task.project_path) : null);
 
       db.prepare(
@@ -592,7 +667,15 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Mark parent task as done with result
     const childNumbers = childTasks.map(c => c.task_number).join(", ");
-    const result = `Split into ${childNumbers}${planPath ? `\nPlan saved: ${planPath}` : ""}`;
+    const result = buildRefinementSplitArtifacts({
+      language: outputLanguage,
+      parentTaskNumber: task.task_number,
+      stepNumber: 1,
+      totalSteps: steps.length,
+      stepText: steps[0]?.text ?? task.title,
+      childNumbers,
+      planPath,
+    }).result;
     db.prepare("UPDATE tasks SET status = 'done', result = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(result, now, now, task.id);
 
     // Release agent if assigned
@@ -627,7 +710,27 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const offset = Number(req.query.offset ?? 0);
     const logs = db.prepare(
       "SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ? OFFSET ?"
-    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { message: string }>;
+    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { id: number; message: string }>;
+
+    // Stage transition markers are inserted by the tasks_log_stage_transition
+    // trigger on every status change. When a task is long-lived enough that
+    // in-stage logs exceed `limit`, the oldest transition markers fall
+    // outside the paginated window and the Activity terminal loses the
+    // earliest stage segments (e.g. inbox→refinement, refinement→in_progress).
+    // Always fold every transition marker for the task into the response so
+    // the client can rebuild the full stage timeline regardless of pagination.
+    const transitions = db.prepare(
+      "SELECT * FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC"
+    ).all(req.params.id) as Array<Record<string, unknown> & { id: number; message: string }>;
+
+    const seen = new Set<number>(logs.map((row) => row.id));
+    for (const row of transitions) {
+      if (!seen.has(row.id)) {
+        logs.push(row);
+        seen.add(row.id);
+      }
+    }
+    logs.sort((a, b) => Number(b.id) - Number(a.id));
 
     // Cap per-message length to keep the response payload bounded. Some rows
     // contain full tool-result JSON blobs (tens of KB each), which can push
@@ -783,7 +886,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "refinement" });
     } else {
-      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+      // Manual feedback-rework is an explicit user intent — reset the
+      // auto-respawn counter so a mid-rework crash gets a full retry budget.
+      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?").run(now, task.id);
       ws.broadcast("task_update", { id: task.id, status: "in_progress" });
     }
 

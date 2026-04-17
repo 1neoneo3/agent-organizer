@@ -2,6 +2,9 @@ import { execFileSync } from "node:child_process";
 import type { Task } from "../types/runtime.js";
 import type { ProjectWorkflow } from "./loader.js";
 import type { TaskWorkspace } from "./workspace-manager.js";
+import type { OutputLanguage } from "../config/runtime.js";
+
+const DEFAULT_LANGUAGE: OutputLanguage = "ja";
 
 export type ReviewSyncStatus =
   | "pending"
@@ -30,6 +33,13 @@ interface CommandExecutor {
 interface PromoteOptions {
   exec?: CommandExecutor;
   executedCommands?: string[];
+  /**
+   * Output language for the PR body. Controls the section headers
+   * (`## 背景` vs `## Background`, etc.) and the default verification
+   * placeholder text. Defaults to Japanese to preserve historical
+   * behavior.
+   */
+  language?: OutputLanguage;
 }
 
 function runCommand(
@@ -81,13 +91,31 @@ function buildPrBody(
   branchName: string,
   commitSha: string,
   executedCommands: string[] = [],
+  language: OutputLanguage = DEFAULT_LANGUAGE,
 ): string {
+  const isEn = language === "en";
   const taskRef = task.task_number ? ` (${task.task_number})` : "";
   const description = (task.description ?? task.title).trim();
 
   // If description already contains markdown headings (## xxx), use it as-is
-  // to avoid duplicating "## 背景" section.
+  // to avoid duplicating the Background section.
   const descriptionHasHeadings = /^##\s/m.test(description);
+
+  const headings = isEn
+    ? {
+        background: "## Background",
+        changes: "## Changes",
+        scope: "## Scope",
+        verification: "## Verification",
+        other: "## Other",
+      }
+    : {
+        background: "## 背景",
+        changes: "## 行った変更",
+        scope: "## 影響範囲",
+        verification: "## 動作確認項目",
+        other: "## その他",
+      };
 
   const verificationLines = executedCommands.length > 0
     ? executedCommands.map((cmd) => `- [x] \`${cmd}\``)
@@ -95,26 +123,30 @@ function buildPrBody(
 
   const backgroundSection = descriptionHasHeadings
     ? [`${description}${taskRef ? `\n\n${taskRef.trim()}` : ""}`]
-    : ["## 背景", "", `${description}${taskRef}`];
+    : [headings.background, "", `${description}${taskRef}`];
+
+  const scopePlaceholder = isEn ? "- Task change area" : "- タスク変更箇所";
+  const reviewBranchLabel = isEn ? "review branch" : "review branch";
+  const reviewCommitLabel = isEn ? "review commit" : "review commit";
 
   const lines = [
     ...backgroundSection,
     "",
-    "## 行った変更",
+    headings.changes,
     "",
     `- ${task.title}`,
-    `- review branch: ${branchName}`,
-    `- review commit: ${commitSha}`,
+    `- ${reviewBranchLabel}: ${branchName}`,
+    `- ${reviewCommitLabel}: ${commitSha}`,
     "",
-    "## 影響範囲",
+    headings.scope,
     "",
-    "- タスク変更箇所",
+    scopePlaceholder,
     "",
-    "## 動作確認項目",
+    headings.verification,
     "",
     ...verificationLines,
     "",
-    "## その他",
+    headings.other,
     "",
     "- ",
   ];
@@ -196,7 +228,13 @@ export function promoteTaskReviewArtifact(
   try {
     result.baseBranch = detectBaseBranch(workspace.cwd, exec);
     const existingPrUrl = lookupExistingPrUrl(workspace.cwd, result.branchName!, exec);
-    const prBody = buildPrBody(task, result.branchName!, result.commitSha!, options?.executedCommands);
+    const prBody = buildPrBody(
+      task,
+      result.branchName!,
+      result.commitSha!,
+      options?.executedCommands,
+      options?.language,
+    );
     if (existingPrUrl) {
       // Overwrite existing PR body to ensure consistent format (no duplicated sections)
       try {

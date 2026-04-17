@@ -17,6 +17,8 @@ export const deleteTask = (id: string) => api.delete<{ deleted: boolean }>(`/tas
 export const runTask = (id: string, agentId?: string) =>
   api.post<{ started: boolean; pid: number }>(`/tasks/${id}/run`, agentId ? { agent_id: agentId } : {});
 export const stopTask = (id: string) => api.post<{ stopped: boolean }>(`/tasks/${id}/stop`);
+export const resumeTask = (id: string, agentId?: string) =>
+  api.post<{ resumed: boolean; pid: number }>(`/tasks/${id}/resume`, agentId ? { agent_id: agentId } : {});
 export const approveTask = (id: string) => api.post<{ approved: boolean; next_status: string }>(`/tasks/${id}/approve`);
 export const rejectTask = (id: string, reason?: string) => api.post<{ rejected: boolean; reason: string }>(`/tasks/${id}/reject`, { reason });
 export const splitTask = (id: string) => api.post<{ parent: Task; children: Task[]; plan_path: string | null }>(`/tasks/${id}/split`);
