@@ -90,6 +90,7 @@ function insertTask(
     result: overrides.result ?? null,
     refinement_plan: overrides.refinement_plan ?? null,
     refinement_completed_at: overrides.refinement_completed_at ?? null,
+    planned_files: overrides.planned_files ?? null,
     pr_url: overrides.pr_url ?? null,
     review_count: overrides.review_count ?? 0,
     directive_id: overrides.directive_id ?? null,

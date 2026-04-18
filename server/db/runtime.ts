@@ -57,6 +57,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddMultiUrls(db);
   migrateAddAutoRespawnCount(db);
   migrateAddRefinementCompletedAt(db);
+  migrateAddPlannedFiles(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -281,6 +282,26 @@ function migrateAddAutoRespawnCount(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === "auto_respawn_count")) {
     db.exec("ALTER TABLE tasks ADD COLUMN auto_respawn_count INTEGER NOT NULL DEFAULT 0");
   }
+}
+
+function migrateAddPlannedFiles(db: DatabaseSync): void {
+  // Static file-conflict detection for the #99 follow-up. Each task
+  // stores a JSON array of repo-relative paths it intends to modify,
+  // extracted from the "## Files to Modify" section of its
+  // refinement_plan. The file-conflict gate in
+  // domain/task-dependencies compares overlapping paths against any
+  // other task still in an editing stage (in_progress, refinement,
+  // etc.) and blocks advancement the same way declared depends_on does.
+  //
+  // No backfill is possible for existing rows: their refinement_plan
+  // (when present at all) was written before the agent was aware this
+  // field would be consumed, and re-extraction may or may not find a
+  // matching heading. Leaving NULL is correct — the check treats that
+  // as "no static overlap data" and falls back to the declarative
+  // depends_on gate alone.
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "planned_files")) return;
+  db.exec("ALTER TABLE tasks ADD COLUMN planned_files TEXT");
 }
 
 function migrateAddRefinementCompletedAt(db: DatabaseSync): void {

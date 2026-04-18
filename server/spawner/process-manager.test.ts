@@ -33,6 +33,7 @@ function insertTask(db: DatabaseSync, overrides: Partial<Task> = {}): Task {
     result: null,
     refinement_plan: null,
     refinement_completed_at: null,
+    planned_files: null,
     pr_url: null,
     external_source: null,
     external_id: null,

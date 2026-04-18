@@ -40,6 +40,7 @@ export interface Task {
   result: string | null;
   refinement_plan: string | null;
   refinement_completed_at: number | null;
+  planned_files: string | null;
   pr_url: string | null;
   external_source: string | null;
   external_id: string | null;

@@ -743,6 +743,7 @@ function makeReviewTask(id: string): Task {
     result: null,
     refinement_plan: null,
     refinement_completed_at: null,
+    planned_files: null,
     review_count: 1,
     directive_id: null,
     pr_url: null,
