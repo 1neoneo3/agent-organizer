@@ -9,6 +9,7 @@ import { MarkdownContent } from "./MarkdownContent.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
 import { buildAgentViewState } from "./agent-view.js";
 import { getResumeActionState } from "./task-resume.js";
+import { formatModelName } from "../../formatModelName.js";
 
 /**
  * Layout mode for the task detail view.
@@ -247,7 +248,7 @@ export function TaskDetailModal({
                   <PixelAvatar role={agent.role} size={14} className="inline-block align-middle" />
                   {agent.name}
                   {agent.cli_model && (
-                    <span style={{ color: "var(--text-tertiary)" }}>({agent.cli_model})</span>
+                    <span style={{ color: "var(--text-tertiary)" }}>({formatModelName(agent.cli_model)})</span>
                   )}
                 </span>
               )}
@@ -573,7 +574,7 @@ export function TaskDetailModal({
             {agent?.cli_model && (
               <div style={{ gridColumn: "span 2" }}>
                 <span style={{ color: "var(--text-tertiary)" }}>Model</span>
-                <span style={{ marginLeft: "8px", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: "12px" }}>{agent.cli_model}</span>
+                <span style={{ marginLeft: "8px", color: "var(--text-primary)", fontFamily: "var(--font-mono)", fontSize: "12px" }}>{formatModelName(agent.cli_model)}</span>
               </div>
             )}
             {task.project_path && (
