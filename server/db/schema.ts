@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   repository_url TEXT,
   repository_urls TEXT,
   pr_urls TEXT,
+  merged_pr_urls TEXT,
   started_at INTEGER,
   completed_at INTEGER,
   last_heartbeat_at INTEGER,

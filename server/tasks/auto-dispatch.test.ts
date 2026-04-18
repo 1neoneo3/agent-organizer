@@ -85,6 +85,7 @@ function insertTask(db: DatabaseSync, overrides?: Partial<Task>): Task {
     repository_url: overrides?.repository_url ?? null,
     repository_urls: null,
     pr_urls: null,
+    merged_pr_urls: null,
     started_at: overrides?.started_at ?? null,
     completed_at: overrides?.completed_at ?? null,
     auto_respawn_count: overrides?.auto_respawn_count ?? 0,

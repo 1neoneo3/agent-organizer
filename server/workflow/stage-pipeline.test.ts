@@ -757,6 +757,7 @@ function makeReviewTask(id: string): Task {
     repository_url: null,
     repository_urls: null,
     pr_urls: null,
+    merged_pr_urls: null,
     settings_overrides: null,
     started_at: 1000,
     completed_at: null,

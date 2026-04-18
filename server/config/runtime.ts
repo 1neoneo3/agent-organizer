@@ -123,6 +123,12 @@ export const GITHUB_SYNC_INTERVAL_MS = Number(process.env.GITHUB_SYNC_INTERVAL_M
 export const GITHUB_SYNC_PROJECT_PATH = process.env.GITHUB_SYNC_PROJECT_PATH ?? PROJECT_ROOT;
 export const AUTO_DISPATCH_INTERVAL_MS = Number(process.env.AUTO_DISPATCH_INTERVAL_MS ?? 60_000);
 
+// Secret used to verify GitHub webhook signatures (X-Hub-Signature-256).
+// When empty, the /webhooks/github endpoint accepts unsigned requests —
+// only safe in local dev. In any networked deployment, set this to match
+// the secret configured on GitHub's webhook page.
+export const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "";
+
 // Maximum number of times orphan recovery may automatically re-spawn a parked
 // in_progress task. The counter resets on any forward stage transition
 // (in_progress → qa_testing, pr_review → in_progress rework, etc.), on
