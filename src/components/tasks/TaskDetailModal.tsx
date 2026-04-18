@@ -91,6 +91,33 @@ function formatDuration(ms: number | null): string {
   return remHour === 0 ? `${totalDays}d` : `${totalDays}d ${remHour}h`;
 }
 
+function RefinementPlanBlock({
+  plan,
+  testId = "refinement-plan-section",
+}: {
+  plan: string;
+  testId?: string;
+}) {
+  const body = plan
+    .replace(/^---REFINEMENT PLAN---\n?/, "")
+    .replace(/\n?---END REFINEMENT---$/, "");
+  return (
+    <div data-testid={testId} style={{ marginBottom: "16px" }}>
+      <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
+        Refinement Plan
+      </h3>
+      <div style={{
+        background: "var(--bg-primary)",
+        borderRadius: "8px",
+        padding: "12px",
+        border: "1px solid var(--border-subtle)",
+      }}>
+        <MarkdownContent content={body} />
+      </div>
+    </div>
+  );
+}
+
 interface TaskDetailModalProps {
   task: Task;
   agents: Agent[];
@@ -412,19 +439,7 @@ export function TaskDetailModal({
               the original Description first. For non-refinement statuses the
               same block is rendered after Description below (historical view). */}
           {task.refinement_plan && task.status === "refinement" && (
-            <div data-testid="refinement-plan-section" style={{ marginBottom: "16px" }}>
-              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
-                Refinement Plan
-              </h3>
-              <div style={{
-                background: "var(--bg-primary)",
-                borderRadius: "8px",
-                padding: "12px",
-                border: "1px solid var(--border-subtle)",
-              }}>
-                <MarkdownContent content={task.refinement_plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")} />
-              </div>
-            </div>
+            <RefinementPlanBlock plan={task.refinement_plan} />
           )}
 
           {/* Description */}
@@ -453,19 +468,7 @@ export function TaskDetailModal({
               below is gated on status === "refinement" so it never appears in
               this branch. */}
           {task.refinement_plan && task.status !== "refinement" && (
-            <div data-testid="refinement-plan-section" style={{ marginBottom: "16px" }}>
-              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
-                Refinement Plan
-              </h3>
-              <div style={{
-                background: "var(--bg-primary)",
-                borderRadius: "8px",
-                padding: "12px",
-                border: "1px solid var(--border-subtle)",
-              }}>
-                <MarkdownContent content={task.refinement_plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")} />
-              </div>
-            </div>
+            <RefinementPlanBlock plan={task.refinement_plan} />
           )}
 
           {/* Approve / Reject / Feedback — sticky at the bottom of the scroll
