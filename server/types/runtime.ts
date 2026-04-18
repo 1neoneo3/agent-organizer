@@ -55,6 +55,7 @@ export interface Task {
   repository_urls: string | null;
   pr_urls: string | null;
   merged_pr_urls: string | null;
+  settings_overrides: string | null;
   started_at: number | null;
   completed_at: number | null;
   auto_respawn_count: number;

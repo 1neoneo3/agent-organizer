@@ -29,7 +29,18 @@ import {
   mergeOverrides,
   safeParseOverrides,
   TASK_OVERRIDABLE_KEYS,
+  validateOverridesPatch,
 } from "../domain/task-settings.js";
+
+// Accept overrides as a flat string→string record on create/update so
+// callers can seed stage toggles (default_enable_refinement, review_mode,
+// …) atomically at creation. Without this, the first `resolveActiveStages`
+// evaluation runs before any subsequent PATCH can land, and the initial
+// auto-dispatch sees only the global settings. Values are string-typed to
+// match the on-disk JSON (settings table stores "true"/"false" strings).
+const SettingsOverridesPatch = z
+  .record(z.string().min(1), z.union([z.string(), z.null()]))
+  .optional();
 
 const CreateTaskSchema = z.object({
   title: z.string().min(1).max(500),
@@ -40,6 +51,7 @@ const CreateTaskSchema = z.object({
   task_size: z.enum(["small", "medium", "large"]).default("small"),
   repository_url: z.string().url().nullish(),
   repository_urls: z.array(z.string().url()).nullish(),
+  settings_overrides: SettingsOverridesPatch,
 });
 
 const UpdateTaskSchema = z.object({
@@ -55,7 +67,9 @@ const UpdateTaskSchema = z.object({
   pr_urls: z.array(z.string().url()).nullish(),
   repository_url: z.string().url().nullish(),
   repository_urls: z.array(z.string().url()).nullish(),
+  settings_overrides: SettingsOverridesPatch,
 });
+
 
 /**
  * Resolve the repository_url for a task at write time. Precedence:
@@ -210,7 +224,18 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const parsed = CreateTaskSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const { title, description, assigned_agent_id, project_path, priority, task_size, repository_url, repository_urls } = parsed.data;
+    const { title, description, assigned_agent_id, project_path, priority, task_size, repository_url, repository_urls, settings_overrides: overridesPatch } = parsed.data;
+
+    // Reject unknown override keys up front so typos cannot silently
+    // create dead config in tasks.settings_overrides.
+    const validated = validateOverridesPatch(overridesPatch);
+    if (!validated.ok) {
+      return res.status(400).json({
+        error: "invalid_settings_overrides",
+        message: `Unknown override keys: ${validated.invalidKeys.join(", ")}`,
+        allowed_keys: TASK_OVERRIDABLE_KEYS,
+      });
+    }
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
@@ -259,10 +284,22 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const urlsJson = urlArray.length > 0 ? JSON.stringify(urlArray) : null;
     const primaryRepoUrl = urlArray[0] ?? null;
 
+    // Serialize overrides for initial insert so the very first
+    // resolveActiveStages evaluation inside autoDispatchTask below already
+    // sees the per-task toggles. Without this, the first dispatch tick
+    // would use the global settings and spawn refinement even when the
+    // caller explicitly disabled it.
+    const overridesJson = validated.patch
+      ? (() => {
+          const merged = mergeOverrides(null, validated.patch);
+          return merged ? JSON.stringify(merged) : null;
+        })()
+      : null;
+
     db.prepare(
-      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, repository_url, repository_urls, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, primaryRepoUrl, urlsJson, now, now);
+      `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, repository_url, repository_urls, settings_overrides, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, primaryRepoUrl, urlsJson, overridesJson, now, now);
 
     let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
     ws.broadcast("task_update", task);
@@ -287,6 +324,26 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const updates = parsed.data;
     const existingTask = existing as unknown as Task;
+
+    // Validate + apply settings_overrides patch. We merge (not replace)
+    // so callers can flip a single toggle without having to round-trip
+    // the full overrides blob. `null` value removes a key (see
+    // mergeOverrides).
+    if (updates.settings_overrides !== undefined) {
+      const validatedUpdate = validateOverridesPatch(updates.settings_overrides);
+      if (!validatedUpdate.ok) {
+        return res.status(400).json({
+          error: "invalid_settings_overrides",
+          message: `Unknown override keys: ${validatedUpdate.invalidKeys.join(", ")}`,
+          allowed_keys: TASK_OVERRIDABLE_KEYS,
+        });
+      }
+      // Merge into existing settings_overrides and write back through
+      // the generic field loop below.
+      const existingRaw = (existing as { settings_overrides: string | null }).settings_overrides;
+      const merged = mergeOverrides(existingRaw, validatedUpdate.patch ?? {});
+      (updates as Record<string, unknown>).settings_overrides = merged ? JSON.stringify(merged) : null;
+    }
 
     // Validate pipeline order for status changes
     if (updates.status) {
