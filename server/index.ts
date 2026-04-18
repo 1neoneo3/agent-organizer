@@ -8,6 +8,7 @@ import { initializeDb } from "./db/runtime.js";
 import { createWsHub } from "./ws/hub.js";
 import { createRedisClient, createCacheService } from "./cache/index.js";
 import { mountRoutes } from "./routes/index.js";
+import { createWebhooksRouter } from "./routes/webhooks.js";
 import { mountStatic } from "./static-handlers.js";
 import { authMiddleware } from "./security/auth.js";
 import { startOrphanRecovery } from "./lifecycle/jobs.js";
@@ -41,6 +42,11 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["content-type", "authorization", "x-csrf-token"],
 }));
+// Webhooks must be mounted BEFORE express.json() so the raw body is
+// preserved for HMAC signature verification. The router pulls its own
+// express.raw() body parser per-route.
+app.use("/webhooks", createWebhooksRouter(ctx));
+
 app.use(express.json());
 app.use("/api", authMiddleware);
 

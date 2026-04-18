@@ -58,6 +58,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddAutoRespawnCount(db);
   migrateAddRefinementCompletedAt(db);
   migrateAddPlannedFiles(db);
+  migrateAddMergedPrUrls(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -302,6 +303,16 @@ function migrateAddPlannedFiles(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === "planned_files")) return;
   db.exec("ALTER TABLE tasks ADD COLUMN planned_files TEXT");
+}
+
+function migrateAddMergedPrUrls(db: DatabaseSync): void {
+  // JSON array of PR URLs that have been confirmed merged via GitHub
+  // webhook. Used to gate `pr_urls`-multi-PR tasks: a task flips to
+  // `done` only when every URL in `pr_urls` also appears in
+  // `merged_pr_urls`. Single-PR tasks never touch this column.
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "merged_pr_urls")) return;
+  db.exec("ALTER TABLE tasks ADD COLUMN merged_pr_urls TEXT");
 }
 
 function migrateAddRefinementCompletedAt(db: DatabaseSync): void {
