@@ -59,6 +59,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddRefinementCompletedAt(db);
   migrateAddPlannedFiles(db);
   migrateAddMergedPrUrls(db);
+  migrateAddSettingsOverrides(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -303,6 +304,19 @@ function migrateAddPlannedFiles(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === "planned_files")) return;
   db.exec("ALTER TABLE tasks ADD COLUMN planned_files TEXT");
+}
+
+function migrateAddSettingsOverrides(db: DatabaseSync): void {
+  // Per-task settings overrides JSON blob. Readers assume the column
+  // exists (domain/task-settings.ts), but the schema & migration list
+  // never registered it — existing installations got the column via an
+  // unrecorded manual ALTER, so fresh installs / ephemeral in-memory DBs
+  // used in tests would crash with "no such column". Adding the
+  // migration closes that gap without affecting production databases
+  // that already have the column.
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "settings_overrides")) return;
+  db.exec("ALTER TABLE tasks ADD COLUMN settings_overrides TEXT");
 }
 
 function migrateAddMergedPrUrls(db: DatabaseSync): void {

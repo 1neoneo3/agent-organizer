@@ -126,3 +126,27 @@ const TASK_OVERRIDABLE_SET = new Set(TASK_OVERRIDABLE_KEYS);
 export function isTaskOverridableKey(key: string): boolean {
   return TASK_OVERRIDABLE_SET.has(key);
 }
+
+/**
+ * Validate a settings_overrides patch against the allow-list.
+ *
+ * Returns a discriminated result so callers can surface the exact
+ * offending keys to the API response rather than a generic 400. Typos
+ * (e.g. "enable_refinement" vs "default_enable_refinement") would
+ * otherwise silently land in the JSON blob and confuse future operators.
+ *
+ * `undefined` patch → ok with undefined (no-op). This lets callers pass
+ * request bodies directly without pre-checking for the optional field.
+ */
+export type OverridesPatchValidation =
+  | { ok: true; patch: Record<string, string | null> | undefined }
+  | { ok: false; invalidKeys: string[] };
+
+export function validateOverridesPatch(
+  patch: Record<string, string | null> | undefined,
+): OverridesPatchValidation {
+  if (!patch) return { ok: true, patch: undefined };
+  const invalid = Object.keys(patch).filter((k) => !isTaskOverridableKey(k));
+  if (invalid.length > 0) return { ok: false, invalidKeys: invalid };
+  return { ok: true, patch };
+}
