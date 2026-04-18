@@ -144,6 +144,24 @@ describe("parsePlannedFiles", () => {
     const value = ["src/a.ts", "src/b.ts"];
     assert.deepStrictEqual(parsePlannedFiles(JSON.stringify(value)), value);
   });
+
+  it("defensively normalizes entries that were not normalized at write time", () => {
+    // Guard for future write paths (admin API, SQL console backfill, etc.)
+    // that might persist raw strings. intersectFilePaths compares with
+    // strict Set equality, so without normalize-at-read a "./src/a.ts"
+    // row and a "src/a.ts" row would silently miss each other.
+    assert.deepStrictEqual(
+      parsePlannedFiles('["./src/a.ts","src/b.ts/","src//c.ts"]'),
+      ["src/a.ts", "src/b.ts", "src/c.ts"],
+    );
+  });
+
+  it("deduplicates entries that normalize to the same path", () => {
+    assert.deepStrictEqual(
+      parsePlannedFiles('["src/a.ts","./src/a.ts","src//a.ts"]'),
+      ["src/a.ts"],
+    );
+  });
 });
 
 describe("intersectFilePaths", () => {

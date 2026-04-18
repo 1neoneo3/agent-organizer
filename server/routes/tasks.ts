@@ -737,10 +737,19 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       // enough. Without this stamp, the stricter `hasExistingPlan`
       // rule (plan AND completed_at) would re-run refinement on every
       // child task.
+      //
+      // Inherit `planned_files` from the parent so the file-conflict
+      // gate covers child tasks too. Without this, children would all
+      // have NULL planned_files and slip past `getFileConflicts` even
+      // when they obviously touch the same files as the parent's plan.
+      // The children are typically chained via `depends_on` (sequential
+      // execution), so this mainly protects against a user breaking
+      // that chain manually — at which point the file-conflict gate
+      // becomes the last line of defense.
       db.prepare(
-        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, refinement_plan, refinement_completed_at, repository_url, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, childPlan, now, repoUrl, now, now);
+        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, refinement_plan, refinement_completed_at, planned_files, repository_url, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, childPlan, now, task.planned_files, repoUrl, now, now);
 
       const child = db.prepare("SELECT * FROM tasks WHERE id = ?").get(childId) as unknown as Task;
       childTasks.push(child);

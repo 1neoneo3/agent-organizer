@@ -114,13 +114,30 @@ export function extractPlannedFilesFromPlan(plan: string | null | undefined): st
  * into an array. Silently yields `[]` for null/malformed payloads —
  * callers treat an empty list as "no static overlap information
  * available" and skip the file-conflict check for that task.
+ *
+ * Defensive `normalizePath` pass: the happy path (extraction →
+ * persistence → read) already normalizes before storing, but any
+ * future write path (admin API, bulk import, manual UPDATE via SQL
+ * console, migration backfill) could insert raw strings. Running
+ * normalizePath at read time makes `intersectFilePaths` — which
+ * compares with strict Set equality — robust against those skew
+ * cases at zero material cost.
  */
 export function parsePlannedFiles(raw: string | null): string[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((p): p is string => typeof p === "string");
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const entry of parsed) {
+      if (typeof entry !== "string") continue;
+      const norm = normalizePath(entry);
+      if (norm.length === 0 || seen.has(norm)) continue;
+      seen.add(norm);
+      out.push(norm);
+    }
+    return out;
   } catch {
     return [];
   }
