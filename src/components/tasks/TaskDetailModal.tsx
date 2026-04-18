@@ -91,6 +91,33 @@ function formatDuration(ms: number | null): string {
   return remHour === 0 ? `${totalDays}d` : `${totalDays}d ${remHour}h`;
 }
 
+function RefinementPlanBlock({
+  plan,
+  testId = "refinement-plan-section",
+}: {
+  plan: string;
+  testId?: string;
+}) {
+  const body = plan
+    .replace(/^---REFINEMENT PLAN---\n?/, "")
+    .replace(/\n?---END REFINEMENT---$/, "");
+  return (
+    <div data-testid={testId} style={{ marginBottom: "16px" }}>
+      <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
+        Refinement Plan
+      </h3>
+      <div style={{
+        background: "var(--bg-primary)",
+        borderRadius: "8px",
+        padding: "12px",
+        border: "1px solid var(--border-subtle)",
+      }}>
+        <MarkdownContent content={body} />
+      </div>
+    </div>
+  );
+}
+
 interface TaskDetailModalProps {
   task: Task;
   agents: Agent[];
@@ -407,6 +434,14 @@ export function TaskDetailModal({
             );
           })()}
 
+          {/* Refinement Plan — rendered first when awaiting review so the
+              reviewer sees the plan they need to act on without scrolling past
+              the original Description first. For non-refinement statuses the
+              same block is rendered after Description below (historical view). */}
+          {task.refinement_plan && task.status === "refinement" && (
+            <RefinementPlanBlock plan={task.refinement_plan} />
+          )}
+
           {/* Description */}
           {task.description ? (
             <div style={{ marginBottom: "16px" }}>
@@ -428,88 +463,100 @@ export function TaskDetailModal({
             </div>
           )}
 
-          {/* Refinement Plan */}
-          {task.refinement_plan && (
-            <div style={{ marginBottom: "16px" }}>
-              <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
-                Refinement Plan
-              </h3>
-              <div style={{
-                background: "var(--bg-primary)",
-                borderRadius: "8px",
-                padding: "12px",
-                border: "1px solid var(--border-subtle)",
-              }}>
-                <MarkdownContent content={task.refinement_plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")} />
-              </div>
+          {/* Refinement Plan (historical) — shown below Description once the
+              task has moved past the refinement stage. The approval action bar
+              below is gated on status === "refinement" so it never appears in
+              this branch. */}
+          {task.refinement_plan && task.status !== "refinement" && (
+            <RefinementPlanBlock plan={task.refinement_plan} />
+          )}
 
-              {/* Approve / Reject / Feedback — only when awaiting review */}
-              {task.status === "refinement" && task.refinement_plan && (
-                <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <div style={{ display: "flex", gap: "8px" }}>
-                    <button
-                      onClick={async () => { await approveTask(task.id); }}
-                      className="eb-btn eb-btn--primary"
-                      style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
-                    >
-                      Approve Plan
-                    </button>
-                    <button
-                      onClick={async () => {
-                        if (!confirm("Split this plan into individual tasks? The parent task will be marked as done.")) return;
-                        await splitTask(task.id);
-                      }}
-                      className="eb-btn"
-                      style={{ flex: 1, fontSize: "12px", padding: "8px 12px", background: "var(--status-refinement)", color: "#fff" }}
-                    >
-                      Split into Tasks
-                    </button>
-                    <button
-                      onClick={async () => { await rejectTask(task.id); }}
-                      className="eb-btn eb-btn--danger"
-                      style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
-                    >
-                      Reject Plan
-                    </button>
-                  </div>
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <textarea
-                      value={refinementFeedback}
-                      onChange={(e) => setRefinementFeedback(e.target.value)}
-                      placeholder="Request changes to the plan..."
-                      rows={2}
-                      style={{
-                        flex: 1,
-                        background: "var(--bg-tertiary)",
-                        border: "1px solid var(--border-default)",
-                        borderRadius: "6px",
-                        padding: "8px",
-                        fontSize: "12px",
-                        color: "var(--text-primary)",
-                        resize: "vertical",
-                        outline: "none",
-                      }}
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!refinementFeedback.trim()) return;
-                        setSendingRefinementFeedback(true);
-                        try {
-                          await sendTaskFeedback(task.id, refinementFeedback.trim());
-                          setRefinementFeedback("");
-                        } finally {
-                          setSendingRefinementFeedback(false);
-                        }
-                      }}
-                      disabled={!refinementFeedback.trim() || sendingRefinementFeedback}
-                      className="eb-btn eb-btn--primary"
-                      style={{ alignSelf: "flex-end", fontSize: "12px", padding: "8px 16px", opacity: (!refinementFeedback.trim() || sendingRefinementFeedback) ? 0.5 : 1 }}
-                    >
-                      {sendingRefinementFeedback ? "..." : "Revise"}
-                    </button>
-                  </div>
-                </div>
-              )}
+          {/* Approve / Reject / Feedback — sticky at the bottom of the scroll
+              region so the reviewer can always act on the plan without having
+              to scroll past its full body when the plan is long. */}
+          {task.status === "refinement" && task.refinement_plan && (
+            <div
+              data-testid="refinement-action-bar"
+              style={{
+                position: "sticky",
+                bottom: 0,
+                marginTop: "4px",
+                marginLeft: "-24px",
+                marginRight: "-24px",
+                paddingLeft: "24px",
+                paddingRight: "24px",
+                paddingTop: "10px",
+                paddingBottom: "12px",
+                background: "var(--bg-secondary)",
+                borderTop: "1px solid var(--border-default)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+                zIndex: 1,
+              }}
+            >
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={async () => { await approveTask(task.id); }}
+                  className="eb-btn eb-btn--primary"
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                >
+                  Approve Plan
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!confirm("Split this plan into individual tasks? The parent task will be marked as done.")) return;
+                    await splitTask(task.id);
+                  }}
+                  className="eb-btn"
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", background: "var(--status-refinement)", color: "#fff" }}
+                >
+                  Split into Tasks
+                </button>
+                <button
+                  onClick={async () => { await rejectTask(task.id); }}
+                  className="eb-btn eb-btn--danger"
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                >
+                  Reject Plan
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <textarea
+                  value={refinementFeedback}
+                  onChange={(e) => setRefinementFeedback(e.target.value)}
+                  placeholder="Request changes to the plan..."
+                  rows={2}
+                  style={{
+                    flex: 1,
+                    background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border-default)",
+                    borderRadius: "6px",
+                    padding: "8px",
+                    fontSize: "12px",
+                    color: "var(--text-primary)",
+                    resize: "vertical",
+                    outline: "none",
+                  }}
+                />
+                <button
+                  onClick={async () => {
+                    if (!refinementFeedback.trim()) return;
+                    setSendingRefinementFeedback(true);
+                    try {
+                      await sendTaskFeedback(task.id, refinementFeedback.trim());
+                      setRefinementFeedback("");
+                    } finally {
+                      setSendingRefinementFeedback(false);
+                    }
+                  }}
+                  disabled={!refinementFeedback.trim() || sendingRefinementFeedback}
+                  className="eb-btn eb-btn--primary"
+                  style={{ alignSelf: "flex-end", fontSize: "12px", padding: "8px 16px", opacity: (!refinementFeedback.trim() || sendingRefinementFeedback) ? 0.5 : 1 }}
+                >
+                  {sendingRefinementFeedback ? "..." : "Revise"}
+                </button>
+              </div>
             </div>
           )}
 
