@@ -18,6 +18,10 @@ import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
+import {
+  formatBlockingDependencies,
+  getBlockingDependencies,
+} from "../domain/task-dependencies.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
 import {
   isTaskOverridableKey,
@@ -450,6 +454,20 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") return res.status(409).json({ error: "already_running" });
 
+    // Dependency gate: a task whose prerequisite is still active (in_progress,
+    // refinement, pr_review, …) must not advance — it may be about to edit
+    // files that the prerequisite is still mutating. The auto-dispatcher
+    // already enforces this for the inbox path; apply the same rule here
+    // so manual Run cannot bypass the guard.
+    const blockedBy = getBlockingDependencies(db, task);
+    if (blockedBy.length > 0) {
+      return res.status(409).json({
+        error: "blocked_by_dependencies",
+        message: `Blocked by: ${formatBlockingDependencies(blockedBy)}`,
+        blocked_by: blockedBy,
+      });
+    }
+
     const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
     if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
 
@@ -496,6 +514,17 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status !== "cancelled") return res.status(409).json({ error: "not_cancelled" });
 
+    // Dependency gate — see POST /tasks/:id/run for rationale. Resume re-
+    // enters in_progress, so it must observe the same prerequisite state.
+    const blockedBy = getBlockingDependencies(db, task);
+    if (blockedBy.length > 0) {
+      return res.status(409).json({
+        error: "blocked_by_dependencies",
+        message: `Blocked by: ${formatBlockingDependencies(blockedBy)}`,
+        blocked_by: blockedBy,
+      });
+    }
+
     const agentId = resolveRequestedAgentId(task.assigned_agent_id, (req.body as { agent_id?: string }).agent_id);
     if (!agentId) return res.status(400).json({ error: "no_agent_assigned" });
 
@@ -531,6 +560,44 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const activeStages = resolveActiveStages(db, workflow, task.task_size);
     const next = nextStage(task.status as "human_review" | "refinement", activeStages);
     const now = Date.now();
+
+    // Dependency gate on refinement → in_progress advancement. The
+    // refinement stage itself is read-only so it was fine to run while a
+    // prerequisite was in_progress, but once we advance to implementation
+    // the file-editing conflict risk applies. Block the advancement and
+    // park the task back in inbox so the auto-dispatcher can pick it up
+    // the moment the prerequisite finishes — matches the behavior of
+    // POST /run and auto-dispatch.
+    if (isRefinement && next === "in_progress") {
+      const blockedBy = getBlockingDependencies(db, task);
+      if (blockedBy.length > 0) {
+        db.prepare(
+          "UPDATE tasks SET status = 'inbox', assigned_agent_id = NULL, started_at = NULL, updated_at = ? WHERE id = ?",
+        ).run(now, task.id);
+        if (task.assigned_agent_id) {
+          db.prepare(
+            "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+          ).run(now, task.assigned_agent_id);
+          ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+        }
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+        ).run(
+          task.id,
+          `Refinement plan approved but advancement blocked: waiting on ${formatBlockingDependencies(blockedBy)}. Returned to inbox for auto-dispatch to retry when prerequisites finish.`,
+        );
+
+        await invalidateTaskCaches();
+        ws.broadcast("task_update", { id: task.id, status: "inbox", assigned_agent_id: null, started_at: null });
+
+        return res.status(409).json({
+          error: "blocked_by_dependencies",
+          message: `Refinement approved but blocked by: ${formatBlockingDependencies(blockedBy)}`,
+          blocked_by: blockedBy,
+          returned_to: "inbox",
+        });
+      }
+    }
 
     db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(next, now, task.id);
     db.prepare(

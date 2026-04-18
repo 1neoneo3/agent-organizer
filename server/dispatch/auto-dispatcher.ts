@@ -8,6 +8,10 @@ import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { resolveActiveStages } from "../workflow/stage-pipeline.js";
+import {
+  formatBlockingDependencies,
+  getBlockingDependencies,
+} from "../domain/task-dependencies.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
 
@@ -232,32 +236,11 @@ function createDefaultTaskStarter(
   };
 }
 
-/**
- * Check if a task has unfulfilled dependencies. Returns the task_numbers
- * that are not yet done (blocking this task from starting).
- */
-function getBlockingDependencies(db: DatabaseSync, task: Task): string[] {
-  if (!task.depends_on) return [];
-  let deps: string[];
-  try {
-    const parsed = JSON.parse(task.depends_on);
-    deps = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-  if (deps.length === 0) return [];
-
-  const blocking: string[] = [];
-  for (const dep of deps) {
-    const depTask = db.prepare(
-      "SELECT task_number, status FROM tasks WHERE task_number = ? LIMIT 1"
-    ).get(dep) as { task_number: string; status: string } | undefined;
-    if (!depTask || depTask.status !== "done") {
-      blocking.push(dep);
-    }
-  }
-  return blocking;
-}
+// Dependency-blocking logic lives in `server/domain/task-dependencies.ts`
+// so every "→in_progress" entry point (auto-dispatch, manual Run, Resume,
+// refinement approve) uses the same rule. The local copy that used to
+// live here treated only `status = 'done'` as passing, same as the
+// shared helper.
 
 function getEligibilitySkipReason(task: Task, mode: AutoDispatchMode): string | null {
   if (mode === "all_inbox") {
@@ -287,11 +270,13 @@ export function dispatchAutoStartableTasks(
   const inboxTasks = getInboxTasks(db);
 
   for (const task of inboxTasks) {
-    // Check depends_on: skip if any dependency is not done
+    // Check depends_on: skip if any dependency is not done. A dependency
+    // in `in_progress` / `refinement` / `pr_review` / … is treated as
+    // still blocking because it may still be editing overlapping files.
     const blockedBy = getBlockingDependencies(db, task);
     if (blockedBy.length > 0) {
       summary.skipped += 1;
-      writeDispatchLog(db, ws, task, `blocked by: ${blockedBy.join(", ")}`, options?.cache);
+      writeDispatchLog(db, ws, task, `blocked by: ${formatBlockingDependencies(blockedBy)}`, options?.cache);
       continue;
     }
 
