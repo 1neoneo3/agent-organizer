@@ -1,0 +1,145 @@
+/**
+ * Extract the list of files a task intends to modify from its
+ * refinement_plan text.
+ *
+ * The refinement prompt (server/spawner/prompt-builder.ts) asks the
+ * agent to enumerate target files under a `## Files to Modify` (EN) or
+ * `## 修正するファイル` (JA) heading, one per bullet, with the path
+ * wrapped in backticks:
+ *
+ *     ## Files to Modify
+ *
+ *     - `src/auth.ts` — summary of the change
+ *     - `src/new-file.ts` — (new file) purpose
+ *
+ * This helper is the **static** side of the file-conflict detector
+ * added in follow-up to issue #99. The dynamic side (actually-touched
+ * files inferred from tool_call logs during a live run) is intentionally
+ * deferred to a later iteration — the static list is sufficient to stop
+ * the most common case: two tasks whose refinement plans both list the
+ * same file running in parallel.
+ */
+
+export const PLANNED_FILES_HEADINGS = [
+  "Files to Modify",
+  "Files To Modify",
+  "修正するファイル",
+  "変更するファイル",
+  "編集するファイル",
+] as const;
+
+/**
+ * Normalize a file path so overlapping-path detection is robust against
+ * harmless formatting differences between two refinement plans.
+ *
+ *  - Strip surrounding whitespace.
+ *  - Strip leading `./` so `./src/a.ts` and `src/a.ts` collide.
+ *  - Collapse duplicate slashes (`src//a.ts` → `src/a.ts`).
+ *  - Strip trailing slash on directories so `src/auth/` and
+ *    `src/auth` collide.
+ *
+ * Intentionally does NOT resolve `..` or convert to an absolute path:
+ * refinement plans are repo-relative by convention, and pulling in
+ * `node:path.resolve` would require knowing the project root in every
+ * caller.
+ */
+export function normalizePath(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return trimmed;
+  let p = trimmed;
+  if (p.startsWith("./")) p = p.slice(2);
+  p = p.replace(/\/+/g, "/");
+  if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+  return p;
+}
+
+/**
+ * Regex for a bullet line that carries a backtick-wrapped file path.
+ * Deliberately tolerant: matches `-`, `*`, or `•` bullets and any
+ * whitespace leading; the path is the first backtick span on the line.
+ */
+const BULLET_PATH_RE = /^\s*[-*•]\s*`([^`\n]+)`/;
+
+/**
+ * Regex that matches any of the recognized "files to modify" headings.
+ * `##` level is expected but the helper tolerates `###` as well.
+ */
+function buildHeadingRegex(): RegExp {
+  const alt = PLANNED_FILES_HEADINGS.map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  return new RegExp(`^#{2,3}\\s*(?:${alt})\\s*$`, "m");
+}
+
+const HEADING_RE = buildHeadingRegex();
+const NEXT_HEADING_RE = /^#{1,3}\s+/m;
+
+/**
+ * Extract the list of files named under the "Files to Modify" section
+ * of a refinement plan. Returns an empty array for plans that do not
+ * include the heading (e.g. a plan that only produces prose, or a
+ * task that never went through refinement).
+ *
+ * Paths are returned normalized and de-duplicated, preserving first-
+ * occurrence order so the output is deterministic for a given input.
+ */
+export function extractPlannedFilesFromPlan(plan: string | null | undefined): string[] {
+  if (!plan) return [];
+
+  const headingMatch = HEADING_RE.exec(plan);
+  if (!headingMatch) return [];
+
+  // Slice from right after the heading line to the next same-or-higher
+  // heading (or end-of-plan). `NEXT_HEADING_RE.exec` is run on the
+  // sliced tail so its `.index` is relative to that tail.
+  const headingEnd = headingMatch.index + headingMatch[0].length;
+  const tail = plan.slice(headingEnd);
+  const nextHeading = NEXT_HEADING_RE.exec(tail);
+  const sectionBody = nextHeading ? tail.slice(0, nextHeading.index) : tail;
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of sectionBody.split("\n")) {
+    const m = BULLET_PATH_RE.exec(line);
+    if (!m) continue;
+    const norm = normalizePath(m[1]);
+    if (norm.length === 0) continue;
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    out.push(norm);
+  }
+  return out;
+}
+
+/**
+ * Parse `tasks.planned_files` (JSON array of normalized paths) back
+ * into an array. Silently yields `[]` for null/malformed payloads —
+ * callers treat an empty list as "no static overlap information
+ * available" and skip the file-conflict check for that task.
+ */
+export function parsePlannedFiles(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((p): p is string => typeof p === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Compute the set intersection of two path lists, returning a sorted
+ * deduplicated array. Comparison uses the canonical (already-
+ * normalized) form, so callers must normalize inputs beforehand — the
+ * constructor pipeline (extractPlannedFilesFromPlan) does this, and
+ * so does parsePlannedFiles when reading rows that were persisted via
+ * the same pipeline.
+ */
+export function intersectFilePaths(a: string[], b: string[]): string[] {
+  if (a.length === 0 || b.length === 0) return [];
+  const setB = new Set(b);
+  const overlap = new Set<string>();
+  for (const path of a) {
+    if (setB.has(path)) overlap.add(path);
+  }
+  return Array.from(overlap).sort();
+}

@@ -46,6 +46,7 @@ import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 import { runWorkflowHooks } from "../workflow/hooks.js";
 import { getTaskSetting } from "../domain/task-settings.js";
+import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
@@ -1425,18 +1426,24 @@ export function spawnAgent(
       const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
       // Stamp refinement_completed_at alongside refinement_plan on the
       // "plan" (canonical) path so future re-spawns can tell a finished
-      // refinement from a crashed / markerless one. Fallback writes do
-      // NOT set completed_at — a marker-less tail is not a proof that
-      // refinement "completed" in the semantic sense.
+      // refinement from a crashed / markerless one. Also stamp
+      // planned_files (static list of paths the task said it would
+      // touch, parsed from the "## Files to Modify" section) so the
+      // file-conflict gate has something to compare against. Fallback
+      // writes do NOT set completed_at or planned_files — a marker-
+      // less tail is not a proof that refinement "completed" in the
+      // semantic sense, and its files section cannot be trusted.
       const updatePlanStmt = db.prepare(
-        "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ? WHERE id = ?",
+        "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ?, planned_files = ? WHERE id = ?",
       );
       const updatePlanFallbackStmt = db.prepare(
         "UPDATE tasks SET refinement_plan = ? WHERE id = ?",
       );
 
       if (extraction.kind === "plan") {
-        updatePlanStmt.run(extraction.plan, Date.now(), task.id);
+        const plannedFiles = extractPlannedFilesFromPlan(extraction.plan);
+        const plannedFilesJson = plannedFiles.length > 0 ? JSON.stringify(plannedFiles) : null;
+        updatePlanStmt.run(extraction.plan, Date.now(), plannedFilesJson, task.id);
       } else if (extraction.kind === "fallback") {
         // Fallback guard: if a valid plan already exists, do NOT replace
         // it with the marker-less tail. Normally `hasExistingPlan` short-

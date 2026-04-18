@@ -19,8 +19,9 @@ import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import {
-  formatBlockingDependencies,
-  getBlockingDependencies,
+  collectAllBlockers,
+  formatAllBlockers,
+  isBlocked,
 } from "../domain/task-dependencies.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
 import {
@@ -454,17 +455,20 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") return res.status(409).json({ error: "already_running" });
 
-    // Dependency gate: a task whose prerequisite is still active (in_progress,
-    // refinement, pr_review, …) must not advance — it may be about to edit
-    // files that the prerequisite is still mutating. The auto-dispatcher
-    // already enforces this for the inbox path; apply the same rule here
-    // so manual Run cannot bypass the guard.
-    const blockedBy = getBlockingDependencies(db, task);
-    if (blockedBy.length > 0) {
+    // Dependency + file-conflict gate: a task whose prerequisite is
+    // still active (in_progress, refinement, pr_review, …) must not
+    // advance, and a task whose planned_files overlap with another
+    // actively-editing task must not start in parallel — both cases
+    // can edit overlapping files. The auto-dispatcher enforces this
+    // for the inbox path; apply the same rule here so manual Run
+    // cannot bypass the guard.
+    const blockers = collectAllBlockers(db, task);
+    if (isBlocked(blockers)) {
       return res.status(409).json({
         error: "blocked_by_dependencies",
-        message: `Blocked by: ${formatBlockingDependencies(blockedBy)}`,
-        blocked_by: blockedBy,
+        message: `Blocked: ${formatAllBlockers(blockers)}`,
+        blocked_by: blockers.dependencies,
+        file_conflicts: blockers.fileConflicts,
       });
     }
 
@@ -514,14 +518,16 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status !== "cancelled") return res.status(409).json({ error: "not_cancelled" });
 
-    // Dependency gate — see POST /tasks/:id/run for rationale. Resume re-
-    // enters in_progress, so it must observe the same prerequisite state.
-    const blockedBy = getBlockingDependencies(db, task);
-    if (blockedBy.length > 0) {
+    // Dependency + file-conflict gate — see POST /tasks/:id/run for
+    // rationale. Resume re-enters in_progress, so it must observe the
+    // same prerequisite state as a fresh dispatch.
+    const resumeBlockers = collectAllBlockers(db, task);
+    if (isBlocked(resumeBlockers)) {
       return res.status(409).json({
         error: "blocked_by_dependencies",
-        message: `Blocked by: ${formatBlockingDependencies(blockedBy)}`,
-        blocked_by: blockedBy,
+        message: `Blocked: ${formatAllBlockers(resumeBlockers)}`,
+        blocked_by: resumeBlockers.dependencies,
+        file_conflicts: resumeBlockers.fileConflicts,
       });
     }
 
@@ -561,16 +567,16 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const next = nextStage(task.status as "human_review" | "refinement", activeStages);
     const now = Date.now();
 
-    // Dependency gate on refinement → in_progress advancement. The
-    // refinement stage itself is read-only so it was fine to run while a
-    // prerequisite was in_progress, but once we advance to implementation
-    // the file-editing conflict risk applies. Block the advancement and
-    // park the task back in inbox so the auto-dispatcher can pick it up
-    // the moment the prerequisite finishes — matches the behavior of
-    // POST /run and auto-dispatch.
+    // Dependency + file-conflict gate on refinement → in_progress
+    // advancement. The refinement stage itself is read-only so it was
+    // fine to run while a prerequisite was in_progress, but once we
+    // advance to implementation the editing-conflict risk applies.
+    // Block the advancement and park the task back in inbox so the
+    // auto-dispatcher can pick it up the moment the prerequisite
+    // finishes — matches the behavior of POST /run and auto-dispatch.
     if (isRefinement && next === "in_progress") {
-      const blockedBy = getBlockingDependencies(db, task);
-      if (blockedBy.length > 0) {
+      const approveBlockers = collectAllBlockers(db, task);
+      if (isBlocked(approveBlockers)) {
         db.prepare(
           "UPDATE tasks SET status = 'inbox', assigned_agent_id = NULL, started_at = NULL, updated_at = ? WHERE id = ?",
         ).run(now, task.id);
@@ -584,7 +590,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
           "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
         ).run(
           task.id,
-          `Refinement plan approved but advancement blocked: waiting on ${formatBlockingDependencies(blockedBy)}. Returned to inbox for auto-dispatch to retry when prerequisites finish.`,
+          `Refinement plan approved but advancement blocked (${formatAllBlockers(approveBlockers)}). Returned to inbox for auto-dispatch to retry when prerequisites finish.`,
         );
 
         await invalidateTaskCaches();
@@ -592,8 +598,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
         return res.status(409).json({
           error: "blocked_by_dependencies",
-          message: `Refinement approved but blocked by: ${formatBlockingDependencies(blockedBy)}`,
-          blocked_by: blockedBy,
+          message: `Refinement approved but blocked: ${formatAllBlockers(approveBlockers)}`,
+          blocked_by: approveBlockers.dependencies,
+          file_conflicts: approveBlockers.fileConflicts,
           returned_to: "inbox",
         });
       }

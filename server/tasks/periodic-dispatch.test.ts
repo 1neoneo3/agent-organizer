@@ -71,6 +71,7 @@ function insertTask(db: DatabaseSync, overrides?: Partial<Task>): Task {
     result: overrides?.result ?? null,
     refinement_plan: overrides?.refinement_plan ?? null,
     refinement_completed_at: overrides?.refinement_completed_at ?? null,
+    planned_files: overrides?.planned_files ?? null,
     pr_url: overrides?.pr_url ?? null,
     external_source: overrides?.external_source ?? "manual",
     external_id: overrides?.external_id ?? null,

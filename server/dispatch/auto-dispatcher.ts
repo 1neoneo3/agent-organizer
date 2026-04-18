@@ -9,8 +9,9 @@ import type { WsHub } from "../ws/hub.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { resolveActiveStages } from "../workflow/stage-pipeline.js";
 import {
-  formatBlockingDependencies,
-  getBlockingDependencies,
+  collectAllBlockers,
+  formatAllBlockers,
+  isBlocked,
 } from "../domain/task-dependencies.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
@@ -270,13 +271,15 @@ export function dispatchAutoStartableTasks(
   const inboxTasks = getInboxTasks(db);
 
   for (const task of inboxTasks) {
-    // Check depends_on: skip if any dependency is not done. A dependency
-    // in `in_progress` / `refinement` / `pr_review` / … is treated as
-    // still blocking because it may still be editing overlapping files.
-    const blockedBy = getBlockingDependencies(db, task);
-    if (blockedBy.length > 0) {
+    // Combined gate: declared depends_on chain AND static file-overlap
+    // (planned_files intersection with any other actively-editing task).
+    // A dependency in `in_progress` / `refinement` / `pr_review` / … is
+    // treated as still blocking; so is any task whose planned_files
+    // overlap with ours, even without an explicit depends_on edge.
+    const blockers = collectAllBlockers(db, task);
+    if (isBlocked(blockers)) {
       summary.skipped += 1;
-      writeDispatchLog(db, ws, task, `blocked by: ${formatBlockingDependencies(blockedBy)}`, options?.cache);
+      writeDispatchLog(db, ws, task, `blocked (${formatAllBlockers(blockers)})`, options?.cache);
       continue;
     }
 
