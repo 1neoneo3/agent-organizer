@@ -1282,6 +1282,11 @@ export function buildReviewPrompt(
     parts.push("3. **エラーハンドリング** - エッジケースや境界条件が処理されているか？");
     parts.push("4. **完全性** - タスク説明の全要件が満たされているか？");
     parts.push("5. **セキュリティ** - ハードコードされた秘密情報、インジェクション脆弱性、危険なパターンはないか？（※ security_reviewer と並列実行中の場合は二次チェック扱いで OK）");
+    parts.push("6. **変更範囲** - タスクに無関係な変更が含まれていないか？（スコープクリープ検知）");
+    parts.push("   - `git diff` で全変更ファイルを列挙し、それぞれがタスク要件に紐付くか確認する");
+    parts.push("   - タスクと無関係なフォーマット変更、リネーム、別機能の修正、依存バージョン更新、設定ファイル変更、デバッグコード残留などが含まれていないか");
+    parts.push("   - 無関係な変更が1つでも見つかった場合は **必ず** `[REVIEW:code:NEEDS_CHANGES:scope_creep:<具体的なファイル/変更箇所>]` を出力し、実装者が `in_progress` に戻って該当変更を取り除くよう指示する");
+    parts.push("   - 例: `[REVIEW:code:NEEDS_CHANGES:scope_creep:src/utils/unrelated.ts の import 整理はタスク範囲外]`");
     parts.push("");
     parts.push("## レポート形式");
     parts.push("");
@@ -1293,6 +1298,7 @@ export function buildReviewPrompt(
     parts.push("Error Handling: [X/5] - Evidence: <what you checked>");
     parts.push("Completeness:   [X/5] - Evidence: <requirements coverage>");
     parts.push("Security:       [X/5] - Evidence: <what you checked>");
+    parts.push("Scope:          [X/5] - Evidence: <git diff で確認した変更ファイル一覧と、それぞれがタスク要件に紐付く根拠>");
     parts.push("```");
     parts.push("");
     parts.push("## 合格基準");
@@ -1300,6 +1306,7 @@ export function buildReviewPrompt(
     parts.push("- 全観点4-5 → `[REVIEW:code:PASS]`");
     parts.push("- いずれかの観点が1-2 → `[REVIEW:code:NEEDS_CHANGES:<修正すべき観点>]`");
     parts.push("- 3が混在 → 判断に委ねる。機能的に完成していればPASS寄り");
+    parts.push("- **Scope が 1-2（無関係な変更あり）の場合は他観点の点数に関わらず必ず NEEDS_CHANGES**。`in_progress` に差し戻して該当変更を取り除かせる。");
     parts.push("");
     parts.push("## レビュー例（採点基準の参考）");
     parts.push("");

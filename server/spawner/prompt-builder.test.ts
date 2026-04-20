@@ -308,6 +308,23 @@ describe("buildReviewPrompt", () => {
     assert.match(prompt, /親ディレクトリの設定を拾って/);
     assert.match(prompt, /の理由にしない/);
   });
+
+  // Scope creep detection — reviewers must flag unrelated changes and send
+  // the task back to in_progress so the implementer can strip them.
+  it("includes a scope-creep checklist item that forces NEEDS_CHANGES on unrelated changes", () => {
+    const prompt = buildReviewPrompt({
+      id: "task-scope",
+      title: "Demo",
+      description: "Short.",
+      project_path: "/tmp",
+      task_size: "small",
+    } as never);
+
+    assert.match(prompt, /変更範囲.*無関係な変更/);
+    assert.match(prompt, /scope_creep/);
+    assert.match(prompt, /Scope:\s+\[X\/5\]/);
+    assert.match(prompt, /Scope が 1-2.*必ず NEEDS_CHANGES/);
+  });
 });
 
 describe("buildQaPrompt", () => {
