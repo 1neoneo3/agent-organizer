@@ -577,7 +577,8 @@ export function buildTaskPrompt(
     staticParts.push("## Git Workflow");
     staticParts.push("");
     staticParts.push("When the task changes files, follow this workflow:");
-    staticParts.push("1. Create a branch from main: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
+    staticParts.push("1. **Always base the branch on the latest `origin/main`** — run exactly: `git fetch origin && git checkout -B <branch-name> origin/main`");
+    staticParts.push("   - This is mandatory even if you think the local main is up-to-date. Never base a new branch on a stale local ref.");
     staticParts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
     staticParts.push("2. Commit changes (conventional commits format).");
     staticParts.push("3. Push the branch: `git push -u origin <branch-name>`");
@@ -590,7 +591,8 @@ export function buildTaskPrompt(
     staticParts.push("## Gitワークフロー");
     staticParts.push("");
     staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
-    staticParts.push("1. mainからブランチを作成: `git checkout main && git pull origin main && git checkout -b <branch-name>`");
+    staticParts.push("1. **必ず最新の `origin/main` をベースにブランチを作成する** — 正確に以下を実行: `git fetch origin && git checkout -B <branch-name> origin/main`");
+    staticParts.push("   - ローカルmainが最新と思っても例外なく実行すること。古いローカル参照を土台にしないこと");
     staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
     staticParts.push("2. 変更をコミット（conventional commits形式）");
     staticParts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");

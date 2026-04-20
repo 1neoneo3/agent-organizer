@@ -27,6 +27,34 @@ function runGit(cwd: string, args: string[]): string {
   }).trim();
 }
 
+/**
+ * Resolve the base ref for a new worktree. Enforces "latest origin/main"
+ * when an `origin` remote exists so worktrees never start from a stale
+ * local ref. Falls back to the current HEAD for repos without an origin
+ * remote (notably unit-test fixtures that `git init` a throwaway repo).
+ */
+function resolveOriginMainBase(repoRoot: string): string {
+  let hasOrigin = false;
+  try {
+    const remotes = runGit(repoRoot, ["remote"]);
+    hasOrigin = remotes.split(/\s+/).some((r) => r === "origin");
+  } catch {
+    hasOrigin = false;
+  }
+
+  if (hasOrigin) {
+    try {
+      runGit(repoRoot, ["fetch", "origin", "main", "--quiet"]);
+      runGit(repoRoot, ["rev-parse", "--verify", "origin/main"]);
+      return "origin/main";
+    } catch {
+      // origin has no `main` branch — fall through to local fallback.
+    }
+  }
+
+  return runGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]) || "main";
+}
+
 function buildBranchName(task: Task, prefix: string): string {
   const base = task.task_number ? task.task_number.replace(/^#/, "t") : sanitizeSegment(task.id);
   const title = sanitizeSegment(task.title);
@@ -98,9 +126,9 @@ export function prepareTaskWorkspace(
   mkdirSync(worktreeRoot, { recursive: true });
 
   if (!existsSync(worktreePath)) {
-    const currentRef = runGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]) || "main";
+    const baseRef = resolveOriginMainBase(repoRoot);
     try {
-      runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, currentRef]);
+      runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, baseRef]);
     } catch (error) {
       const stderr = error instanceof Error ? error.message : String(error);
       if (stderr.includes("already exists")) {
