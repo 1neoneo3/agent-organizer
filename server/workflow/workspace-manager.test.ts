@@ -199,3 +199,104 @@ describe("prepareTaskWorkspace — global default fallback", () => {
     assert.equal(workspace.branchName, null);
   });
 });
+
+describe("prepareTaskWorkspace — origin/main enforcement", () => {
+  it("bases the worktree on the latest origin/main when origin is configured", () => {
+    // Set up an "upstream" bare-like source repo + a local clone. Any
+    // commits advanced on the upstream between clone-time and worktree-
+    // creation must be picked up automatically via the implicit fetch.
+    const upstream = initRepo();
+    const localDir = mkdtempSync(join(tmpdir(), "ao-worktree-clone-"));
+    execFileSync("git", ["clone", upstream, localDir], { stdio: ["ignore", "pipe", "pipe"] });
+    git(localDir, "config", "user.email", "ao@example.com");
+    git(localDir, "config", "user.name", "Agent Organizer");
+
+    // Advance upstream main with a new commit after the clone.
+    writeFileSync(join(upstream, "NEW.md"), "new file\n");
+    git(upstream, "add", "NEW.md");
+    git(upstream, "commit", "-m", "upstream advance");
+    const upstreamHead = git(upstream, "rev-parse", "HEAD");
+
+    const workflow = {
+      body: "",
+      codexSandboxMode: "workspace-write" as const,
+      codexApprovalPolicy: "on-request" as const,
+      e2eExecution: "host" as const,
+      e2eCommand: null,
+      gitWorkflow: "default" as const,
+      workspaceMode: "git-worktree" as const,
+      branchPrefix: "ao",
+      beforeRun: [],
+      afterRun: [],
+      includeTask: true,
+      includeReview: true,
+      includeDecompose: true,
+      enableRefinement: null,
+      enableTestGeneration: false,
+      enableHumanReview: false,
+      enableCiCheck: false,
+      projectType: "generic" as const,
+      checkTypesCmd: null,
+      checkLintCmd: null,
+      checkTestsCmd: null,
+      checkE2eCmd: null,
+    };
+
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-origin-main",
+        title: "Based on origin main",
+        task_number: "#77",
+        project_path: localDir,
+      } as never,
+      workflow,
+    );
+
+    // The worktree HEAD must match the upstream tip, proving fetch+rebase-to-origin
+    // happened rather than using the pre-fetch local ref.
+    const worktreeHead = git(workspace.cwd, "rev-parse", "HEAD");
+    assert.equal(worktreeHead, upstreamHead);
+  });
+
+  it("falls back to local HEAD when no origin remote is configured", () => {
+    // initRepo produces a repo with no remote — simulating minimal test fixtures.
+    const repo = initRepo();
+    const localHead = git(repo, "rev-parse", "HEAD");
+
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-no-origin",
+        title: "No origin",
+        task_number: "#78",
+        project_path: repo,
+      } as never,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write",
+        codexApprovalPolicy: "on-request",
+        e2eExecution: "host",
+        e2eCommand: null,
+        gitWorkflow: "default",
+        workspaceMode: "git-worktree",
+        branchPrefix: "ao",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        enableCiCheck: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      } as never,
+    );
+
+    const worktreeHead = git(workspace.cwd, "rev-parse", "HEAD");
+    assert.equal(worktreeHead, localHead);
+  });
+});
