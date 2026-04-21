@@ -50,6 +50,7 @@ What `start` does:
 - Generates a persistent `SESSION_AUTH_TOKEN`
 - Uses Redis on `127.0.0.1:6379` when available
 - Starts a Docker Redis container named `agent-organizer-redis` when Redis is not already running
+  and binds it to `127.0.0.1` only
 - Runs Agent Organizer from the npm package with SQLite data stored outside the package cache
 - Serves the built UI and API from the same server on `PORT` (default `8791`)
 

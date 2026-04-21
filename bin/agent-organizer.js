@@ -187,7 +187,7 @@ async function ensureRedis(env) {
       "--name",
       name,
       "-p",
-      `${target.port}:6379`,
+      `127.0.0.1:${target.port}:6379`,
       "redis:7-alpine",
     ]);
     if (created.status !== 0) fail(`Failed to create Redis container ${name}: ${created.stderr.trim()}`);
