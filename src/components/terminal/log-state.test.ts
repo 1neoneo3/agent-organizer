@@ -5,6 +5,7 @@ import {
   appendLiveLogs,
   appendTerminalText,
   countLogsByTab,
+  emptySegmentLabel,
   groupLogsByStage,
   MAX_LIVE_LOGS,
   parseStageTransition,
@@ -93,10 +94,27 @@ describe("appendTerminalText", () => {
     assert.equal(result.lastAgentId, null);
   });
 
-  it("drops stderr and system messages from terminal display", () => {
+  it("drops stderr from terminal display", () => {
     const result = appendTerminalText("", [
       { task_id: "task-1", kind: "stderr", message: "warning" },
+    ]);
+
+    assert.equal(result.text, "");
+  });
+
+  it("surfaces informative system messages with a marker prefix", () => {
+    const result = appendTerminalText("", [
       { task_id: "task-1", kind: "system", message: "task paused" },
+    ]);
+
+    assert.match(result.text, /» task paused/);
+  });
+
+  it("drops noisy system chatter (process exit, after_run, HANDOFF)", () => {
+    const result = appendTerminalText("", [
+      { task_id: "task-1", kind: "system", message: "Process exited with code 0. Status: human_review" },
+      { task_id: "task-1", kind: "system", message: "[after_run] git status --short: OK" },
+      { task_id: "task-1", kind: "system", message: "[HANDOFF] {\"phase\":\"done\"}" },
     ]);
 
     assert.equal(result.text, "");
@@ -151,6 +169,57 @@ describe("appendTerminalText", () => {
     assert.equal(result.text, "first\n");
   });
 
+});
+
+describe("emptySegmentLabel", () => {
+  it("returns a human-review-specific message for human_review stage", () => {
+    assert.match(emptySegmentLabel("human_review"), /Awaiting human review/);
+  });
+
+  it("returns a completion message for done stage", () => {
+    assert.match(emptySegmentLabel("done"), /completed/i);
+  });
+
+  it("returns the generic placeholder for other stages", () => {
+    assert.equal(emptySegmentLabel("in_progress"), "(empty)");
+    assert.equal(emptySegmentLabel(null), "(empty)");
+  });
+});
+
+describe("groupLogsByStage — informative system messages", () => {
+  it("surfaces human approval notices in the segment body", () => {
+    const logs: TaskLog[] = [
+      createLog(1, {
+        stage: "human_review",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→human_review`,
+      }),
+      createLog(2, {
+        stage: "human_review",
+        kind: "system",
+        message: "Human review approved. Advancing to done.",
+      }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 1);
+    assert.equal(segments[0]?.stage, "human_review");
+    assert.match(segments[0]?.text ?? "", /Human review approved/);
+    assert.equal(segments[0]?.entryCount, 1);
+  });
+
+  it("drops noisy system messages (process exit, after_run, HANDOFF, artifact sync)", () => {
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "human_review", kind: "system", message: "Process exited with code 0. Status: human_review" }),
+      createLog(2, { stage: "human_review", kind: "system", message: "Review artifact sync: not_applicable" }),
+      createLog(3, { stage: "human_review", kind: "system", message: "[after_run] git status --short: OK" }),
+      createLog(4, { stage: "human_review", kind: "system", message: "[HANDOFF] {\"phase\":\"human_review\"}" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments[0]?.text ?? "", "");
+    assert.equal(segments[0]?.entryCount, 0);
+  });
 });
 
 describe("groupLogsByStage", () => {

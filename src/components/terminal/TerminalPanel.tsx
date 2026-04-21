@@ -5,6 +5,7 @@ import { getRoleLabel } from "../agents/roles.js";
 import {
   appendLiveLogs,
   countLogsByTab,
+  emptySegmentLabel,
   groupLogsByStage,
   parseStageTransition,
   STAGE_TRANSITION_PREFIX,
@@ -573,7 +574,7 @@ const StageSegmentBlock = memo(function StageSegmentBlock({
             // outer pane is much taller.
           }}
         >
-          {segment.text || "(empty)"}
+          {segment.text || emptySegmentLabel(segment.stage)}
         </pre>
       )}
     </div>

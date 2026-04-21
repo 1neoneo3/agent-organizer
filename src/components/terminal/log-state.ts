@@ -60,6 +60,19 @@ export function parseStageTransition(message: string): { from: string; to: strin
   };
 }
 
+// system kindのうち、ユーザーにとってノイズになるものは出さない。
+// プロセス終了コード・成果物同期ステータス・after_run診断・HANDOFF JSONは非表示。
+const NOISY_SYSTEM_PATTERNS: readonly RegExp[] = [
+  /^Process exited with code/i,
+  /^Review artifact sync:/i,
+  /^\[after_run\]/i,
+  /^\[HANDOFF\]/i,
+];
+
+function isInformativeSystemMessage(message: string): boolean {
+  return !NOISY_SYSTEM_PATTERNS.some((pattern) => pattern.test(message));
+}
+
 function formatTerminalChunk(entry: { kind: TaskLog["kind"]; message: string }): string {
   // Stage transition markers get a distinctive full-width header and are
   // always kept — they are required for grouping logs per stage.
@@ -73,17 +86,38 @@ function formatTerminalChunk(entry: { kind: TaskLog["kind"]; message: string }):
     return "";
   }
 
-  // Terminal view deliberately shows ONLY assistant text. Everything else —
-  // stdout, stderr, thinking, tool_call, tool_result, system noise, and any
-  // serialized CLI event payloads that fell through classification — is
-  // dropped to keep the view focused on the agent's actual replies.
-  // Stage transitions (handled above) are the single exception because they
-  // are needed for grouping.
-  if (entry.kind !== "assistant") {
-    return "";
+  if (entry.kind === "assistant") {
+    return message;
   }
 
-  return message;
+  // Informative system messages (approvals, PR merges, feedback responses) are
+  // surfaced with a leading marker so waiting stages like human_review / done
+  // no longer render as a blank segment. Noisy system chatter is still dropped.
+  if (entry.kind === "system" && isInformativeSystemMessage(message)) {
+    return `» ${message}`;
+  }
+
+  // Everything else — stdout, stderr, thinking, tool_call, tool_result, and
+  // noisy system rows — is dropped to keep the view focused on agent output.
+  return "";
+}
+
+/**
+ * Friendly fallback label when a stage segment produced no displayable
+ * content. Lets users distinguish "waiting for a human" from "genuinely
+ * missing output".
+ */
+export function emptySegmentLabel(stage: string | null): string {
+  switch (stage) {
+    case "human_review":
+      return "(Awaiting human review — no agent output in this stage)";
+    case "done":
+      return "(Stage completed — no agent output)";
+    case "cancelled":
+      return "(Cancelled — no agent output)";
+    default:
+      return "(empty)";
+  }
 }
 
 export interface StageSegment {
