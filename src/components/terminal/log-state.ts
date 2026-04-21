@@ -184,16 +184,23 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
       continue;
     }
 
+    const chunk = formatTerminalChunk({ kind: log.kind, message: log.message });
+
     // Start a new segment if there is none yet, or the stage changed implicitly.
+    // Hidden rows must not synthesize stage changes: rows such as
+    // "Process exited..." and "Review artifact sync..." are deliberately
+    // stamped with the stage of the spawn that just completed, so letting them
+    // split here creates bogus empty rollback segments like
+    // human_review→in_progress. Explicit transition markers above remain the
+    // source of truth for status changes.
     if (!current) {
       current = startSegment(log);
-    } else if (log.stage !== null && current.stage !== null && log.stage !== current.stage) {
+    } else if (chunk.length > 0 && log.stage !== null && current.stage !== null && log.stage !== current.stage) {
       const previousStage = current.stage;
       segments.push(current);
       current = startSegment(log, { fromStage: previousStage });
     }
 
-    const chunk = formatTerminalChunk({ kind: log.kind, message: log.message });
     if (chunk.length > 0) {
       current.text += current.text.endsWith("\n") || current.text.length === 0 ? chunk : `\n${chunk}`;
       if (!current.text.endsWith("\n")) current.text += "\n";

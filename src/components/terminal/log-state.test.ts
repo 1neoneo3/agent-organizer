@@ -344,6 +344,50 @@ describe("groupLogsByStage", () => {
     assert.equal(segments[1]?.stage, "self_review");
   });
 
+  it("does not create an implicit segment from hidden post-transition system logs", () => {
+    // Regression for #450: after the explicit in_progress→human_review marker,
+    // the server may append process-exit / artifact-sync rows with
+    // stage=in_progress because they describe the spawn that just completed.
+    // Those rows are hidden in Activity, so they must not synthesize a bogus
+    // human_review→in_progress segment.
+    const logs: TaskLog[] = [
+      createLog(1, {
+        stage: "refinement",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}inbox→refinement`,
+      }),
+      createLog(2, {
+        stage: "in_progress",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}refinement→in_progress`,
+      }),
+      createLog(3, { stage: "in_progress", message: "implementation summary" }),
+      createLog(4, {
+        stage: "human_review",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→human_review`,
+      }),
+      createLog(5, {
+        stage: "in_progress",
+        kind: "system",
+        message: "Process exited with code 0. Status: human_review",
+      }),
+      createLog(6, {
+        stage: "in_progress",
+        kind: "system",
+        message: "Review artifact sync: pr_open (https://example.test/pr/1)",
+      }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.deepEqual(segments.map((segment) => `${segment.fromStage ?? ""}->${segment.stage}`), [
+      "inbox->refinement",
+      "refinement->in_progress",
+      "in_progress->human_review",
+    ]);
+    assert.equal(segments.at(-1)?.entryCount, 0);
+  });
+
   it("preserves the agent id on the first log of each segment", () => {
     const logs: TaskLog[] = [
       createLog(1, { stage: "in_progress", agent_id: "agent-a", message: "a" }),
