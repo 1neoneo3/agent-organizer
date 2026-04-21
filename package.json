@@ -16,6 +16,7 @@
     "dist",
     "server",
     ".env.example",
+    "LICENSE",
     "README.md",
     "package.json"
   ],

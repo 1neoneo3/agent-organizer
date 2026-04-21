@@ -4,13 +4,18 @@ Multi-agent orchestration dashboard for managing AI agent (Claude / Codex / Gemi
 
 ## Quick Start
 
-The recommended first-run path is the npm CLI. It creates local runtime state in
-`~/.agent-organizer`, ensures Redis is available, and starts the production
-server in the foreground.
+The recommended first-run path is the npm CLI:
 
 ```bash
 npx agent-organizer@latest start
 ```
+
+This command runs the published `agent-organizer` package, creates local
+runtime state in `~/.agent-organizer`, ensures Redis is available, and starts
+the production server in the foreground.
+
+If npm returns `404 Not Found`, the package has not been published to npm from
+this repository yet. See [npm Package Publishing](#npm-package-publishing).
 
 Open the URL printed by the command, usually:
 
@@ -18,12 +23,24 @@ Open the URL printed by the command, usually:
 http://localhost:8791
 ```
 
+### Requirements
+
+- Node.js 22 or newer
+- Docker, or a Redis server already running on `127.0.0.1:6379`
+- At least one supported agent CLI if you want tasks to run: `claude`, `codex`, or `gemini`
+
 Useful follow-up commands:
 
 ```bash
 npx agent-organizer@latest doctor
 npx agent-organizer@latest status
 npx agent-organizer@latest stop
+```
+
+For reproducible installs, pin a version instead of `latest`:
+
+```bash
+npx agent-organizer@0.1.0 start
 ```
 
 What `start` does:
@@ -34,9 +51,26 @@ What `start` does:
 - Uses Redis on `127.0.0.1:6379` when available
 - Starts a Docker Redis container named `agent-organizer-redis` when Redis is not already running
 - Runs Agent Organizer from the npm package with SQLite data stored outside the package cache
+- Serves the built UI and API from the same server on `PORT` (default `8791`)
 
 If Docker is not installed and Redis is not already running, install Docker or
 start Redis locally before running `start`.
+
+> Security note: `npx` executes code from the npm package you request. For
+> production or shared machines, prefer pinning a reviewed version such as
+> `agent-organizer@0.1.0`.
+
+## Current Distribution
+
+- npm package name: `agent-organizer`
+- CLI binary: `agent-organizer`
+- Primary command: `npx agent-organizer@latest start`
+- Publish status: configured in this repository; requires `npm publish` from an authenticated npm account
+- Runtime home: `~/.agent-organizer`
+- Runtime data: `~/.agent-organizer/data`
+- Default URL: `http://localhost:8791`
+- Default Redis: `redis://127.0.0.1:6379`
+- License: MIT
 
 ## Features
 
@@ -199,6 +233,20 @@ pnpm build
 pnpm start
 ```
 
+## npm Package Publishing
+
+The package is configured for npm distribution under the `agent-organizer`
+package name. Publishing requires npm authentication:
+
+```bash
+npm login
+npm publish --access public
+```
+
+`prepack` runs `pnpm build` before packaging so `dist/` is included in the
+published package. `npm pack --dry-run` can be used to inspect the package
+contents before publishing.
+
 ## Testing
 
 ```bash
@@ -321,3 +369,7 @@ data/
 | GET | /api/health | Health check |
 | GET | /api/cli-status | Available CLI tools |
 | WS | /ws | Real-time WebSocket updates |
+
+## License
+
+Agent Organizer is released under the MIT License. See [LICENSE](LICENSE).
