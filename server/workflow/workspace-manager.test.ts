@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,7 +17,8 @@ function initRepo(): string {
   git(dir, "config", "user.email", "ao@example.com");
   git(dir, "config", "user.name", "Agent Organizer");
   writeFileSync(join(dir, "README.md"), "hello\n");
-  git(dir, "add", "README.md");
+  writeFileSync(join(dir, ".gitignore"), ".ao-worktrees/\n");
+  git(dir, "add", "README.md", ".gitignore");
   git(dir, "commit", "-m", "init");
   return dir;
 }
@@ -100,9 +101,238 @@ describe("prepareTaskWorkspace", () => {
     );
 
     assert.equal(workspace.rootPath, repo);
-    assert.match(workspace.branchName ?? "", /^issue\/t42-add-workflow-support$/);
+    assert.match(workspace.branchName ?? "", /^feat\/t42-add-workflow-support$/);
     assert.equal(existsSync(workspace.cwd), true);
     assert.equal(git(workspace.cwd, "rev-parse", "--abbrev-ref", "HEAD"), workspace.branchName);
+  });
+
+  it("does not move dirty non-main branch changes into the task worktree", () => {
+    const repo = initRepo();
+    git(repo, "checkout", "-b", "codex/current-thread");
+    writeFileSync(join(repo, "FEATURE.md"), "committed branch-only change\n");
+    git(repo, "add", "FEATURE.md");
+    git(repo, "commit", "-m", "feature branch work");
+    writeFileSync(join(repo, "README.md"), "dirty tracked change\n");
+    writeFileSync(join(repo, "UNTRACKED.md"), "dirty untracked change\n");
+
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-handoff",
+        title: "Move dirty branch",
+        task_number: "#43",
+        project_path: repo,
+      } as never,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write" as const,
+        codexApprovalPolicy: "on-request" as const,
+        e2eExecution: "host" as const,
+        e2eCommand: null,
+        gitWorkflow: "default" as const,
+        workspaceMode: "git-worktree" as const,
+        branchPrefix: "issue",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        enableCiCheck: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+    );
+
+    assert.match(workspace.branchName ?? "", /^feat\/t43-move-dirty-branch$/);
+    assert.equal(git(repo, "rev-parse", "--abbrev-ref", "HEAD"), "codex/current-thread");
+    assert.match(git(repo, "status", "--porcelain"), /README\.md/);
+    assert.match(git(repo, "status", "--porcelain"), /UNTRACKED\.md/);
+    assert.equal(git(workspace.cwd, "rev-parse", "--abbrev-ref", "HEAD"), workspace.branchName);
+    assert.equal(readFileSync(join(workspace.cwd, "README.md"), "utf-8"), "hello\n");
+    assert.equal(existsSync(join(workspace.cwd, "FEATURE.md")), false);
+    assert.equal(existsSync(join(workspace.cwd, "UNTRACKED.md")), false);
+    assert.doesNotMatch(git(repo, "stash", "list"), /AO source handoff: task-handoff/);
+  });
+
+  it("does not move dirty main changes into a task worktree", () => {
+    const repo = initRepo();
+    writeFileSync(join(repo, "README.md"), "main wip\n");
+
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-dirty-main",
+        title: "Keep main local wip",
+        task_number: "#45",
+        project_path: repo,
+      } as never,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write" as const,
+        codexApprovalPolicy: "on-request" as const,
+        e2eExecution: "host" as const,
+        e2eCommand: null,
+        gitWorkflow: "default" as const,
+        workspaceMode: "git-worktree" as const,
+        branchPrefix: "issue",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        enableCiCheck: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+    );
+
+    assert.match(workspace.branchName ?? "", /^feat\/t45-keep-main-local-wip$/);
+    assert.equal(git(repo, "rev-parse", "--abbrev-ref", "HEAD"), "main");
+    assert.equal(readFileSync(join(repo, "README.md"), "utf-8"), "main wip\n");
+    assert.equal(readFileSync(join(workspace.cwd, "README.md"), "utf-8"), "hello\n");
+    assert.match(git(repo, "status", "--porcelain"), /README\.md/);
+    assert.doesNotMatch(git(repo, "stash", "list"), /AO source handoff: task-dirty-main/);
+  });
+
+  it("stashes existing worktree changes before checking out the task branch", () => {
+    const repo = initRepo();
+    const task = {
+      id: "task-existing-worktree",
+      title: "Existing worktree",
+      task_number: "#44",
+      project_path: repo,
+    } as never;
+    const workflow = {
+      body: "",
+      codexSandboxMode: "workspace-write" as const,
+      codexApprovalPolicy: "on-request" as const,
+      e2eExecution: "host" as const,
+      e2eCommand: null,
+      gitWorkflow: "default" as const,
+      workspaceMode: "git-worktree" as const,
+      branchPrefix: "issue",
+      beforeRun: [],
+      afterRun: [],
+      includeTask: true,
+      includeReview: true,
+      includeDecompose: true,
+      enableRefinement: null,
+      enableTestGeneration: false,
+      enableHumanReview: false,
+      enableCiCheck: false,
+      projectType: "generic" as const,
+      checkTypesCmd: null,
+      checkLintCmd: null,
+      checkTestsCmd: null,
+      checkE2eCmd: null,
+    };
+    const workspace = prepareTaskWorkspace(task, workflow);
+
+    git(workspace.cwd, "checkout", "-b", "temporary-worktree-branch");
+    writeFileSync(join(workspace.cwd, "WIP.md"), "worktree wip\n");
+
+    const preparedAgain = prepareTaskWorkspace(task, workflow);
+
+    assert.equal(preparedAgain.cwd, workspace.cwd);
+    assert.equal(
+      git(preparedAgain.cwd, "rev-parse", "--abbrev-ref", "HEAD"),
+      preparedAgain.branchName,
+    );
+    assert.equal(readFileSync(join(preparedAgain.cwd, "WIP.md"), "utf-8"), "worktree wip\n");
+    assert.doesNotMatch(git(repo, "stash", "list"), /AO worktree handoff: task-existing-worktree/);
+  });
+
+  it("uses a configured conventional branch prefix when provided", () => {
+    const repo = initRepo();
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-configured-prefix",
+        title: "Improve dashboard polish",
+        task_number: "#46",
+        project_path: repo,
+      } as never,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write" as const,
+        codexApprovalPolicy: "on-request" as const,
+        e2eExecution: "host" as const,
+        e2eCommand: null,
+        gitWorkflow: "default" as const,
+        workspaceMode: "git-worktree" as const,
+        branchPrefix: "refactor",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        enableCiCheck: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+    );
+
+    assert.match(workspace.branchName ?? "", /^refactor\/t46-improve-dashboard-polish$/);
+  });
+
+  it("infers docs/fix/chore/ci branch prefixes from task text", () => {
+    const repo = initRepo();
+    const docsWorkspace = prepareTaskWorkspace(
+      {
+        id: "task-docs-prefix",
+        title: "Update README usage docs",
+        task_number: "#47",
+        project_path: repo,
+      } as never,
+      null,
+    );
+    const fixWorkspace = prepareTaskWorkspace(
+      {
+        id: "task-fix-prefix",
+        title: "Fix Activity transition bug",
+        task_number: "#48",
+        project_path: repo,
+      } as never,
+      null,
+    );
+    const choreWorkspace = prepareTaskWorkspace(
+      {
+        id: "task-chore-prefix",
+        title: "Update dependency config",
+        task_number: "#49",
+        project_path: repo,
+      } as never,
+      null,
+    );
+    const ciWorkspace = prepareTaskWorkspace(
+      {
+        id: "task-ci-prefix",
+        title: "Update GitHub Actions workflow file",
+        task_number: "#50",
+        project_path: repo,
+      } as never,
+      null,
+    );
+
+    assert.match(docsWorkspace.branchName ?? "", /^docs\/t47-update-readme-usage-docs$/);
+    assert.match(fixWorkspace.branchName ?? "", /^fix\/t48-fix-activity-transition-bug$/);
+    assert.match(choreWorkspace.branchName ?? "", /^chore\/t49-update-dependency-config$/);
+    assert.match(ciWorkspace.branchName ?? "", /^ci\/t50-update-github-actions-workflow-file$/);
   });
 });
 
@@ -177,7 +407,7 @@ describe("prepareTaskWorkspace — global default fallback", () => {
     );
 
     assert.equal(workspace.rootPath, repo);
-    assert.match(workspace.branchName ?? "", /^ao\/t99-fallback-to-global$/);
+    assert.match(workspace.branchName ?? "", /^feat\/t99-fallback-to-global$/);
     assert.equal(existsSync(workspace.cwd), true);
   });
 
@@ -258,10 +488,14 @@ describe("prepareTaskWorkspace — origin/main enforcement", () => {
     assert.equal(worktreeHead, upstreamHead);
   });
 
-  it("falls back to local HEAD when no origin remote is configured", () => {
+  it("falls back to local main when no origin remote is configured", () => {
     // initRepo produces a repo with no remote — simulating minimal test fixtures.
     const repo = initRepo();
-    const localHead = git(repo, "rev-parse", "HEAD");
+    const localMainHead = git(repo, "rev-parse", "main");
+    git(repo, "checkout", "-b", "feature/local-only-work");
+    writeFileSync(join(repo, "LOCAL_ONLY.md"), "local feature branch\n");
+    git(repo, "add", "LOCAL_ONLY.md");
+    git(repo, "commit", "-m", "local feature branch work");
 
     const workspace = prepareTaskWorkspace(
       {
@@ -297,6 +531,7 @@ describe("prepareTaskWorkspace — origin/main enforcement", () => {
     );
 
     const worktreeHead = git(workspace.cwd, "rev-parse", "HEAD");
-    assert.equal(worktreeHead, localHead);
+    assert.equal(worktreeHead, localMainHead);
+    assert.equal(existsSync(join(workspace.cwd, "LOCAL_ONLY.md")), false);
   });
 });

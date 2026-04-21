@@ -42,7 +42,7 @@ import type { Agent, Task } from "../types/runtime.js";
 import { recordDbLogInsertMs, recordStdoutChunkMs } from "../perf/metrics.js";
 import { getHeartbeatManager } from "./heartbeat-manager.js";
 import type { CacheService } from "../cache/cache-service.js";
-import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
+import { prepareTaskWorkspace, resolveWorkspaceMode } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 import { runWorkflowHooks } from "../workflow/hooks.js";
 import { getTaskSetting } from "../domain/task-settings.js";
@@ -655,6 +655,7 @@ export function spawnAgent(
   }
   const projectPath = task.project_path ?? process.cwd();
   const workflow = loadProjectWorkflow(projectPath);
+  const workspaceMode = resolveWorkspaceMode(workflow, db);
   const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
   // Determine if self-review applies (skip for continue mode)
   const selfReviewThreshold = getSetting(db, "self_review_threshold", task.id) ?? "small";
@@ -824,6 +825,7 @@ export function spawnAgent(
                   runtimePolicy,
                   parallelScope: parallelImplEnabled ? "implementer" : undefined,
                   language: outputLanguage,
+                  workspaceMode,
                 }) + exploreContext)))));
 
   // Log directory

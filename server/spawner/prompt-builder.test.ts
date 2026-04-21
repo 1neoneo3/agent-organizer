@@ -64,6 +64,29 @@ describe("buildTaskPrompt", () => {
     assert.match(prompt, /Keep changes focused/);
   });
 
+  it("does not tell agents to reset the branch in git-worktree mode", () => {
+    const prompt = buildTaskPrompt(
+      {
+        id: "task-worktree",
+        title: "Preserve worktree branch",
+        description: "Implement from the prepared worktree.",
+        project_path: "/tmp/project",
+      } as never,
+      {
+        workspaceMode: "git-worktree",
+      },
+    );
+
+    const worktreeGitSection = prompt.slice(
+      prompt.indexOf("AO はこのタスク"),
+      prompt.indexOf("---\n\n# Task"),
+    );
+    assert.match(worktreeGitSection, /分離された git worktree/);
+    assert.match(worktreeGitSection, /現在のブランチに留まる/);
+    assert.doesNotMatch(worktreeGitSection, /git checkout -B <branch-name> origin\/main/);
+    assert.match(worktreeGitSection, /git push -u origin HEAD/);
+  });
+
   // --- AO Phase 3: parallel impl/test scope injection ---
   // When the implementer runs concurrently with a parallel tester, the
   // prompt must warn it not to touch test files so the two agents don't

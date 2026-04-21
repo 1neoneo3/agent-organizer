@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import type { Task, Directive } from "../types/runtime.js";
 import type { ProjectWorkflow, ProjectType } from "../workflow/loader.js";
 import type { AgentRuntimePolicy } from "../workflow/runtime-policy.js";
-import type { OutputLanguage } from "../config/runtime.js";
+import type { OutputLanguage, WorkspaceMode } from "../config/runtime.js";
 
 // ---------------------------------------------------------------------------
 // Language helpers
@@ -305,10 +305,12 @@ export function buildTaskPrompt(
      * remain unchanged regardless of this setting.
      */
     language?: OutputLanguage;
+    workspaceMode?: WorkspaceMode;
   },
 ): string {
   const language: OutputLanguage = opts?.language ?? DEFAULT_OUTPUT_LANGUAGE;
   const isEn = language === "en";
+  const workspaceMode = opts?.workspaceMode ?? opts?.workflow?.workspaceMode ?? "shared";
   // Prompt is built in two halves and joined at the end:
   //   1. `staticParts` — everything that is the same across every task
   //      run for a given project: language, CLAUDE.md + rules, contract
@@ -572,7 +574,36 @@ export function buildTaskPrompt(
   }
 
   // PR creation workflow (default for tasks that produce file changes).
-  if (isEn) {
+  if (workspaceMode === "git-worktree") {
+    if (isEn) {
+      const backgroundSectionLabel = "Background";
+      staticParts.push("## Git Workflow");
+      staticParts.push("");
+      staticParts.push("AO has already handed this task to an isolated git worktree and selected the task branch before this prompt starts.");
+      staticParts.push("When the task changes files, follow this workflow:");
+      staticParts.push("1. Stay on the current branch. Do not recreate/reset the branch from origin/main, run destructive resets, or switch away from the prepared worktree branch.");
+      staticParts.push("2. Commit changes (conventional commits format).");
+      staticParts.push("3. Push the current branch: `git push -u origin HEAD`.");
+      staticParts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`.");
+      staticParts.push(`   - **Important**: do not write a \`## ${backgroundSectionLabel}\` section in the PR body (the system injects it automatically — avoid duplication).`);
+      staticParts.push("   - Keep the PR body focused on \"Changes\" and \"Verification\" only.");
+      staticParts.push("5. **Never commit directly to main.**");
+      staticParts.push("");
+    } else {
+      staticParts.push("## Gitワークフロー");
+      staticParts.push("");
+      staticParts.push("AO はこのタスクを分離された git worktree に引き渡し、開始前にタスク用ブランチを checkout 済みです。");
+      staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
+      staticParts.push("1. 現在のブランチに留まること。origin/main からのブランチ作り直し、破壊的な reset、準備済み worktree ブランチからの切り替えは禁止。");
+      staticParts.push("2. 変更をコミット（conventional commits形式）");
+      staticParts.push("3. 現在のブランチをプッシュ: `git push -u origin HEAD`");
+      staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
+      staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
+      staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
+      staticParts.push("5. **mainに直接コミットしない**");
+      staticParts.push("");
+    }
+  } else if (isEn) {
     const backgroundSectionLabel = "Background";
     staticParts.push("## Git Workflow");
     staticParts.push("");
