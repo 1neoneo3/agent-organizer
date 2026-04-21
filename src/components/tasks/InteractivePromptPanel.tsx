@@ -81,6 +81,21 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
     outline: "none",
   };
 
+  const answerInputStyle = {
+    ...inputStyle,
+    background: "var(--bg-secondary)",
+    border: "1px solid var(--accent-primary)",
+    boxShadow: "0 0 0 3px var(--accent-subtle), var(--shadow-sm)",
+  };
+
+  const inputAreaStyle = {
+    background: "var(--bg-secondary)",
+    border: "1px solid var(--accent-primary)",
+    borderRadius: "8px",
+    padding: "10px",
+    boxShadow: "var(--shadow-sm)",
+  };
+
   if (prompt.promptType === "exit_plan_mode") {
     return (
       <div style={{
@@ -156,7 +171,7 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
         border: "1px solid var(--status-done)",
         borderRadius: "8px",
         padding: "16px",
-        background: "var(--bg-tertiary)",
+        background: "var(--accent-subtle)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
           <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--status-done)" }} />
@@ -165,16 +180,19 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
           </h3>
         </div>
         {detectedText && (
-          <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginBottom: "12px", whiteSpace: "pre-wrap" }}>
+          <p style={{ fontSize: "13px", color: "var(--text-primary)", marginBottom: "12px", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
             {detectedText}
           </p>
         )}
-        <textarea
-          value={freeText}
-          onChange={(e) => setFreeText(e.target.value)}
-          placeholder="Type your response..."
-          style={{ ...inputStyle, height: "80px", marginBottom: "8px" }}
-        />
+        <div style={{ ...inputAreaStyle, marginBottom: "8px" }}>
+          <textarea
+            value={freeText}
+            onChange={(e) => setFreeText(e.target.value)}
+            placeholder="Type your response..."
+            className="interactive-answer-input"
+            style={{ ...answerInputStyle, height: "96px" }}
+          />
+        </div>
         <button
           onClick={handleSubmitAnswer}
           disabled={sending || !freeText.trim()}
@@ -197,7 +215,7 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
       border: "1px solid var(--accent-primary)",
       borderRadius: "8px",
       padding: "16px",
-      background: "var(--bg-tertiary)",
+      background: "var(--accent-subtle)",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
         <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--accent-primary)" }} />
@@ -225,7 +243,7 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
                 {q.header}
               </span>
             )}
-            <p style={{ fontSize: "13px", color: "var(--text-primary)", marginBottom: "8px" }}>{q.question}</p>
+            <p style={{ fontSize: "13px", color: "var(--text-primary)", marginBottom: "8px", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{q.question}</p>
             {q.options && q.options.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                 {q.options.map((opt, oi) => {
@@ -261,12 +279,13 @@ export function InteractivePromptPanel({ prompt }: InteractivePromptPanelProps) 
         ))}
       </div>
 
-      <div style={{ marginTop: "12px" }}>
+      <div style={{ ...inputAreaStyle, marginTop: "12px" }}>
         <textarea
           value={freeText}
           onChange={(e) => setFreeText(e.target.value)}
           placeholder={hasOptions ? "Or type a custom answer..." : "Type your answer..."}
-          style={{ ...inputStyle, height: "64px" }}
+          className="interactive-answer-input"
+          style={{ ...answerInputStyle, height: "80px" }}
         />
       </div>
 

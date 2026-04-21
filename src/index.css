@@ -629,6 +629,15 @@ html, body, #root {
   box-shadow: 0 0 0 3px var(--accent-subtle);
 }
 
+.interactive-answer-input {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.interactive-answer-input:focus {
+  border-color: var(--accent-hover) !important;
+  box-shadow: 0 0 0 4px var(--accent-glow), var(--shadow-sm) !important;
+}
+
 /* ========================================
    Flavor Swatch
    ======================================== */

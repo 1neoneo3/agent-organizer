@@ -49,12 +49,6 @@ function getPromptColorClass(promptType: string): { bg: string; border: string; 
   };
 }
 
-/** Truncate long detected text for display */
-function truncateText(text: string, max = 120): string {
-  if (text.length <= max) return text;
-  return text.slice(0, max) + "…";
-}
-
 function InlineReplyForm({ prompt, onDismiss }: { prompt: InteractivePrompt; onDismiss: () => void }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -93,7 +87,7 @@ function InlineReplyForm({ prompt, onDismiss }: { prompt: InteractivePrompt; onD
           }
         }}
         placeholder="Type your response..."
-        className="w-full bg-white dark:bg-gray-800 rounded px-3 py-2 text-sm h-16 resize-none border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        className="w-full bg-white dark:bg-gray-800 rounded-md px-3 py-2 text-sm min-h-24 resize-y border border-emerald-500/70 dark:border-emerald-400/70 shadow-inner focus:outline-none focus:ring-2 focus:ring-emerald-500"
       />
       <div className="flex justify-end gap-2 mt-1.5">
         <button
@@ -172,7 +166,7 @@ export function InteractivePromptToast({ interactivePrompts, tasks, onNavigateTo
   if (visibleToasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 max-w-md">
+    <div className="fixed top-4 right-4 z-[100] flex w-[min(92vw,680px)] max-h-[calc(100vh-2rem)] flex-col gap-2 overflow-y-auto">
       {visibleToasts.map(([taskId, item]) => {
         const colors = getPromptColorClass(item.prompt.promptType);
         const detectedText = item.prompt.detectedText || item.prompt.questions?.[0]?.question;
@@ -180,7 +174,7 @@ export function InteractivePromptToast({ interactivePrompts, tasks, onNavigateTo
         return (
           <div
             key={taskId}
-            className={`rounded-lg shadow-lg border-l-4 p-3 cursor-pointer transition-all animate-slide-in ${colors.bg} ${colors.border}`}
+            className={`rounded-lg shadow-lg border-l-4 p-4 cursor-pointer transition-all animate-slide-in ${colors.bg} ${colors.border}`}
             onClick={() => handleClick(taskId, item)}
           >
             <div className="flex items-start justify-between gap-2">
@@ -191,12 +185,12 @@ export function InteractivePromptToast({ interactivePrompts, tasks, onNavigateTo
                     {getPromptLabel(item.prompt.promptType)}
                   </span>
                 </div>
-                <p className="text-sm text-gray-800 dark:text-gray-200 truncate">
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-200 break-words">
                   {item.taskTitle}
                 </p>
                 {detectedText && (
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mt-1 whitespace-pre-wrap">
-                    {truncateText(detectedText)}
+                  <p className="text-xs leading-relaxed text-gray-700 dark:text-gray-300 mt-2 whitespace-pre-wrap break-words max-h-72 overflow-y-auto pr-1">
+                    {detectedText}
                   </p>
                 )}
                 {!item.expanded && (
