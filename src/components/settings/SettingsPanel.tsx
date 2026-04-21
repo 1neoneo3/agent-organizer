@@ -16,8 +16,8 @@ interface StageAgentOption {
 const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
   {
     key: "refinement_agent_id",
-    label: "Refinement Stage",
-    description: "Preferred agent when a task enters refinement (planning). Falls back to role-based scoring if unset or busy.",
+    label: "Plan Stage",
+    description: "Preferred agent when a task enters the plan stage. Falls back to role-based scoring if unset or busy.",
   },
   {
     key: "review_agent_id",
@@ -111,7 +111,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <option value="en">English</option>
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                Language used for agent-generated artifacts: task titles, task descriptions, refinement plans, review/QA narrative text, and PR titles/bodies. Control tokens (SPRINT CONTRACT markers, review verdicts, REFINEMENT fences) stay fixed so downstream parsers keep working.
+                Language used for agent-generated artifacts: task titles, task descriptions, implementation plans, review/QA narrative text, and PR titles/bodies. Control tokens (SPRINT CONTRACT markers, review verdicts, REFINEMENT fences) stay fixed so downstream parsers keep working.
               </p>
             </label>
           </div>
@@ -257,7 +257,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Refinement Stage</span>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Plan Stage</span>
               <select
                 style={inputStyle}
                 value={local.default_enable_refinement ?? "false"}
@@ -272,7 +272,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
             </label>
 
             <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Refinement Auto-Approve</span>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Plan Auto-Approve</span>
               <select
                 style={inputStyle}
                 value={local.refinement_auto_approve ?? "false"}
@@ -282,7 +282,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <option value="true">Auto-approve (skip human gate)</option>
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                When enabled, the refinement plan auto-advances to implementation without waiting for human review.
+                When enabled, the implementation plan auto-advances without waiting for human review.
               </p>
             </label>
 

@@ -14,7 +14,7 @@ const SIZE_LABEL: Record<string, string> = {
 
 const STATUS_DISPLAY: Record<string, string> = {
   inbox: "Inbox",
-  refinement: "Refinement",
+  refinement: "Plan",
   in_progress: "In Progress",
   self_review: "Review",
   test_generation: "Test Gen",
@@ -288,7 +288,7 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           }}
         >
           <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)" }}>
-            Refinement Plan Ready
+            Implementation Plan Ready
           </span>
           <button
             onClick={() => { play("select"); onSelect?.(task.id); }}

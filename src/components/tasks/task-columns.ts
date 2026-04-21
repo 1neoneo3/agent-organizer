@@ -2,7 +2,7 @@ import type { Task } from "../../types/index.js";
 
 export const TASK_BOARD_COLUMNS = [
   { key: "inbox", label: "INBOX", town: "Inbox", accentColor: "var(--status-inbox)" },
-  { key: "refinement", label: "REFINEMENT", town: "Refinement", accentColor: "var(--status-refinement)" },
+  { key: "refinement", label: "PLAN", town: "Plan", accentColor: "var(--status-refinement)" },
   { key: "in_progress", label: "IN PROGRESS", town: "In Progress", accentColor: "var(--status-progress)" },
   { key: "self_review", label: "SELF REVIEW", town: "Self Review", accentColor: "var(--status-review)" },
   { key: "test_generation", label: "TEST GEN", town: "Test Generation", accentColor: "var(--status-test-gen)" },

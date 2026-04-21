@@ -24,7 +24,7 @@ export const PINNED_PANEL_WIDTH_PX = 820;
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   inbox: { label: "Inbox", color: "var(--status-inbox)" },
-  refinement: { label: "Refinement", color: "var(--status-refinement)" },
+  refinement: { label: "Plan", color: "var(--status-refinement)" },
   in_progress: { label: "In Progress", color: "var(--status-progress)" },
   self_review: { label: "Self Review", color: "var(--status-review)" },
   test_generation: { label: "Test Gen", color: "var(--status-test-gen)" },
@@ -104,7 +104,7 @@ function RefinementPlanBlock({
   return (
     <div data-testid={testId} style={{ marginBottom: "16px" }}>
       <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
-        Refinement Plan
+        Implementation Plan
       </h3>
       <div style={{
         background: "var(--bg-primary)",
