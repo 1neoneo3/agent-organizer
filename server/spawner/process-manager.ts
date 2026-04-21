@@ -355,6 +355,19 @@ export type RefinementPlanExtractionResult =
   | { kind: "fallback"; plan: string }
   | { kind: "empty" };
 
+export function buildRefinementRevisionPrompt(feedback: string): string {
+  return [
+    "Revise the existing implementation plan according to the user feedback below.",
+    "Return the complete updated implementation plan, not a partial patch.",
+    "The final answer must include exactly one canonical block bounded by:",
+    "---REFINEMENT PLAN---",
+    "---END REFINEMENT---",
+    "",
+    "User feedback:",
+    feedback,
+  ].join("\n");
+}
+
 /**
  * Read all refinement-stage assistant logs for a task since `spawnStartedAt`
  * and decide whether the run produced a canonical plan, a markerless
@@ -395,6 +408,69 @@ export function extractRefinementPlanFromLogs(
   }
   if (combined.length > 0) return { kind: "fallback", plan: combined.slice(-5000) };
   return { kind: "empty" };
+}
+
+export function persistRefinementPlanExtraction(
+  db: DatabaseSync,
+  taskId: string,
+  extraction: RefinementPlanExtractionResult,
+  context: { stage: string; agentId: string | null; now?: number },
+): void {
+  const updatePlanStmt = db.prepare(
+    "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ?, planned_files = ? WHERE id = ?",
+  );
+  const updatePlanFallbackStmt = db.prepare(
+    "UPDATE tasks SET refinement_plan = ? WHERE id = ?",
+  );
+  const insertLogStmt = db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
+  );
+
+  if (extraction.kind === "plan") {
+    const plannedFiles = extractPlannedFilesFromPlan(extraction.plan);
+    const plannedFilesJson = plannedFiles.length > 0 ? JSON.stringify(plannedFiles) : null;
+    updatePlanStmt.run(extraction.plan, context.now ?? Date.now(), plannedFilesJson, taskId);
+    return;
+  }
+
+  if (extraction.kind === "fallback") {
+    // Fallback guard: if a valid plan already exists, do NOT replace it with
+    // the marker-less tail. Normally `hasExistingPlan` short-circuits a second
+    // refinement spawn, but paths like manual Run or plan Revise can still
+    // enter this branch with a populated plan.
+    const existing = (db
+      .prepare("SELECT refinement_plan FROM tasks WHERE id = ?")
+      .get(taskId) as { refinement_plan: string | null } | undefined)?.refinement_plan;
+    if (existing && existing.length > 0) {
+      insertLogStmt.run(
+        taskId,
+        "[refinement] plan markers missing in this run; existing refinement_plan preserved (no overwrite)",
+        context.stage,
+        context.agentId,
+      );
+      return;
+    }
+
+    updatePlanFallbackStmt.run(extraction.plan, taskId);
+    insertLogStmt.run(
+      taskId,
+      "[refinement] plan markers (---REFINEMENT PLAN--- ... ---END REFINEMENT---) not found; saved last 5000 chars as fallback",
+      context.stage,
+      context.agentId,
+    );
+    return;
+  }
+
+  // No assistant output captured for this run. Do NOT overwrite
+  // refinement_plan with "" — a previous run may have produced a valid plan
+  // and we would silently destroy it. Log the miss so the empty-plan case is
+  // visible.
+  insertLogStmt.run(
+    taskId,
+    "[refinement] no assistant output captured for this run; refinement_plan unchanged",
+    context.stage,
+    context.agentId,
+  );
 }
 
 export function extractGithubArtifactsFromLogs(
@@ -618,11 +694,13 @@ export function spawnAgent(
     !refinementCompleted &&
     task.status === "in_progress" &&
     activeStages.includes("refinement");
+  const isRefinementRevision = isContinue && options?.previousStatus === "refinement" && task.status === "refinement";
   const isRefinementRun =
-    !hasExistingPlan &&
-    (task.status === "refinement" ||
-      (task.status === "inbox" && activeStages[0] === "refinement") ||
-      canRecoverRefinement);
+    isRefinementRevision ||
+    (!hasExistingPlan &&
+      (task.status === "refinement" ||
+        (task.status === "inbox" && activeStages[0] === "refinement") ||
+        canRecoverRefinement));
 
   // Capture the stage this spawn represents once, at spawn time. Every
   // task_logs INSERT emitted during the spawn lifecycle uses this value
@@ -718,7 +796,7 @@ export function spawnAgent(
   })();
 
   const prompt = isContinue
-    ? options!.continuePrompt!
+    ? (isRefinementRevision ? buildRefinementRevisionPrompt(options!.continuePrompt!) : options!.continuePrompt!)
     : (isRefinementRun
       ? buildRefinementPrompt(task, (() => {
           const rows = db.prepare(
@@ -1335,6 +1413,10 @@ export function spawnAgent(
       const finishTime = Date.now();
       const restoreStatus = options?.previousStatus ?? "in_progress";
 
+      if (isRefinementRun && code === 0) {
+        persistRefinementPlanFromCurrentRun();
+      }
+
       db.prepare(
         "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?"
       ).run(restoreStatus, finishTime, task.id);
@@ -1423,67 +1505,7 @@ export function spawnAgent(
     // noise can contaminate the extracted plan. See
     // `extractRefinementPlanFromLogs` for the query contract.
     if (isRefinementRun && code === 0) {
-      const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
-      // Stamp refinement_completed_at alongside refinement_plan on the
-      // "plan" (canonical) path so future re-spawns can tell a finished
-      // refinement from a crashed / markerless one. Also stamp
-      // planned_files (static list of paths the task said it would
-      // touch, parsed from the "## Files to Modify" section) so the
-      // file-conflict gate has something to compare against. Fallback
-      // writes do NOT set completed_at or planned_files — a marker-
-      // less tail is not a proof that refinement "completed" in the
-      // semantic sense, and its files section cannot be trusted.
-      const updatePlanStmt = db.prepare(
-        "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ?, planned_files = ? WHERE id = ?",
-      );
-      const updatePlanFallbackStmt = db.prepare(
-        "UPDATE tasks SET refinement_plan = ? WHERE id = ?",
-      );
-
-      if (extraction.kind === "plan") {
-        const plannedFiles = extractPlannedFilesFromPlan(extraction.plan);
-        const plannedFilesJson = plannedFiles.length > 0 ? JSON.stringify(plannedFiles) : null;
-        updatePlanStmt.run(extraction.plan, Date.now(), plannedFilesJson, task.id);
-      } else if (extraction.kind === "fallback") {
-        // Fallback guard: if a valid plan already exists, do NOT replace
-        // it with the marker-less tail. Normally `hasExistingPlan` short-
-        // circuits a second refinement spawn, but paths like manual Run
-        // or `refinement_as_pr` can still enter this branch with a
-        // populated plan — we must not silently corrupt it.
-        const existing = (db
-          .prepare("SELECT refinement_plan FROM tasks WHERE id = ?")
-          .get(task.id) as { refinement_plan: string | null } | undefined)?.refinement_plan;
-        if (existing && existing.length > 0) {
-          insertLogStmt.run(
-            task.id,
-            "system",
-            "[refinement] plan markers missing in this run; existing refinement_plan preserved (no overwrite)",
-            spawnStage,
-            agent.id,
-          );
-        } else {
-          updatePlanFallbackStmt.run(extraction.plan, task.id);
-          insertLogStmt.run(
-            task.id,
-            "system",
-            "[refinement] plan markers (---REFINEMENT PLAN--- ... ---END REFINEMENT---) not found; saved last 5000 chars as fallback",
-            spawnStage,
-            agent.id,
-          );
-        }
-      } else {
-        // No assistant output captured for this run. Do NOT overwrite
-        // refinement_plan with "" — a previous run may have produced a
-        // valid plan and we would silently destroy it. Log the miss so
-        // the empty-plan case is visible.
-        insertLogStmt.run(
-          task.id,
-          "system",
-          "[refinement] no assistant output captured for this run; refinement_plan unchanged",
-          spawnStage,
-          agent.id,
-        );
-      }
+      persistRefinementPlanFromCurrentRun();
     }
 
     // Run after_run hooks (lint, format, etc.) — log failures as warnings but don't block progress
@@ -1633,6 +1655,17 @@ export function spawnAgent(
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
       setTimeout(() => triggerAutoCiCheck(db, ws, freshTask, cache), 500);
     }
+  }
+
+  function persistRefinementPlanFromCurrentRun(): void {
+    const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
+    // Stamp refinement_completed_at alongside refinement_plan on the canonical
+    // path so future re-spawns can tell a finished refinement from a crashed /
+    // markerless one. Also stamp planned_files for the file-conflict gate.
+    persistRefinementPlanExtraction(db, task.id, extraction, {
+      stage: spawnStage,
+      agentId: agent.id,
+    });
   }
 
   return { pid: child.pid ?? 0 };

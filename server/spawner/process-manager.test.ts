@@ -3,10 +3,12 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import {
+  buildRefinementRevisionPrompt,
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
   extractRefinementPlanFromLogs,
   isReviewRunTask,
+  persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
 } from "./process-manager.js";
 import type { Task } from "../types/runtime.js";
@@ -776,5 +778,86 @@ describe("extractRefinementPlanFromLogs", () => {
       assert.match(result.plan, /FINAL v2/);
       assert.doesNotMatch(result.plan, /DRAFT v1/);
     }
+  });
+});
+
+describe("buildRefinementRevisionPrompt", () => {
+  it("asks the resumed refinement agent to emit a complete canonical plan", () => {
+    const prompt = buildRefinementRevisionPrompt("Add test coverage to the implementation plan.");
+
+    assert.match(prompt, /complete updated implementation plan/);
+    assert.match(prompt, /---REFINEMENT PLAN---/);
+    assert.match(prompt, /---END REFINEMENT---/);
+    assert.match(prompt, /Add test coverage/);
+  });
+});
+
+describe("persistRefinementPlanExtraction", () => {
+  it("overwrites an existing implementation plan with the revised canonical plan", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "trevise", status: "refinement" });
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ? WHERE id = ?",
+    ).run("---REFINEMENT PLAN---\nOLD PLAN\n---END REFINEMENT---", 1_000, task.id);
+
+    const revisedPlan = [
+      "---REFINEMENT PLAN---",
+      "## Requirements",
+      "- Revised requirement",
+      "",
+      "## Files to Modify",
+      "- `src/revised.ts` — update behavior",
+      "",
+      "## Implementation Plan",
+      "1. Implement revised behavior",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: revisedPlan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const row = db.prepare(
+      "SELECT refinement_plan, refinement_completed_at, planned_files FROM tasks WHERE id = ?",
+    ).get(task.id) as {
+      refinement_plan: string | null;
+      refinement_completed_at: number | null;
+      planned_files: string | null;
+    };
+
+    assert.equal(row.refinement_plan, revisedPlan);
+    assert.equal(row.refinement_completed_at, 5_000);
+    assert.deepEqual(JSON.parse(row.planned_files ?? "[]"), ["src/revised.ts"]);
+  });
+
+  it("preserves an existing plan when a revision run has only markerless fallback output", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tfallback-revise", status: "refinement" });
+    const existingPlan = "---REFINEMENT PLAN---\nOLD PLAN\n---END REFINEMENT---";
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ? WHERE id = ?",
+    ).run(existingPlan, 1_000, task.id);
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "fallback", plan: "markerless prose" },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const row = db.prepare(
+      "SELECT refinement_plan FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_plan: string | null };
+    const log = db.prepare(
+      "SELECT message, stage, agent_id FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC LIMIT 1",
+    ).get(task.id) as { message: string; stage: string | null; agent_id: string | null };
+
+    assert.equal(row.refinement_plan, existingPlan);
+    assert.match(log.message, /existing refinement_plan preserved/);
+    assert.equal(log.stage, "refinement");
+    assert.equal(log.agent_id, "agent-1");
   });
 });
