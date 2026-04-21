@@ -2,6 +2,42 @@
 
 Multi-agent orchestration dashboard for managing AI agent (Claude / Codex / Gemini CLI) task workflows with a configurable quality pipeline.
 
+## Quick Start
+
+The recommended first-run path is the npm CLI. It creates local runtime state in
+`~/.agent-organizer`, ensures Redis is available, and starts the production
+server in the foreground.
+
+```bash
+npx agent-organizer@latest start
+```
+
+Open the URL printed by the command, usually:
+
+```text
+http://localhost:8791
+```
+
+Useful follow-up commands:
+
+```bash
+npx agent-organizer@latest doctor
+npx agent-organizer@latest status
+npx agent-organizer@latest stop
+```
+
+What `start` does:
+
+- Requires Node.js 22 or newer
+- Creates `~/.agent-organizer/.env` and `~/.agent-organizer/data`
+- Generates a persistent `SESSION_AUTH_TOKEN`
+- Uses Redis on `127.0.0.1:6379` when available
+- Starts a Docker Redis container named `agent-organizer-redis` when Redis is not already running
+- Runs Agent Organizer from the npm package with SQLite data stored outside the package cache
+
+If Docker is not installed and Redis is not already running, install Docker or
+start Redis locally before running `start`.
+
 ## Features
 
 - Kanban task board with drag-and-drop
