@@ -4,20 +4,21 @@ Multi-agent orchestration dashboard for managing AI agent (Claude / Codex / Gemi
 
 ## Quick Start
 
-The recommended first-run path is the npm CLI:
+Clone the repository and start it locally:
 
 ```bash
-npx agent-organizer@latest start
+git clone https://github.com/1neoneo3/agent-organizer.git
+cd agent-organizer
+pnpm install
+cp .env.example .env
+pnpm build
+pnpm start
 ```
 
-This command runs the published `agent-organizer` package, creates local
-runtime state in `~/.agent-organizer`, ensures Redis is available, and starts
-the production server in the foreground.
+This starts the production server from your local checkout in the foreground.
+SQLite data is stored in `data/` by default.
 
-If npm returns `404 Not Found`, the package has not been published to npm from
-this repository yet. See [npm Package Publishing](#npm-package-publishing).
-
-Open the URL printed by the command, usually:
+Open:
 
 ```text
 http://localhost:8791
@@ -26,49 +27,42 @@ http://localhost:8791
 ### Requirements
 
 - Node.js 22 or newer
-- Docker, or a Redis server already running on `127.0.0.1:6379`
+- pnpm
+- Redis on `127.0.0.1:6379` when `REDIS_ENABLED=true`; set `REDIS_ENABLED=false` to run without Redis
 - At least one supported agent CLI if you want tasks to run: `claude`, `codex`, or `gemini`
 
 Useful follow-up commands:
 
 ```bash
-npx agent-organizer@latest doctor
-npx agent-organizer@latest status
-npx agent-organizer@latest stop
+pnpm dev            # Start both server and Vite dev client
+pnpm dev:server     # Server only
+pnpm dev:client     # Vite dev server only
+pnpm lint           # TypeScript static checks
 ```
 
-For reproducible installs, pin a version instead of `latest`:
+For local development without Redis, set `REDIS_ENABLED=false` in `.env`.
 
-```bash
-npx agent-organizer@0.1.0 start
-```
-
-What `start` does:
+What `pnpm start` does:
 
 - Requires Node.js 22 or newer
-- Creates `~/.agent-organizer/.env` and `~/.agent-organizer/data`
-- Generates a persistent `SESSION_AUTH_TOKEN`
-- Uses Redis on `127.0.0.1:6379` when available
-- Starts a Docker Redis container named `agent-organizer-redis` when Redis is not already running
-  and binds it to `127.0.0.1` only
-- Runs Agent Organizer from the npm package with SQLite data stored outside the package cache
+- Loads configuration from `.env`
+- Generates a persistent `SESSION_AUTH_TOKEN` if the placeholder value is left unchanged
+- Uses Redis on `127.0.0.1:6379` when enabled
+- Stores SQLite data in `data/agent-organizer.db` by default
 - Serves the built UI and API from the same server on `PORT` (default `8791`)
 
-If Docker is not installed and Redis is not already running, install Docker or
-start Redis locally before running `start`.
-
-> Security note: `npx` executes code from the npm package you request. For
-> production or shared machines, prefer pinning a reviewed version such as
-> `agent-organizer@0.1.0`.
+If Redis is not already running, start it locally before running `pnpm start`,
+or set `REDIS_ENABLED=false` in `.env`.
 
 ## Current Distribution
 
+- Recommended local setup: clone this repository and run `pnpm build && pnpm start`
 - npm package name: `agent-organizer`
 - CLI binary: `agent-organizer`
-- Primary command: `npx agent-organizer@latest start`
+- npm CLI command after publishing: `npx agent-organizer@latest start`
 - Publish status: configured in this repository; requires `npm publish` from an authenticated npm account
-- Runtime home: `~/.agent-organizer`
-- Runtime data: `~/.agent-organizer/data`
+- Local checkout data: `data/agent-organizer.db`
+- npm CLI runtime data: `~/.agent-organizer/data`
 - Default URL: `http://localhost:8791`
 - Default Redis: `redis://127.0.0.1:6379`
 - License: MIT
