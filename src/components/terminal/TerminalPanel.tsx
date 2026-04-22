@@ -2,6 +2,7 @@ import { memo, startTransition, useEffect, useRef, useState, useMemo, useCallbac
 import { fetchTaskLogs } from "../../api/endpoints.js";
 import type { TaskLog, WSEventType, Agent } from "../../types/index.js";
 import { getRoleLabel } from "../agents/roles.js";
+import { formatModelName } from "../../formatModelName.js";
 import {
   appendLiveLogs,
   countLogsByTab,
@@ -471,7 +472,7 @@ const StageSegmentBlock = memo(function StageSegmentBlock({
   const agent = segment.agentId ? agents.find((a) => a.id === segment.agentId) ?? null : null;
   const agentName = agent ? agent.name : segment.agentId ? segment.agentId.slice(0, 8) : null;
   const roleLabel = agent?.role ? getRoleLabel(agent.role) ?? agent.role : null;
-  const modelLabel = agent?.cli_model ?? null;
+  const modelLabel = agent?.cli_model ? formatModelName(agent.cli_model) : null;
   const providerLabel = agent?.cli_provider ?? null;
   // Prefer the transition marker's own `from` (captured as segment.fromStage)
   // because it records the real predecessor even when earlier stages produced

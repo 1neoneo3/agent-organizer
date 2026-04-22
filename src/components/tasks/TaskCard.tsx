@@ -4,6 +4,7 @@ import { sendTaskFeedback, sendInteractiveResponse, approveTask, rejectTask } fr
 import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-time.js";
+import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
 
 const SIZE_LABEL: Record<string, string> = {
@@ -421,7 +422,7 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         )}
         {agent?.cli_model && (
           <div style={{ fontSize: "10px", marginTop: "2px", color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
-            {agent.cli_model}
+            {formatModelName(agent.cli_model)}
           </div>
         )}
 

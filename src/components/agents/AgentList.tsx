@@ -4,6 +4,7 @@ import { getRoleLabel, getRoleColorClass } from "./roles.js";
 import { PixelAvatar } from "./PixelAvatar.js";
 import { createAgent, updateAgent, deleteAgent } from "../../api/endpoints.js";
 import type { Agent, Task } from "../../types/index.js";
+import { formatModelName } from "../../formatModelName.js";
 
 const ACTIVE_TASK_STATUSES = new Set([
   "refinement", "in_progress", "self_review", "test_generation",
@@ -146,7 +147,7 @@ export function AgentList({ agents, tasks, cliStatus, onReload }: AgentListProps
                   <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>{agent.status}</span>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--text-tertiary)", marginTop: "2px" }}>
-                  <span>{agent.cli_provider} {agent.cli_model ? `(${agent.cli_model})` : ""} \u2014 {agent.stats_tasks_done} done</span>
+                  <span>{agent.cli_provider} {agent.cli_model ? `(${formatModelName(agent.cli_model)})` : ""} \u2014 {agent.stats_tasks_done} done</span>
                   {(activeTaskCountByAgent[agent.id] ?? 0) > 0 && (
                     <span style={{
                       display: "inline-flex",
