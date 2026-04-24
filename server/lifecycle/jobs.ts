@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
+import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
@@ -8,6 +8,7 @@ import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
 import type { Agent, Task } from "../types/runtime.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+const pendingOrphanRespawns = new Set<string>();
 
 // Orphan recovery thresholds for stages where an auto-agent should always be
 // running (auto-reviewer, auto-qa, auto-test-gen). Tasks
@@ -49,15 +50,17 @@ export function startOrphanRecovery(
 
   return setInterval(() => {
     const active = getActiveProcesses();
+    const pending = getPendingSpawns();
 
-    recoverInProgressOrphans(db, ws, cache, active);
-    recoverStuckAutoStages(db, ws, cache, active, startedAt);
+    recoverInProgressOrphans(db, ws, cache, active, { pending });
+    recoverStuckAutoStages(db, ws, cache, active, startedAt, pending);
   }, intervalMs);
 }
 
 export interface RecoverInProgressOrphansOptions {
   spawnAgent?: typeof defaultSpawnAgent;
   maxAutoRespawn?: number;
+  pending?: ReadonlySet<string>;
 }
 
 export function recoverInProgressOrphans(
@@ -69,6 +72,7 @@ export function recoverInProgressOrphans(
 ): void {
   const spawnAgent = options.spawnAgent ?? defaultSpawnAgent;
   const maxAutoRespawn = options.maxAutoRespawn ?? ORPHAN_AUTO_RESPAWN_MAX;
+  const pendingSpawns = options.pending ?? getPendingSpawns();
 
   // Recover both in_progress and refinement orphans
   const orphanCandidates = db.prepare(
@@ -84,6 +88,8 @@ export function recoverInProgressOrphans(
 
   for (const task of orphanCandidates) {
     if (hasActive(active, task.id)) continue;
+    if (pendingSpawns.has(task.id)) continue;
+    if (pendingOrphanRespawns.has(task.id)) continue;
 
     // Skip tasks awaiting interactive prompt (unless timed out)
     const pending = getPendingInteractivePrompt(task.id);
@@ -148,6 +154,7 @@ export function recoverInProgressOrphans(
       const respawnDecision = evaluateAutoRespawn(db, task, maxAutoRespawn);
 
       if (respawnDecision.kind === "respawn") {
+        pendingOrphanRespawns.add(task.id);
         if (task.assigned_agent_id) {
           db.prepare(
             "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
@@ -182,6 +189,8 @@ export function recoverInProgressOrphans(
           db.prepare(
             "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
           ).run(task.id, `Orphan recovery: auto-respawn failed: ${msg}. Will retry on next tick.`);
+        }).finally(() => {
+          pendingOrphanRespawns.delete(task.id);
         });
         continue;
       }
@@ -241,12 +250,17 @@ export function recoverInProgressOrphans(
   }
 }
 
+export function __resetPendingOrphanRespawnsForTests(): void {
+  pendingOrphanRespawns.clear();
+}
+
 export function recoverStuckAutoStages(
   db: DatabaseSync,
   ws: WsHub,
   cache: CacheService | undefined,
   active: Map<string, unknown> | Set<string>,
   startedAt: number,
+  pendingSpawns?: ReadonlySet<string>,
 ): void {
   // Skip during the startup grace window so in-flight processes can recover
   // naturally and the active-process map gets a chance to repopulate.
@@ -264,6 +278,7 @@ export function recoverStuckAutoStages(
   for (const task of rows) {
     // If a live process is working on the task, let it finish.
     if (hasActive(active, task.id)) continue;
+    if (pendingSpawns?.has(task.id)) continue;
 
     const now = Date.now();
     // Atomic UPDATE: only act if the task is still in the same auto-stage.

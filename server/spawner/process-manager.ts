@@ -61,6 +61,7 @@ import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
+const pendingSpawns = new Set<string>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
@@ -192,6 +193,20 @@ export function clearPendingInteractivePrompt(taskId: string, db?: DatabaseSync)
 
 export function getActiveProcesses(): Map<string, ChildProcess> {
   return activeProcesses;
+}
+
+export function getPendingSpawns(): ReadonlySet<string> {
+  return pendingSpawns;
+}
+
+export function tryStartPendingSpawn(taskId: string): boolean {
+  if (pendingSpawns.has(taskId)) return false;
+  pendingSpawns.add(taskId);
+  return true;
+}
+
+export function clearPendingSpawn(taskId: string): boolean {
+  return pendingSpawns.delete(taskId);
 }
 
 export function getCapturedSessionId(taskId: string): string | undefined {
@@ -731,8 +746,12 @@ export async function spawnAgent(
   // protects against orphan-recovery re-spawn racing with a user Run click
   // or a stale active-process entry.
   if (!isParallelTester && !isContinue) {
+    if (!tryStartPendingSpawn(task.id)) {
+      return { pid: 0 };
+    }
     const existing = activeProcesses.get(task.id);
     if (existing && existing.pid !== undefined && !existing.killed) {
+      clearPendingSpawn(task.id);
       return { pid: existing.pid };
     }
   }
@@ -846,107 +865,124 @@ export async function spawnAgent(
     }
   }
 
-  // Run Explore phase before Implement (if enabled and applicable)
-  let exploreContext = "";
-  if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isRefinementRun) {
-    // Check for existing explore result (from previous run)
-    const existingExplore = db.prepare(
-      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[EXPLORE]%' ORDER BY created_at DESC LIMIT 1"
-    ).get(task.id) as { message: string } | undefined;
+  // Track preflight so orphan recovery skips this task during
+  // Explore Phase / before_run (which are awaited before the child
+  // process is registered in activeProcesses). Preflight can still throw
+  // later (workspace preparation, log file creation, hook setup, spawn
+  // race, etc.), so clear the marker in a finally after the main child is
+  // either registered in activeProcesses or the spawn attempt aborts.
+  let child!: ChildProcess;
+  let outputLanguage: OutputLanguage = "ja";
+  let prompt = "";
+  let logStream!: ReturnType<typeof createWriteStream>;
+  let workspace!: ReturnType<typeof prepareTaskWorkspace>;
+  const hookCacheDir = join("data", "hook-cache");
+  try {
+    // Run Explore phase before Implement (if enabled and applicable)
+    let exploreContext = "";
+    if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isRefinementRun) {
+      // Check for existing explore result (from previous run)
+      const existingExplore = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[EXPLORE]%' ORDER BY created_at DESC LIMIT 1"
+      ).get(task.id) as { message: string } | undefined;
 
-    if (existingExplore) {
-      exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" +
-        existingExplore.message.replace("[EXPLORE] ", "");
-    } else {
-      const exploreResult = await runExplorePhase(db, ws, agent, task, spawnStage);
-      if (exploreResult) {
-        exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" + exploreResult;
+      if (existingExplore) {
+        exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" +
+          existingExplore.message.replace("[EXPLORE] ", "");
+      } else {
+        const exploreResult = await runExplorePhase(db, ws, agent, task, spawnStage);
+        if (exploreResult) {
+          exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" + exploreResult;
+        }
       }
     }
-  }
 
-  const outputLanguage: OutputLanguage = (() => {
-    const raw = getSetting(db, "output_language", task.id);
-    return raw && isOutputLanguage(raw) ? raw : "ja";
-  })();
+    outputLanguage = (() => {
+      const raw = getSetting(db, "output_language", task.id);
+      return raw && isOutputLanguage(raw) ? raw : "ja";
+    })();
 
-  const prompt = isContinue
-    ? (isRefinementRevision ? buildRefinementRevisionPrompt(options!.continuePrompt!) : options!.continuePrompt!)
-    : (isRefinementRun
-      ? buildRefinementPrompt(task, (() => {
-          const rows = db.prepare(
-            "SELECT task_number, title, status, project_path, description FROM tasks WHERE status NOT IN ('done','cancelled') AND id != ? ORDER BY created_at DESC LIMIT 20"
-          ).all(task.id) as Array<{ task_number: string; title: string; status: string; project_path: string | null; description: string | null }>;
-          return rows;
-        })(), { asPr: refinementAsPr, language: outputLanguage })
-      : (isTestGenRun
-        ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
-            parallel: isParallelTester,
-            language: outputLanguage,
-          }) + handoffContext
-        : (isQaRun
-          ? buildQaPrompt(task, workflow?.projectType ?? "generic", outputLanguage) + handoffContext
-          : (isReviewRun
-            ? buildReviewPrompt(task, {
-                reviewerRole: options?.reviewerRole ?? "code",
-                language: outputLanguage,
-              }) + handoffContext
-            : buildTaskPrompt(task, {
-                workflow,
-                runtimePolicy,
-                parallelScope: parallelImplEnabled ? "implementer" : undefined,
-                language: outputLanguage,
-                workspaceMode,
-              }) + exploreContext))));
+    prompt = isContinue
+      ? (isRefinementRevision ? buildRefinementRevisionPrompt(options!.continuePrompt!) : options!.continuePrompt!)
+      : (isRefinementRun
+        ? buildRefinementPrompt(task, (() => {
+            const rows = db.prepare(
+              "SELECT task_number, title, status, project_path, description FROM tasks WHERE status NOT IN ('done','cancelled') AND id != ? ORDER BY created_at DESC LIMIT 20"
+            ).all(task.id) as Array<{ task_number: string; title: string; status: string; project_path: string | null; description: string | null }>;
+            return rows;
+          })(), { asPr: refinementAsPr, language: outputLanguage })
+        : (isTestGenRun
+          ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
+              parallel: isParallelTester,
+              language: outputLanguage,
+            }) + handoffContext
+          : (isQaRun
+            ? buildQaPrompt(task, workflow?.projectType ?? "generic", outputLanguage) + handoffContext
+            : (isReviewRun
+              ? buildReviewPrompt(task, {
+                  reviewerRole: options?.reviewerRole ?? "code",
+                  language: outputLanguage,
+                }) + handoffContext
+              : buildTaskPrompt(task, {
+                  workflow,
+                  runtimePolicy,
+                  parallelScope: parallelImplEnabled ? "implementer" : undefined,
+                  language: outputLanguage,
+                  workspaceMode,
+                }) + exploreContext))));
 
-  // Log directory
-  const logDir = join("data", "logs");
-  mkdirSync(logDir, { recursive: true });
-  const logPath = join(logDir, `${task.id}.log`);
-  const logStream = createWriteStream(logPath, { flags: "a" });
+    // Log directory
+    const logDir = join("data", "logs");
+    mkdirSync(logDir, { recursive: true });
+    const logPath = join(logDir, `${task.id}.log`);
+    logStream = createWriteStream(logPath, { flags: "a" });
 
-  // Clean env
-  const cleanEnv = { ...process.env };
-  delete cleanEnv.CLAUDECODE;
-  delete cleanEnv.CLAUDE_CODE;
-  cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? ""));
-  cleanEnv.NO_COLOR = "1";
-  cleanEnv.FORCE_COLOR = "0";
-  cleanEnv.CI = "1";
-  if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
+    // Clean env
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.CLAUDECODE;
+    delete cleanEnv.CLAUDE_CODE;
+    cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? ""));
+    cleanEnv.NO_COLOR = "1";
+    cleanEnv.FORCE_COLOR = "0";
+    cleanEnv.CI = "1";
+    if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
-  const workspace = prepareTaskWorkspace(task, workflow, db);
-  const hookCacheDir = join("data", "hook-cache");
+    workspace = prepareTaskWorkspace(task, workflow, db);
 
-  // Run before_run hooks (env setup, dependency install, etc.)
-  if (workflow?.beforeRun.length && !isContinue) {
-    const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd, { cacheDir: hookCacheDir });
-    const logBefore = db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
-    );
-    for (const hr of beforeResults) {
-      logBefore.run(
-        task.id,
-        formatWorkflowHookLog("before_run", hr, "FAILED", 500),
-        spawnStage,
-        agent.id,
+    // Run before_run hooks (env setup, dependency install, etc.)
+    if (workflow?.beforeRun.length && !isContinue) {
+      const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd, { cacheDir: hookCacheDir });
+      const logBefore = db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
       );
+      for (const hr of beforeResults) {
+        logBefore.run(
+          task.id,
+          formatWorkflowHookLog("before_run", hr, "FAILED", 500),
+          spawnStage,
+          agent.id,
+        );
+      }
+      if (beforeResults.some((result) => !result.ok)) {
+        throw createBeforeRunFailureError(beforeResults);
+      }
     }
-    if (beforeResults.some((result) => !result.ok)) {
-      throw createBeforeRunFailureError(beforeResults);
+
+    child = spawn(args[0], args.slice(1), {
+      cwd: workspace.cwd,
+      env: cleanEnv,
+      shell: process.platform === "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    activeProcesses.set(task.id, child);
+  } finally {
+    if (!isParallelTester && !isContinue) {
+      clearPendingSpawn(task.id);
     }
   }
-
-  const child = spawn(args[0], args.slice(1), {
-    cwd: workspace.cwd,
-    env: cleanEnv,
-    shell: process.platform === "win32",
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
   let terminatedBySpawnError = false;
-
-  activeProcesses.set(task.id, child);
 
   // Update task and agent status (skip for continue — already in_progress)
   if (!isContinue) {
@@ -2299,6 +2335,7 @@ export function killAgent(taskId: string, reason?: string): boolean {
     // already dead
   }
   activeProcesses.delete(taskId);
+  clearPendingSpawn(taskId);
 
   // Also kill any secondary reviewers running for this task
   const session = reviewerSessions.get(taskId);
