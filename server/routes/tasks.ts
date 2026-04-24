@@ -197,20 +197,6 @@ function nextTaskNumber(db: RuntimeContext["db"]): string {
   return `#${(row?.max_num ?? 0) + 1}`;
 }
 
-function markRefinementRevisionRequested(
-  db: RuntimeContext["db"],
-  taskId: string,
-  now: number,
-): void {
-  db.prepare(
-    `UPDATE tasks
-     SET refinement_revision_requested_at = ?,
-         refinement_revision_completed_at = NULL,
-         updated_at = ?
-     WHERE id = ?`,
-  ).run(now, now, taskId);
-}
-
 function fetchTaskById(
   db: RuntimeContext["db"],
   taskId: string,
@@ -221,6 +207,7 @@ function fetchTaskById(
 type TasksRouterDeps = {
   spawnAgent?: typeof spawnAgent;
   queueFeedbackAndRestart?: typeof queueFeedbackAndRestart;
+  _feedbackInFlight?: Set<string>;
 };
 
 export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {}): Router {
@@ -228,6 +215,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   const { db, ws, cache } = ctx;
   const taskSpawner = deps.spawnAgent ?? spawnAgent;
   const feedbackRestarter = deps.queueFeedbackAndRestart ?? queueFeedbackAndRestart;
+  const feedbackInFlight = deps._feedbackInFlight ?? new Set<string>();
 
   async function invalidateTaskCaches(): Promise<void> {
     await cache.invalidatePattern("tasks:*");
@@ -1109,130 +1097,157 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const { content } = parsed.data;
-    const now = Date.now();
-    const timestamp = new Date(now).toISOString();
-
-    // 1. Append to feedback file
-    const feedbackDir = join("data", "feedback");
-    mkdirSync(feedbackDir, { recursive: true });
-    const feedbackPath = join(feedbackDir, `${task.id}.md`);
-    appendFileSync(feedbackPath, `\n---\n## CEO Feedback (${timestamp})\n\n${content}\n`, "utf-8");
-
-    // 2. Save as message
-    const msgId = randomUUID();
-    db.prepare(
-      `INSERT INTO messages (id, sender_type, sender_id, content, message_type, task_id, created_at)
-       VALUES (?, 'user', NULL, ?, 'directive', ?, ?)`
-    ).run(msgId, content, task.id, now);
-
-    // 3. Add system log — persist the full directive so the Activity tab
-    // shows the whole instruction after a reload (previously we stored only
-    // the first 200 chars, which hid user intent when revising refinement
-    // plans). The /tasks/:id/logs endpoint caps per-message length at 4KB
-    // on fetch, so bounded payload is still enforced at read time.
-    const logMessage = `[CEO Feedback] ${content}`;
-    db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, logMessage);
-
-    // 4. Broadcast
-    const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(msgId);
-    ws.broadcast("message_new", message);
-    ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: logMessage }, { taskId: task.id });
-
-    // 5. Deliver feedback to agent
-    const previousStatus = task.status;
-    const isRefinementRevision = previousStatus === "refinement";
-
-    if (isRefinementRevision) {
-      markRefinementRevisionRequested(db, task.id, now);
+    if (feedbackInFlight.has(task.id)) {
+      return res.status(409).json({ error: "feedback_in_progress" });
     }
+    feedbackInFlight.add(task.id);
 
-    let refinementTransitionDone = false;
+    try {
+      const { content } = parsed.data;
+      const now = Date.now();
+      const timestamp = new Date(now).toISOString();
 
-    if (task.status === "in_progress" || (task.status === "refinement" && !task.completed_at)) {
-      // Running refinement: log the inbox round-trip before killing
-      if (task.status === "refinement") {
-        db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+      // File I/O outside transaction — if this fails, no DB mutation occurs
+      const feedbackDir = join("data", "feedback");
+      mkdirSync(feedbackDir, { recursive: true });
+      const feedbackPath = join(feedbackDir, `${task.id}.md`);
+      appendFileSync(feedbackPath, `\n---\n## CEO Feedback (${timestamp})\n\n${content}\n`, "utf-8");
+
+      const previousStatus = task.status;
+      const isRefinementRevision = previousStatus === "refinement";
+      const logMessage = `[CEO Feedback] ${content}`;
+      const msgId = randomUUID();
+      let refinementTransitionDone = false;
+      let freshCompletedAt: number | null = task.completed_at ?? null;
+
+      // --- TX1: core DB writes (message, log, revision marker, running-refinement round-trip) ---
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const current = db.prepare("SELECT status, completed_at FROM tasks WHERE id = ?").get(task.id) as { status: string; completed_at: number | null } | undefined;
+        if (!current) {
+          db.exec("ROLLBACK");
+          return res.status(404).json({ error: "not_found" });
+        }
+        if (current.status !== task.status) {
+          db.exec("ROLLBACK");
+          return res.status(409).json({ error: "status_changed", expected_status: task.status, current_status: current.status });
+        }
+        freshCompletedAt = current.completed_at;
+
+        db.prepare(
+          `INSERT INTO messages (id, sender_type, sender_id, content, message_type, task_id, created_at)
+           VALUES (?, 'user', NULL, ?, 'directive', ?, ?)`
+        ).run(msgId, content, task.id, now);
+
         db.prepare(
           "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-        ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
-        db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
-        refinementTransitionDone = true;
-      }
-      // Running task: kill + respawn with --resume
-      const restarted = feedbackRestarter(task.id, content, previousStatus);
-      if (restarted) {
+        ).run(task.id, logMessage);
+
         if (isRefinementRevision) {
-          const freshTask = fetchTaskById(db, task.id);
-          if (freshTask) {
-            ws.broadcast("task_update", freshTask);
+          db.prepare(
+            `UPDATE tasks
+             SET refinement_revision_requested_at = ?,
+                 refinement_revision_completed_at = NULL,
+                 updated_at = ?
+             WHERE id = ?`,
+          ).run(now, now, task.id);
+        }
+
+        if (task.status === "in_progress" || (task.status === "refinement" && !current.completed_at)) {
+          if (task.status === "refinement") {
+            db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+            db.prepare(
+              "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+            ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
+            db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
+            refinementTransitionDone = true;
           }
         }
-        return res.json({ sent: true, restarted, feedback_path: feedbackPath });
-      }
-      // Process already exited — fall through to idle-agent respawn below
-    }
 
-    // Agent process not running: respawn idle agent with --resume
-    const agentId = task.assigned_agent_id;
-    if (!agentId) {
-      if (isRefinementRevision) {
-        const freshTask = fetchTaskById(db, task.id);
-        if (freshTask) {
-          ws.broadcast("task_update", freshTask);
+        db.exec("COMMIT");
+      } catch (txErr) {
+        try { db.exec("ROLLBACK"); } catch { /* double-fault guard */ }
+        throw txErr;
+      }
+      // --- End TX1 ---
+
+      // Broadcasts after COMMIT
+      const message = db.prepare("SELECT * FROM messages WHERE id = ?").get(msgId);
+      ws.broadcast("message_new", message);
+      ws.broadcast("cli_output", { task_id: task.id, kind: "system", message: logMessage }, { taskId: task.id });
+
+      // Deliver feedback to running agent
+      if (task.status === "in_progress" || (task.status === "refinement" && !freshCompletedAt)) {
+        const restarted = feedbackRestarter(task.id, content, previousStatus);
+        if (restarted) {
+          if (isRefinementRevision) {
+            const freshTask = fetchTaskById(db, task.id);
+            if (freshTask) ws.broadcast("task_update", freshTask);
+          }
+          return res.json({ sent: true, restarted, feedback_path: feedbackPath });
         }
       }
-      return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
-    }
 
-    const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
-    if (!agent || agent.status === "working") {
-      if (isRefinementRevision) {
-        const freshTask = fetchTaskById(db, task.id);
-        if (freshTask) {
-          ws.broadcast("task_update", freshTask);
+      // Agent process not running: respawn idle agent with --resume
+      const agentId = task.assigned_agent_id;
+      if (!agentId) {
+        if (isRefinementRevision) {
+          const freshTask = fetchTaskById(db, task.id);
+          if (freshTask) ws.broadcast("task_update", freshTask);
         }
+        return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
       }
-      return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
-    }
 
-    // Refinement revise: transition through inbox so the stage_transition
-    // trigger logs both refinement→inbox and inbox→refinement with timestamps.
-    // Skip when the running-process path above already recorded the transition
-    // (queueFeedbackAndRestart returned false → fell through here).
-    if (previousStatus === "refinement") {
-      if (!refinementTransitionDone) {
-        db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
-        db.prepare(
-          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-        ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
-        db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
+      const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
+      if (!agent || agent.status === "working") {
+        if (isRefinementRevision) {
+          const freshTask = fetchTaskById(db, task.id);
+          if (freshTask) ws.broadcast("task_update", freshTask);
+        }
+        return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
       }
-    } else {
-      // Manual feedback-rework is an explicit user intent — reset the
-      // auto-respawn counter so a mid-rework crash gets a full retry budget.
-      db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?").run(now, task.id);
-      ws.broadcast("task_update", { id: task.id, status: "in_progress" });
-    }
 
-    const freshTask = fetchTaskById(db, task.id) as Task;
-    if (previousStatus === "refinement") {
-      ws.broadcast("task_update", freshTask);
-    }
-    taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
-      const handled = handleSpawnFailure(db, ws, task.id, err, {
-        cache,
-        source: "Feedback resume",
+      // --- TX2: idle-agent status updates ---
+      if (previousStatus === "refinement") {
+        if (!refinementTransitionDone) {
+          db.exec("BEGIN IMMEDIATE");
+          try {
+            db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+            db.prepare(
+              "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+            ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
+            db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
+            db.exec("COMMIT");
+          } catch (txErr) {
+            try { db.exec("ROLLBACK"); } catch { /* double-fault guard */ }
+            throw txErr;
+          }
+        }
+      } else {
+        db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?").run(now, task.id);
+        ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+      }
+      // --- End TX2 ---
+
+      const freshTask = fetchTaskById(db, task.id) as Task;
+      if (previousStatus === "refinement") {
+        ws.broadcast("task_update", freshTask);
+      }
+      taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
+        const handled = handleSpawnFailure(db, ws, task.id, err, {
+          cache,
+          source: "Feedback resume",
+        });
+        if (handled.handled) {
+          return;
+        }
+        console.error(`[tasks.feedback] spawnAgent failed for task ${task.id}:`, err);
       });
-      if (handled.handled) {
-        return;
-      }
-      console.error(`[tasks.feedback] spawnAgent failed for task ${task.id}:`, err);
-    });
 
-    res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
+      res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
+    } finally {
+      feedbackInFlight.delete(task.id);
+    }
   });
 
   // Interactive prompt response (ExitPlanMode / AskUserQuestion / text_input_request)

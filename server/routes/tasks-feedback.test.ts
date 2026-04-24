@@ -200,4 +200,114 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
       });
     }
   });
+
+  it("returns 409 when feedback is already in-flight for the same task", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const inFlight = new Set<string>([taskId]);
+    const { server, baseUrl } = await startServer(db, {
+      _feedbackInFlight: inFlight,
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 } as never),
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Concurrent request." }),
+      });
+      assert.equal(response.status, 409);
+      const body = await response.json() as { error: string };
+      assert.equal(body.error, "feedback_in_progress");
+
+      assert.deepEqual(getTransitions(db, taskId), []);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("transaction rolls back on DB failure — task not stuck in inbox", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    db.exec("DROP TABLE messages");
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 } as never),
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Should fail and rollback." }),
+      });
+      assert.equal(response.status, 500);
+
+      const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
+      assert.equal(task.status, "refinement", "task must not be stuck in inbox after rollback");
+
+      assert.deepEqual(getTransitions(db, taskId), []);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("concurrency guard is released after a failed request (next request succeeds)", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    db.exec("DROP TABLE messages");
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 } as never),
+    });
+
+    try {
+      const r1 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Will fail." }),
+      });
+      assert.equal(r1.status, 500);
+
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS messages (
+          id TEXT PRIMARY KEY, sender_type TEXT, sender_id TEXT,
+          content TEXT, message_type TEXT, task_id TEXT, created_at INTEGER
+        )`,
+      );
+
+      const r2 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Should succeed after guard release." }),
+      });
+      assert.equal(r2.status, 200, "guard should be released after failed request");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
