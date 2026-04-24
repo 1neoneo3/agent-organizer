@@ -327,6 +327,39 @@ describe("initializeDb", () => {
     assert.ok(originalIndex, "idx_task_logs_task should still exist for created_at queries");
   });
 
+  it("creates idx_task_logs_task_id index on task_logs(task_id, id DESC)", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
+      .all() as Array<{ name: string }>;
+    const taskIdIndex = indexes.find((idx) => idx.name === "idx_task_logs_task_id");
+    assert.ok(taskIdIndex, "idx_task_logs_task_id should exist");
+  });
+
+  it("planner picks idx_task_logs_task_id for task-scoped ORDER BY id queries", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const queries = [
+      "SELECT * FROM task_logs WHERE task_id = 'x' ORDER BY id DESC LIMIT 200 OFFSET 0",
+      "SELECT id, message FROM task_logs WHERE task_id = 'x' ORDER BY id DESC",
+      "SELECT kind, message, stage, agent_id, created_at FROM task_logs WHERE task_id = 'x' AND kind IN ('system', 'stderr') ORDER BY id DESC LIMIT 50",
+    ];
+
+    for (const sql of queries) {
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{ detail: string }>;
+      const usesTaskIdIndex = plan.some((row) =>
+        row.detail.includes("idx_task_logs_task_id"),
+      );
+      assert.ok(
+        usesTaskIdIndex,
+        `planner did not pick idx_task_logs_task_id for: ${sql}\nplan=${JSON.stringify(plan)}`,
+      );
+    }
+  });
+
   it("planner picks idx_task_logs_task_kind for kind-filtered ORDER BY id queries", async () => {
     const { initializeDb } = await import("./runtime.js");
     const db = initializeDb();
@@ -334,7 +367,6 @@ describe("initializeDb", () => {
     const queries = [
       "SELECT message FROM task_logs WHERE task_id = 'x' AND kind = 'system' ORDER BY id DESC LIMIT 1",
       "SELECT message FROM task_logs WHERE task_id = 'x' AND kind = 'assistant' ORDER BY id DESC LIMIT 10",
-      "SELECT kind, message FROM task_logs WHERE task_id = 'x' AND kind IN ('system', 'stderr') ORDER BY id DESC LIMIT 50",
       "SELECT message FROM task_logs WHERE task_id = 'x' AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC",
     ];
 
@@ -441,6 +473,27 @@ describe("initializeDb", () => {
     assert.equal(recent.length, 2);
     assert.equal(recent[0].message, "msg-3");
     assert.equal(recent[1].message, "msg-4");
+  });
+
+  it("drops the legacy temporary task_logs(task_id) index after promoting the stable hot-query index", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tmp_task_logs_task_only ON task_logs(task_id)");
+
+    const reinitialized = initializeDb();
+    const indexes = reinitialized
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
+      .all() as Array<{ name: string }>;
+
+    assert.ok(
+      indexes.some((idx) => idx.name === "idx_task_logs_task_id"),
+      "stable idx_task_logs_task_id should remain after re-initialization",
+    );
+    assert.ok(
+      !indexes.some((idx) => idx.name === "idx_tmp_task_logs_task_only"),
+      "legacy idx_tmp_task_logs_task_only should be dropped on initializeDb",
+    );
   });
 
   it("split-into-tasks children inherit both plan AND completed_at (regression: child refinement re-run)", async () => {
