@@ -60,6 +60,7 @@ const pendingFeedback = new Map<string, { message: string; previousStatus: strin
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
+const STRUCTURED_BLOCK_END = "---END REFINEMENT---";
 
 /**
  * Coordination state for a parallel review panel. When `triggerAutoReview`
@@ -166,13 +167,29 @@ export function registerTextInteractivePromptFromAssistantChunk(
   structuredBlockTracker: StructuredBlockTracker,
   now: number = Date.now(),
 ): { detected: false } | { detected: true; entry: { data: InteractivePromptData; createdAt: number } } {
+  const wasInsideStructuredBlock = structuredBlockTracker.insideBlock;
   structuredBlockTracker.feed(assistantText);
 
-  if (pendingInteractivePrompts.has(taskId) || structuredBlockTracker.insideBlock) {
+  if (pendingInteractivePrompts.has(taskId)) {
     return { detected: false };
   }
 
-  const textPrompt = detectTextInteractivePrompt(assistantText);
+  let textForDetection = assistantText;
+  if (wasInsideStructuredBlock) {
+    const endMarkerIdx = assistantText.indexOf(STRUCTURED_BLOCK_END);
+    if (endMarkerIdx === -1) {
+      return { detected: false };
+    }
+    // The chunk started inside a refinement block, so everything through the
+    // first end marker belongs to structured plan content rather than a prompt.
+    textForDetection = assistantText.slice(endMarkerIdx + STRUCTURED_BLOCK_END.length);
+  }
+
+  if (structuredBlockTracker.insideBlock) {
+    return { detected: false };
+  }
+
+  const textPrompt = detectTextInteractivePrompt(textForDetection);
   if (!textPrompt) {
     return { detected: false };
   }

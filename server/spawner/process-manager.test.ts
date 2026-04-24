@@ -1071,4 +1071,35 @@ describe("registerTextInteractivePromptFromAssistantChunk", () => {
 
     clearPendingInteractivePrompt(task.id, db);
   });
+
+  it("does not detect a prompt-like end chunk when the chunk closes an existing refinement block", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tprompt-end-marker-same-chunk" });
+    const tracker = new StructuredBlockTracker();
+
+    const startChunk = registerTextInteractivePromptFromAssistantChunk(
+      db,
+      task.id,
+      "---REFINEMENT PLAN---\n## 実装計画\n1. process-manager.ts の structured block 判定を修正する\n",
+      tracker,
+      30_000,
+    );
+    assert.deepStrictEqual(startChunk, { detected: false });
+
+    const endChunk = registerTextInteractivePromptFromAssistantChunk(
+      db,
+      task.id,
+      "対象ファイルを指定してください\n---END REFINEMENT---",
+      tracker,
+      30_001,
+    );
+    assert.deepStrictEqual(endChunk, { detected: false });
+
+    const row = db.prepare(
+      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
+    ).get(task.id) as { interactive_prompt_data: string | null };
+
+    assert.equal(getPendingInteractivePrompt(task.id), undefined);
+    assert.equal(row.interactive_prompt_data, null);
+  });
 });
