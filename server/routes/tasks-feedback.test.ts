@@ -114,6 +114,36 @@ function getRevisionTimestamps(db: DatabaseSync, taskId: string) {
   };
 }
 
+function getTaskUpdates(
+  events: Array<{ type: string; payload: unknown; options?: unknown }>,
+  taskId: string,
+): Array<Record<string, unknown>> {
+  return events
+    .filter((e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId)
+    .map((e) => e.payload as Record<string, unknown>);
+}
+
+function assertLatestPendingRevisionTaskUpdate(
+  events: Array<{ type: string; payload: unknown; options?: unknown }>,
+  taskId: string,
+): Record<string, unknown> {
+  const taskUpdates = getTaskUpdates(events, taskId);
+  assert.ok(taskUpdates.length > 0, "should broadcast task_update for this task");
+
+  const payload = taskUpdates[taskUpdates.length - 1];
+  assert.ok(
+    payload?.refinement_revision_requested_at !== null && payload?.refinement_revision_requested_at !== undefined,
+    "broadcast payload should include refinement_revision_requested_at",
+  );
+  assert.equal(
+    payload?.refinement_revision_completed_at,
+    null,
+    "broadcast payload should clear refinement_revision_completed_at while revision is pending",
+  );
+  assert.equal(payload?.status, "refinement");
+  return payload;
+}
+
 function getTaskStatus(db: DatabaseSync, taskId: string): string {
   const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(taskId) as { status: string };
   return row.status;
@@ -173,7 +203,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
 
     let queueCalls = 0;
     let spawnCalls = 0;
-    const { server, baseUrl } = await startServer(db, {
+    const { server, baseUrl, events } = await startServer(db, {
       queueFeedbackAndRestart: () => {
         queueCalls += 1;
         return true;
@@ -200,6 +230,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "__STAGE_TRANSITION__:refinement→inbox",
         "__STAGE_TRANSITION__:inbox→refinement",
       ]);
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -248,10 +279,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "__STAGE_TRANSITION__:refinement→inbox",
         "__STAGE_TRANSITION__:inbox→refinement",
       ]);
-      assert.ok(
-        events.some((event) => event.type === "task_update"),
-        "expected a task_update broadcast for the respawned refinement task",
-      );
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -568,16 +596,7 @@ describe("POST /tasks/:id/feedback — refinement revision timestamps", () => {
       });
       assert.equal(response.status, 200);
 
-      const taskUpdates = events.filter(
-        (e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId,
-      );
-      assert.ok(taskUpdates.length > 0, "should broadcast task_update for this task");
-
-      const payload = taskUpdates[taskUpdates.length - 1].payload as Record<string, unknown>;
-      assert.ok(
-        payload.refinement_revision_requested_at !== null && payload.refinement_revision_requested_at !== undefined,
-        "broadcast payload should include refinement_revision_requested_at",
-      );
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -601,7 +620,7 @@ describe("POST /tasks/:id/feedback — completed refinement task", () => {
     insertCompletedRefinementTask(db, taskId, agentId);
 
     let spawnCalls = 0;
-    const { server, baseUrl } = await startServer(db, {
+    const { server, baseUrl, events } = await startServer(db, {
       queueFeedbackAndRestart: () => { throw new Error("should not attempt in-process restart for completed refinement"); },
       spawnAgent: async () => { spawnCalls += 1; return { pid: 0 } as never; },
     });
@@ -624,6 +643,7 @@ describe("POST /tasks/:id/feedback — completed refinement task", () => {
       const ts = getRevisionTimestamps(db, taskId);
       assert.ok(ts.refinement_revision_requested_at !== null, "should stamp revision requested_at");
       assert.equal(ts.refinement_revision_completed_at, null, "should clear completed_at");
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -656,10 +676,7 @@ describe("POST /tasks/:id/feedback — completed refinement task", () => {
       assert.ok(ts.refinement_revision_requested_at !== null, "should stamp revision requested_at");
       assert.equal(ts.refinement_revision_completed_at, null, "should clear completed_at");
 
-      const taskUpdates = events.filter(
-        (e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId,
-      );
-      assert.ok(taskUpdates.length > 0, "should broadcast task_update for completed refinement without agent");
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -697,10 +714,7 @@ describe("POST /tasks/:id/feedback — completed refinement task", () => {
       assert.ok(ts.refinement_revision_requested_at !== null, "should stamp revision requested_at");
       assert.equal(ts.refinement_revision_completed_at, null, "should clear completed_at");
 
-      const taskUpdates = events.filter(
-        (e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId,
-      );
-      assert.ok(taskUpdates.length > 0, "should broadcast task_update for completed refinement with busy agent");
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -961,10 +975,7 @@ describe("POST /tasks/:id/feedback — refinement no-agent / busy-agent broadcas
       const ts = getRevisionTimestamps(db, taskId);
       assert.ok(ts.refinement_revision_requested_at !== null, "revision should be requested");
 
-      const taskUpdates = events.filter(
-        (e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId,
-      );
-      assert.ok(taskUpdates.length > 0, "should broadcast task_update even without agent");
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -996,16 +1007,7 @@ describe("POST /tasks/:id/feedback — refinement no-agent / busy-agent broadcas
       const body = await response.json() as { restarted: boolean };
       assert.equal(body.restarted, false);
 
-      const taskUpdates = events.filter(
-        (e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId,
-      );
-      assert.ok(taskUpdates.length > 0, "should broadcast task_update when agent is busy");
-
-      const payload = taskUpdates[taskUpdates.length - 1].payload as Record<string, unknown>;
-      assert.ok(
-        payload.refinement_revision_requested_at !== null,
-        "broadcast should include revision requested timestamp",
-      );
+      assertLatestPendingRevisionTaskUpdate(events, taskId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {

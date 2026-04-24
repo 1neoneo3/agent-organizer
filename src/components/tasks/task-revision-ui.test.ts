@@ -83,6 +83,25 @@ describe("getTaskRevisionUi", () => {
     );
   });
 
+  it("keeps the revising state visible even before the revised plan is persisted", () => {
+    assert.deepEqual(
+      getTaskRevisionUi(createTask({
+        refinement_revision_requested_at: 2_000,
+      })),
+      {
+        revisionBadge: {
+          label: "Revising",
+          color: "var(--status-progress)",
+          background: "var(--bg-tertiary)",
+        },
+        planBanner: {
+          label: "Revision Requested",
+          color: "var(--status-progress)",
+        },
+      },
+    );
+  });
+
   it("returns revised status when the latest revision has completed", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
@@ -99,6 +118,23 @@ describe("getTaskRevisionUi", () => {
         planBanner: {
           label: "Revised Plan Ready",
           color: "var(--status-done)",
+        },
+      },
+    );
+  });
+
+  it("ignores stale completed timestamps when no revision request exists", () => {
+    assert.deepEqual(
+      getTaskRevisionUi(createTask({
+        refinement_plan: "---REFINEMENT PLAN---\nPlan\n---END REFINEMENT---",
+        refinement_revision_requested_at: null,
+        refinement_revision_completed_at: 3_000,
+      })),
+      {
+        revisionBadge: null,
+        planBanner: {
+          label: "Implementation Plan Ready",
+          color: "var(--status-refinement)",
         },
       },
     );
