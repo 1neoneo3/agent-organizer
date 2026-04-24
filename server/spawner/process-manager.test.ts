@@ -841,4 +841,66 @@ describe("persistRefinementPlanExtraction", () => {
     assert.equal(log.stage, "refinement");
     assert.equal(log.agent_id, "agent-1");
   });
+
+  it("saves a canonical plan even when called after a non-zero exit (simulating kill-salvage)", () => {
+    // Regression for #468: when a refinement process is killed by
+    // interactive-prompt detection (false positive), exit code is
+    // non-zero but the plan may already be in the logs. The extraction
+    // + persistence path must still work.
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill-salvage", status: "refinement" });
+
+    const plan = "---REFINEMENT PLAN---\n## Plan\n1. Do X\n---END REFINEMENT---";
+    insertStagedAssistantLog(db, task.id, "refinement", plan, 2_000);
+
+    // Simulate what persistRefinementPlanFromCurrentRun does:
+    const extraction = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    persistRefinementPlanExtraction(db, task.id, extraction, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 3_000,
+    });
+
+    const row = db.prepare(
+      "SELECT refinement_plan, refinement_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_plan: string | null; refinement_completed_at: number | null };
+
+    assert.equal(row.refinement_plan, plan);
+    assert.equal(row.refinement_completed_at, 3_000);
+  });
+
+  it("does not overwrite a plan saved by kill-salvage when performFinalization runs", () => {
+    // After interactive-prompt kill, the plan is salvaged immediately.
+    // Then performFinalization also calls persistRefinementPlanFromCurrentRun.
+    // The second call must not destroy the saved plan.
+    const db = createDb();
+    const task = insertTask(db, { id: "tdouble-save", status: "refinement" });
+
+    const plan = "---REFINEMENT PLAN---\n## Plan\n- Step 1\n---END REFINEMENT---";
+    insertStagedAssistantLog(db, task.id, "refinement", plan, 2_000);
+
+    // First save (kill-salvage)
+    const extraction1 = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    persistRefinementPlanExtraction(db, task.id, extraction1, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 2_500,
+    });
+
+    // Second save (performFinalization) — same logs, same extraction
+    const extraction2 = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    persistRefinementPlanExtraction(db, task.id, extraction2, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 3_000,
+    });
+
+    const row = db.prepare(
+      "SELECT refinement_plan, refinement_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_plan: string | null; refinement_completed_at: number | null };
+
+    assert.equal(row.refinement_plan, plan);
+    // Second call overwrites the timestamp, which is fine — same plan.
+    assert.equal(row.refinement_completed_at, 3_000);
+  });
 });

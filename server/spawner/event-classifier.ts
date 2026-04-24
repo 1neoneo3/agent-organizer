@@ -149,15 +149,25 @@ function hasExplicitOptionsPrompt(text: string): boolean {
   );
 }
 
+export interface TextPromptDetectOptions {
+  stage?: string;
+}
+
 /**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
  *
  * This is a heuristic — it favors precision over recall to avoid false positives.
  * Only multi-sentence assistant messages are checked (short fragments are skipped).
+ *
+ * During the `refinement` stage, only the strongest signal (explicit
+ * question + numbered options) triggers detection. Refinement agents
+ * naturally use phrases like "please provide" or "could you specify" as
+ * part of their analysis prose, causing frequent false positives (#468).
  */
 export function detectTextInteractivePrompt(
-  assistantText: string
+  assistantText: string,
+  options?: TextPromptDetectOptions,
 ): InteractivePromptData | null {
   // Skip very short messages — unlikely to be a genuine input request.
   // Threshold is low (10) because CJK languages pack more meaning per character.
@@ -179,6 +189,12 @@ export function detectTextInteractivePrompt(
       questions: [{ question: assistantText }],
     };
   }
+
+  // During refinement, skip the weaker text-pattern heuristics. Only
+  // the explicit-options path above is strong enough — refinement
+  // agents routinely emit "please provide" / "could you specify" as
+  // part of their planning prose, which triggers false positives.
+  if (options?.stage === "refinement") return null;
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
     if (pattern.test(assistantText)) {

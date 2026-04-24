@@ -190,6 +190,61 @@ What do you want next?
     const result = detectTextInteractivePrompt(text);
     assert.strictEqual(result, null);
   });
+
+  // --- stage-aware suppression (refinement false-positive fix, #468) ---
+
+  it("suppresses weak heuristic patterns during refinement stage", () => {
+    const text = "Please provide the project directory path so I can analyze the codebase structure.";
+    assert.notStrictEqual(
+      detectTextInteractivePrompt(text),
+      null,
+      "should detect without stage context",
+    );
+    assert.strictEqual(
+      detectTextInteractivePrompt(text, { stage: "refinement" }),
+      null,
+      "should suppress during refinement — weak heuristic, not explicit options",
+    );
+  });
+
+  it("suppresses Japanese weak heuristic patterns during refinement stage", () => {
+    const text = "コードベースを分析するためにプロジェクトのディレクトリを指定してください。";
+    assert.notStrictEqual(
+      detectTextInteractivePrompt(text),
+      null,
+      "should detect without stage context",
+    );
+    assert.strictEqual(
+      detectTextInteractivePrompt(text, { stage: "refinement" }),
+      null,
+      "should suppress during refinement",
+    );
+  });
+
+  it("still detects explicit options prompt during refinement stage", () => {
+    const text = `分析が完了しました。次のどちらにしますか？
+
+1. 詳細な実装計画を作成
+2. 概要レベルの計画で進行`;
+    const result = detectTextInteractivePrompt(text, { stage: "refinement" });
+    assert.notStrictEqual(
+      result,
+      null,
+      "explicit options prompt should still fire during refinement",
+    );
+  });
+
+  it("does not suppress during non-refinement stages", () => {
+    const text = "Please provide the deployment target.";
+    assert.notStrictEqual(
+      detectTextInteractivePrompt(text, { stage: "in_progress" }),
+      null,
+    );
+    assert.notStrictEqual(
+      detectTextInteractivePrompt(text, { stage: "pr_review" }),
+      null,
+    );
+  });
 });
 
 describe("parseInteractivePrompt", () => {

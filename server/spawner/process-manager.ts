@@ -1269,6 +1269,9 @@ export async function spawnAgent(
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
           insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`, spawnStage, agent.id);
 
+          // Salvage any refinement plan already in the logs before killing.
+          if (isRefinementRun) persistRefinementPlanFromCurrentRun();
+
           // Kill the process so it can't auto-resolve the prompt
           interactivePromptKilled = true;
           try { child.kill("SIGTERM"); } catch { /* already dead */ }
@@ -1278,13 +1281,16 @@ export async function spawnAgent(
         // Text-based interactive prompt detection (for Codex/Gemini/any provider)
         // Only check "assistant" kind events — agent's direct text output
         if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
-          const textPrompt = detectTextInteractivePrompt(event.message);
+          const textPrompt = detectTextInteractivePrompt(event.message, { stage: spawnStage });
           if (textPrompt) {
             const entry = { data: textPrompt, createdAt: Date.now() };
             pendingInteractivePrompts.set(task.id, entry);
             persistPromptToDb(db, task.id, entry);
             ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
             insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`, spawnStage, agent.id);
+
+            // Salvage any refinement plan already in the logs before killing.
+            if (isRefinementRun) persistRefinementPlanFromCurrentRun();
 
             interactivePromptKilled = true;
             try { child.kill("SIGTERM"); } catch { /* already dead */ }
@@ -1639,7 +1645,7 @@ export async function spawnAgent(
       const finishTime = Date.now();
       const restoreStatus = options?.previousStatus ?? "in_progress";
 
-      if (isRefinementRun && code === 0) {
+      if (isRefinementRun) {
         persistRefinementPlanFromCurrentRun();
       }
 
@@ -1725,12 +1731,14 @@ export async function spawnAgent(
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
     let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewRun, workflow) : "cancelled";
 
-    // Extract and store refinement plan when refinement agent completes.
-    // The extraction helper scopes by stage and spawn-start timestamp so
-    // that neither late logs from a prior run nor implementation-stage
-    // noise can contaminate the extracted plan. See
-    // `extractRefinementPlanFromLogs` for the query contract.
-    if (isRefinementRun && code === 0) {
+    // Extract and store refinement plan when a refinement agent exits
+    // — regardless of exit code. The agent may have been killed by
+    // interactive-prompt detection (false positive) or crashed after
+    // emitting the plan. The extraction helper scopes by stage and
+    // spawn-start timestamp so stale/cross-stage logs cannot bleed in,
+    // and the fallback guard inside persistRefinementPlanExtraction
+    // prevents overwriting a valid plan with markerless tail.
+    if (isRefinementRun) {
       persistRefinementPlanFromCurrentRun();
     }
 
