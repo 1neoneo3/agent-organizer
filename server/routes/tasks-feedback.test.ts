@@ -374,6 +374,7 @@ describe("POST /tasks/:id/feedback — in_progress task paths", () => {
       });
     }
   });
+
 });
 
 describe("POST /tasks/:id/feedback — edge cases", () => {
@@ -652,6 +653,50 @@ describe("POST /tasks/:id/feedback — completed refinement task", () => {
     }
   });
 
+  it("respawns completed refinement with a reopened task payload and refinement resume metadata", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertCompletedRefinementTask(db, taskId, agentId);
+
+    let spawnedTaskStatus: string | undefined;
+    let spawnedTaskCompletedAt: number | null | undefined;
+    let spawnedPreviousStatus: string | undefined;
+    let spawnedPrompt: string | undefined;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => { throw new Error("should not attempt in-process restart for completed refinement"); },
+      spawnAgent: async (_db, _ws, _agent, task, options) => {
+        spawnedTaskStatus = task.status;
+        spawnedTaskCompletedAt = task.completed_at;
+        spawnedPreviousStatus = options?.previousStatus;
+        spawnedPrompt = options?.continuePrompt;
+        return { pid: 0 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise the finished plan with the new scope." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnedTaskStatus, "refinement");
+      assert.equal(spawnedTaskCompletedAt, null);
+      assert.equal(spawnedPreviousStatus, "refinement");
+      assert.equal(spawnedPrompt, "Revise the finished plan with the new scope.");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("stamps revision state and broadcasts task_update when a completed refinement task has no assigned agent", async () => {
     const db = await createDb();
     const taskId = randomUUID();
@@ -763,6 +808,50 @@ describe("POST /tasks/:id/feedback — done task idle-agent respawn", () => {
         events.some((e) => e.type === "task_update" && (e.payload as Record<string, unknown>).status === "in_progress"),
         "should broadcast task_update with in_progress status",
       );
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("respawns a done task with an in_progress payload and done resume metadata", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertTask(db, taskId, agentId, "done");
+
+    let spawnedTaskStatus: string | undefined;
+    let spawnedTaskCompletedAt: number | null | undefined;
+    let spawnedPreviousStatus: string | undefined;
+    let spawnedPrompt: string | undefined;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async (_db, _ws, _agent, task, options) => {
+        spawnedTaskStatus = task.status;
+        spawnedTaskCompletedAt = task.completed_at;
+        spawnedPreviousStatus = options?.previousStatus;
+        spawnedPrompt = options?.continuePrompt;
+        return { pid: 0 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Reopen with a smaller fix." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnedTaskStatus, "in_progress");
+      assert.equal(spawnedTaskCompletedAt, null);
+      assert.equal(spawnedPreviousStatus, "done");
+      assert.equal(spawnedPrompt, "Reopen with a smaller fix.");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -1015,4 +1104,5 @@ describe("POST /tasks/:id/feedback — refinement no-agent / busy-agent broadcas
       });
     }
   });
+
 });

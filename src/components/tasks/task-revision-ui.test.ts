@@ -123,6 +123,48 @@ describe("getTaskRevisionUi", () => {
     );
   });
 
+  it("keeps the revising state when the saved completion timestamp is older than the latest request", () => {
+    assert.deepEqual(
+      getTaskRevisionUi(createTask({
+        refinement_plan: "---REFINEMENT PLAN---\nPlan\n---END REFINEMENT---",
+        refinement_revision_requested_at: 3_000,
+        refinement_revision_completed_at: 2_000,
+      })),
+      {
+        revisionBadge: {
+          label: "Revising",
+          color: "var(--status-progress)",
+          background: "var(--bg-tertiary)",
+        },
+        planBanner: {
+          label: "Revision Requested",
+          color: "var(--status-progress)",
+        },
+      },
+    );
+  });
+
+  it("treats same-tick request and completion as revised when the updated plan is present", () => {
+    assert.deepEqual(
+      getTaskRevisionUi(createTask({
+        refinement_plan: "---REFINEMENT PLAN---\nPlan\n---END REFINEMENT---",
+        refinement_revision_requested_at: 4_000,
+        refinement_revision_completed_at: 4_000,
+      })),
+      {
+        revisionBadge: {
+          label: "Revised",
+          color: "var(--status-done)",
+          background: "var(--bg-tertiary)",
+        },
+        planBanner: {
+          label: "Revised Plan Ready",
+          color: "var(--status-done)",
+        },
+      },
+    );
+  });
+
   it("ignores stale completed timestamps when no revision request exists", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
