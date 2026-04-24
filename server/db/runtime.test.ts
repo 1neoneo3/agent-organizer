@@ -21,7 +21,7 @@ afterEach(() => {
 describe("initializeDb", () => {
   it("adds external task columns and seeds the auto dispatch setting", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     const externalSource = columns.find((column) => column.name === "external_source");
@@ -45,7 +45,7 @@ describe("initializeDb", () => {
 
   it("adds stage and agent_id columns to task_logs", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const columns = db.prepare("PRAGMA table_info(task_logs)").all() as Array<{ name: string }>;
     assert.ok(columns.find((c) => c.name === "stage"), "task_logs.stage should exist");
@@ -54,7 +54,7 @@ describe("initializeDb", () => {
 
   it("adds last_heartbeat_at column to tasks", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const columns = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     const heartbeat = columns.find((c) => c.name === "last_heartbeat_at");
@@ -63,7 +63,7 @@ describe("initializeDb", () => {
 
   it("applies performance-oriented PRAGMAs", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     // journal_mode is returned as a bare string, the rest as numeric codes.
     const jm = db.prepare("PRAGMA journal_mode").get() as { journal_mode: string };
@@ -96,7 +96,7 @@ describe("initializeDb", () => {
 
   it("creates the composite status/priority/created index on tasks", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const indexes = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tasks'")
@@ -123,10 +123,9 @@ describe("initializeDb", () => {
 
   it("auto-populates stage and agent_id on log insert via trigger", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
-    // Use a unique agent name since DB_PATH is frozen at module load and this
-    // db may be shared with other test cases.
+    // Use a unique agent name to avoid collisions when tests share a runner.
     const now = Date.now();
     const agentName = `test-agent-trigger-${now}`;
     db.prepare(
@@ -150,7 +149,7 @@ describe("initializeDb", () => {
 
   it("emits a stage transition marker when task status changes", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const now = Date.now();
     const agentName = `test-agent-transition-${now}`;
@@ -182,7 +181,7 @@ describe("initializeDb", () => {
     // provide `stage` explicitly; this test ensures the trigger leaves those
     // values alone rather than overwriting them.
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const now = Date.now();
     const agentName = `test-agent-stage-preserve-${now}`;
@@ -214,7 +213,7 @@ describe("initializeDb", () => {
     // after upgrade — they need refinement_completed_at stamped with
     // whatever timestamp the row still has.
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
     assert.ok(
@@ -324,7 +323,7 @@ describe("initializeDb", () => {
     // This test verifies at the DB/trigger level that performing the
     // round-trip exactly once produces exactly 2 transition markers.
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const now = Date.now();
     db.prepare(
@@ -349,7 +348,7 @@ describe("initializeDb", () => {
 
   it("creates idx_task_logs_task_kind index on task_logs(task_id, kind)", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const indexes = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
@@ -363,7 +362,7 @@ describe("initializeDb", () => {
 
   it("creates idx_task_logs_task_id index on task_logs(task_id, id DESC)", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const indexes = db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
@@ -374,7 +373,7 @@ describe("initializeDb", () => {
 
   it("planner picks idx_task_logs_task_id for task-scoped ORDER BY id queries", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const queries = [
       "SELECT * FROM task_logs WHERE task_id = 'x' ORDER BY id DESC LIMIT 200 OFFSET 0",
@@ -396,7 +395,7 @@ describe("initializeDb", () => {
 
   it("planner picks idx_task_logs_task_kind for kind-filtered ORDER BY id queries", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const queries = [
       "SELECT message FROM task_logs WHERE task_id = 'x' AND kind = 'system' ORDER BY id DESC LIMIT 1",
@@ -418,7 +417,7 @@ describe("initializeDb", () => {
 
   it("kind-filtered query returns rows in correct id order using the new index", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const now = Date.now();
     const agentName = `test-agent-idx-${now}`;
@@ -480,7 +479,7 @@ describe("initializeDb", () => {
 
   it("idx_task_logs_task_kind does not interfere with created_at range queries", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const now = Date.now();
     const agentName = `test-agent-range-${now}`;
@@ -511,11 +510,11 @@ describe("initializeDb", () => {
 
   it("drops the legacy temporary task_logs(task_id) index after promoting the stable hot-query index", async () => {
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     db.exec("CREATE INDEX IF NOT EXISTS idx_tmp_task_logs_task_only ON task_logs(task_id)");
 
-    const reinitialized = initializeDb();
+    const reinitialized = initializeDb(process.env.DB_PATH);
     const indexes = reinitialized
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
       .all() as Array<{ name: string }>;
@@ -540,7 +539,7 @@ describe("initializeDb", () => {
     // BOTH columns are populated, so the split route must stamp
     // completed_at alongside the inherited plan.
     const { initializeDb } = await import("./runtime.js");
-    const db = initializeDb();
+    const db = initializeDb(process.env.DB_PATH);
 
     const now = Date.now();
     db.prepare(

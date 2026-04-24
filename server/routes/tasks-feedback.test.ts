@@ -41,7 +41,7 @@ function createWsRecorder() {
 
 async function createDb(): Promise<DatabaseSync> {
   const { initializeDb } = await import("../db/runtime.js");
-  return initializeDb();
+  return initializeDb(TEST_DB_PATH);
 }
 
 async function startServer(
