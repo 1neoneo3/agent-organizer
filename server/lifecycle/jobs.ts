@@ -141,26 +141,21 @@ export function recoverInProgressOrphans(
     // manual feedback-rework (see routes/tasks.ts), so only truly stuck
     // tasks exhaust it.
     if (task.status === "in_progress") {
-      if (task.assigned_agent_id) {
-        db.prepare(
-          "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
-        ).run(now, task.assigned_agent_id);
-        ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
-      }
-
-      db.prepare(
-        "UPDATE tasks SET started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ?",
-      ).run(now, task.id);
-
       // Evaluate auto-respawn eligibility. A pending interactive prompt
       // that just timed out is cleared above and falls through here as a
       // normal parked task.
       const respawnDecision = evaluateAutoRespawn(db, task, maxAutoRespawn);
 
       if (respawnDecision.kind === "respawn") {
+        if (task.assigned_agent_id) {
+          db.prepare(
+            "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+          ).run(now, task.assigned_agent_id);
+          ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+        }
         const nextCount = task.auto_respawn_count + 1;
         db.prepare(
-          "UPDATE tasks SET auto_respawn_count = ?, updated_at = ? WHERE id = ?",
+          "UPDATE tasks SET started_at = NULL, completed_at = NULL, auto_respawn_count = ?, updated_at = ? WHERE id = ?",
         ).run(nextCount, now, task.id);
         db.prepare(
           "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
@@ -171,16 +166,38 @@ export function recoverInProgressOrphans(
         if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
 
         const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-        try {
-          spawnAgent(db, ws, respawnDecision.agent, freshTask, { cache });
-        } catch (error) {
+        // Fire-and-forget: spawnAgent is async (it awaits Explore Phase
+        // before spawning the main CLI process). Failures are logged so
+        // the next orphan-recovery tick retries.
+        spawnAgent(db, ws, respawnDecision.agent, freshTask, { cache }).catch((error) => {
           const msg = error instanceof Error ? error.message : String(error);
           db.prepare(
             "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
           ).run(task.id, `Orphan recovery: auto-respawn failed: ${msg}. Will retry on next tick.`);
-        }
+        });
         continue;
       }
+
+      // Dedupe: once a task is parked at in_progress with no respawn
+      // possible, subsequent orphan-recovery ticks (every 60s) should not
+      // re-emit the same park log or bump updated_at. We detect an
+      // already-parked task by inspecting its most recent system log.
+      const lastLog = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC LIMIT 1",
+      ).get(task.id) as { message: string } | undefined;
+      const alreadyParked = lastLog?.message.startsWith("Orphan recovery: parked at in_progress") ?? false;
+      if (alreadyParked) continue;
+
+      if (task.assigned_agent_id) {
+        db.prepare(
+          "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+        ).run(now, task.assigned_agent_id);
+        ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+      }
+
+      db.prepare(
+        "UPDATE tasks SET started_at = NULL, completed_at = NULL, updated_at = ? WHERE id = ?",
+      ).run(now, task.id);
 
       const parkReason =
         respawnDecision.kind === "budget_exhausted"

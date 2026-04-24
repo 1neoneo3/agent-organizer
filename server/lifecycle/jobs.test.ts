@@ -147,7 +147,7 @@ describe("recoverInProgressOrphans", () => {
     const spawnCalls: Array<{ taskId: string; agentId: string; autoRespawnCount: number }> = [];
     const fakeSpawn = ((_db: DatabaseSync, _ws: unknown, agent: { id: string }, task: { id: string; auto_respawn_count: number }) => {
       spawnCalls.push({ taskId: task.id, agentId: agent.id, autoRespawnCount: task.auto_respawn_count });
-      return { pid: 12345 };
+      return Promise.resolve({ pid: 12345 });
     }) as never;
 
     recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
@@ -183,7 +183,7 @@ describe("recoverInProgressOrphans", () => {
     let spawnCalls = 0;
     const fakeSpawn = (() => {
       spawnCalls += 1;
-      return { pid: 1 };
+      return Promise.resolve({ pid: 1 });
     }) as never;
 
     recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
@@ -202,6 +202,32 @@ describe("recoverInProgressOrphans", () => {
     assert.match(log.message, /3\/3/);
   });
 
+  it("does not re-log the park message on every tick once budget is exhausted", () => {
+    // Regression for: "Orphan recovery: parked at in_progress. Auto-respawn
+    // budget exhausted (3/3)" was being re-emitted every 60s even after the
+    // task was already parked, spamming the log.
+    insertTask(db, {
+      id: "t1",
+      status: "in_progress",
+      assigned_agent_id: "agent-1",
+      auto_respawn_count: 3,
+    });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+    const fakeSpawn = (() => Promise.resolve({ pid: 1 })) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    const parkLogs = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM task_logs WHERE task_id = 't1' AND kind = 'system' AND message LIKE 'Orphan recovery: parked at in_progress%'",
+      )
+      .get() as { n: number };
+    assert.equal(parkLogs.n, 1, "park message should only be logged once across repeated ticks");
+  });
+
   it("skips auto-respawn when the task has no assigned agent", () => {
     // Without an assigned agent the recovery path has nothing to drive, so
     // it parks quietly without incrementing the counter.
@@ -211,7 +237,7 @@ describe("recoverInProgressOrphans", () => {
     let spawnCalls = 0;
     const fakeSpawn = (() => {
       spawnCalls += 1;
-      return { pid: 1 };
+      return Promise.resolve({ pid: 1 });
     }) as never;
 
     recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
