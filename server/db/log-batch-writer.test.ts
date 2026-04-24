@@ -477,4 +477,117 @@ describe("LogBatchWriter", () => {
       writer.shutdown();
     });
   });
+
+  describe("FK violation isolation", () => {
+    it("does not lose entries from valid tasks when another task has FK violation", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db, "task-1");
+      seedTask(db, "task-2");
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "good from task-1", stage: null, agentId: null });
+      writer.enqueue({ taskId: "nonexistent-task", kind: "stdout", message: "FK fail", stage: null, agentId: null });
+      writer.enqueue({ taskId: "task-2", kind: "stdout", message: "good from task-2", stage: null, agentId: null });
+
+      writer.flush();
+
+      assert.equal(getLogCount(db, "task-1"), 1);
+      assert.equal(getLogCount(db, "task-2"), 1);
+
+      writer.shutdown();
+    });
+
+    it("isolates FK failure to the offending task_id only", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db, "task-1");
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "line 1", stage: null, agentId: null });
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "line 2", stage: null, agentId: null });
+      writer.enqueue({ taskId: "deleted-task", kind: "stdout", message: "orphan 1", stage: null, agentId: null });
+      writer.enqueue({ taskId: "deleted-task", kind: "stdout", message: "orphan 2", stage: null, agentId: null });
+
+      writer.flush();
+
+      assert.equal(getLogCount(db, "task-1"), 2);
+
+      writer.shutdown();
+    });
+  });
+
+  describe("flushForTask", () => {
+    it("flushes only entries for the specified task_id", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db, "task-1");
+      seedTask(db, "task-2");
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "t1 line", stage: null, agentId: null });
+      writer.enqueue({ taskId: "task-2", kind: "stdout", message: "t2 line", stage: null, agentId: null });
+      writer.enqueue({ taskId: "task-1", kind: "assistant", message: "t1 assist", stage: null, agentId: null });
+
+      assert.equal(writer.pendingCount, 3);
+
+      writer.flushForTask("task-1");
+
+      assert.equal(getLogCount(db, "task-1"), 2);
+      assert.equal(getLogCount(db, "task-2"), 0);
+      assert.equal(writer.pendingCount, 1);
+
+      writer.shutdown();
+      assert.equal(getLogCount(db, "task-2"), 1);
+    });
+
+    it("is a no-op when no entries exist for the given task_id", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db, "task-1");
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "t1", stage: null, agentId: null });
+      writer.flushForTask("task-999");
+
+      assert.equal(writer.pendingCount, 1);
+      assert.equal(getLogCount(db, "task-1"), 0);
+
+      writer.shutdown();
+    });
+
+    it("handles FK violation for the flushed task gracefully", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db, "task-1");
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "good", stage: null, agentId: null });
+      writer.enqueue({ taskId: "nonexistent", kind: "stdout", message: "bad", stage: null, agentId: null });
+
+      assert.doesNotThrow(() => writer.flushForTask("nonexistent"));
+      assert.equal(writer.pendingCount, 1);
+
+      writer.shutdown();
+      assert.equal(getLogCount(db, "task-1"), 1);
+    });
+  });
+
+  describe("singleton accessor", () => {
+    it("initLogBatchWriter sets the singleton and getLogBatchWriter returns it", async () => {
+      const { initLogBatchWriter, getLogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+
+      const writer = initLogBatchWriter(db, { batchSize: 10, flushMs: 60_000 });
+      assert.ok(writer);
+      assert.strictEqual(getLogBatchWriter(), writer);
+
+      writer.shutdown();
+    });
+  });
 });

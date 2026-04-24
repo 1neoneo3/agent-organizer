@@ -18,6 +18,7 @@ import { startAutoDispatchScheduler } from "./dispatch/auto-dispatcher.js";
 import { startGithubIssueSync } from "./integrations/github-sync.js";
 import { isPerfLogEnabled, startPerfReporter } from "./perf/metrics.js";
 import { initHeartbeatManager } from "./spawner/heartbeat-manager.js";
+import { initLogBatchWriter } from "./db/log-batch-writer.js";
 import {
   PORT,
   IS_DEV,
@@ -31,6 +32,7 @@ const db = initializeDb();
 const wsHub = createWsHub();
 const redis = createRedisClient();
 const cache = createCacheService(redis);
+const logBatchWriter = initLogBatchWriter(db);
 const ctx = { db, ws: wsHub, cache };
 
 const app = express();
@@ -115,16 +117,32 @@ startOrphanRecovery(db, wsHub, cache);
 startGithubIssueSync(db, wsHub, cache);
 startAutoDispatchScheduler(db, wsHub, cache);
 
+// Graceful shutdown: flush pending log writes before the process exits.
+function shutdownLogWriter(): void {
+  try { logBatchWriter.shutdown(); } catch { /* best-effort */ }
+}
+
+process.on("SIGINT", () => {
+  shutdownLogWriter();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  shutdownLogWriter();
+  process.exit(0);
+});
+
 // Fatal error safety net: log the incident and exit cleanly so the process
 // supervisor (systemd Restart=always) can bring us back up. Without this,
 // an unhandled exception inside a setTimeout / detached promise leaves the
 // parent supervisor blind to the failure.
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err);
+  shutdownLogWriter();
   process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
   console.error("[fatal] unhandledRejection:", reason);
+  shutdownLogWriter();
   process.exit(1);
 });
 

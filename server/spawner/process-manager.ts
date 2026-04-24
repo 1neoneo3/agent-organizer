@@ -41,6 +41,7 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import { recordDbLogInsertMs, recordStdoutChunkMs } from "../perf/metrics.js";
 import { getHeartbeatManager } from "./heartbeat-manager.js";
+import { getLogBatchWriter } from "../db/log-batch-writer.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
@@ -1288,9 +1289,22 @@ export async function spawnAgent(
       return true;
     });
 
-    // Persist all entries
+    // Persist all entries via the shared batch writer
     if (deduped.length > 0) {
-      insertLogBatch(deduped);
+      const batchWriter = getLogBatchWriter();
+      if (batchWriter) {
+        for (const entry of deduped) {
+          batchWriter.enqueue({
+            taskId: task.id,
+            kind: entry.kind,
+            message: entry.message,
+            stage: spawnStage,
+            agentId: agent.id,
+          });
+        }
+      } else {
+        insertLogBatch(deduped);
+      }
       runtimeOutputTail = appendRuntimeFailureTail(
         runtimeOutputTail,
         deduped.map((entry) => entry.message).join("\n"),
@@ -1310,7 +1324,12 @@ export async function spawnAgent(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
     logStream.write(`[stderr] ${text}`);
-    insertStderrStmt.run(task.id, text, spawnStage, agent.id);
+    const stderrBatchWriter = getLogBatchWriter();
+    if (stderrBatchWriter) {
+      stderrBatchWriter.enqueue({ taskId: task.id, kind: "stderr", message: text, stage: spawnStage, agentId: agent.id });
+    } else {
+      insertStderrStmt.run(task.id, text, spawnStage, agent.id);
+    }
     runtimeStderrTail = appendRuntimeFailureTail(runtimeStderrTail, text);
     ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
 
@@ -1405,6 +1424,12 @@ export async function spawnAgent(
     getHeartbeatManager()?.unregisterTask(task.id);
     activeProcesses.delete(task.id);
     logStream.end();
+
+    // Flush any buffered log entries for this task before any close handler
+    // logic reads task_logs. This covers all downstream consumers:
+    // refinement plan extraction, executed commands extraction, GitHub URL
+    // extraction, context reset log queries, etc.
+    try { getLogBatchWriter()?.flushForTask(task.id); } catch { /* best-effort */ }
 
     // AO Phase 3: the parallel tester never drives task status. It only
     // records a [PARALLEL_TEST:DONE] marker so stage-pipeline can skip
@@ -2048,14 +2073,27 @@ export function spawnSecondaryReviewer(
     }
 
     if (classified.length > 0) {
-      db.exec("BEGIN");
-      try {
+      const secBatchWriter = getLogBatchWriter();
+      if (secBatchWriter) {
         for (const entry of classified) {
-          insertLogStmt.run(task.id, entry.kind, entry.message, secondaryStage, agent.id);
+          secBatchWriter.enqueue({
+            taskId: task.id,
+            kind: entry.kind,
+            message: entry.message,
+            stage: secondaryStage,
+            agentId: agent.id,
+          });
         }
-        db.exec("COMMIT");
-      } catch {
-        db.exec("ROLLBACK");
+      } else {
+        db.exec("BEGIN");
+        try {
+          for (const entry of classified) {
+            insertLogStmt.run(task.id, entry.kind, entry.message, secondaryStage, agent.id);
+          }
+          db.exec("COMMIT");
+        } catch {
+          db.exec("ROLLBACK");
+        }
       }
       ws.broadcast(
         "cli_output",
@@ -2069,7 +2107,12 @@ export function spawnSecondaryReviewer(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
     logStream.write(`[stderr:${role}] ${text}`);
-    insertLogStmt.run(task.id, "stderr", text, secondaryStage, agent.id);
+    const secStderrWriter = getLogBatchWriter();
+    if (secStderrWriter) {
+      secStderrWriter.enqueue({ taskId: task.id, kind: "stderr", message: text, stage: secondaryStage, agentId: agent.id });
+    } else {
+      insertLogStmt.run(task.id, "stderr", text, secondaryStage, agent.id);
+    }
   });
 
   child.on("error", () => {
@@ -2092,6 +2135,9 @@ export function spawnSecondaryReviewer(
     clearTimeout(hardTimer);
     session.secondaries.delete(agent.id);
     logStream.end();
+
+    // Flush buffered log entries for this task before any post-close processing
+    try { getLogBatchWriter()?.flushForTask(task.id); } catch { /* best-effort */ }
 
     const finishTime = Date.now();
     db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(finishTime, agent.id);
