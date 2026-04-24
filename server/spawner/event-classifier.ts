@@ -190,6 +190,13 @@ function hasExplicitOptionsPrompt(text: string): boolean {
   );
 }
 
+function stripStructuredBlocks(text: string): string {
+  return text.replace(
+    /---REFINEMENT PLAN---[\s\S]*?---END REFINEMENT---/g,
+    "",
+  );
+}
+
 /**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
@@ -208,15 +215,24 @@ export function detectTextInteractivePrompt(
   // content. Check the start marker alone (end marker may not have
   // arrived yet in the same text). This runs before hasExplicitOptionsPrompt
   // so that plans containing "?" + numbered lists are not misclassified.
-  if (assistantText.includes(STRUCTURED_BLOCK_START)) return null;
+  if (assistantText.includes(STRUCTURED_BLOCK_START) && !assistantText.includes(STRUCTURED_BLOCK_END)) {
+    return null;
+  }
+
+  // When a single assistant message contains a complete structured block and
+  // additional trailing text, ignore the plan body but continue checking the
+  // remainder. This preserves refinement-plan false-positive protection
+  // without swallowing a real prompt appended after the block ends.
+  const textForDetection = stripStructuredBlocks(assistantText).trim();
+  if (!textForDetection) return null;
 
   // Strong override: an explicit "question + 2+ numbered options" block
   // is unambiguously a prompt. It wins over the completion-summary
   // guard because agents sometimes finish their report with a verdict
   // tag AND a final "what next?" decision list in the same message.
-  const explicitOptions = hasExplicitOptionsPrompt(assistantText);
+  const explicitOptions = hasExplicitOptionsPrompt(textForDetection);
 
-  if (!explicitOptions && looksLikeCompletionSummary(assistantText)) return null;
+  if (!explicitOptions && looksLikeCompletionSummary(textForDetection)) return null;
 
   if (explicitOptions) {
     return {
@@ -228,7 +244,7 @@ export function detectTextInteractivePrompt(
   }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
-    if (pattern.test(assistantText)) {
+    if (pattern.test(textForDetection)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",
@@ -239,7 +255,7 @@ export function detectTextInteractivePrompt(
   }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_EN) {
-    if (pattern.test(assistantText)) {
+    if (pattern.test(textForDetection)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",

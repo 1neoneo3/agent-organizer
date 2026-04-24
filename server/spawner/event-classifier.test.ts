@@ -285,6 +285,37 @@ agent-organizer の text-based interactive prompt detection が refinement plan 
     assert.strictEqual(result, null);
   });
 
+  it("detects a real prompt appended after a complete refinement plan in the same message", () => {
+    const text = `---REFINEMENT PLAN---
+## 背景
+この plan 本文は Input Required 扱いしない。
+## 実装計画
+1. 判定を調整
+2. テスト追加
+---END REFINEMENT---
+
+対象ファイルのパスを指定してください。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects explicit options appended after a complete refinement plan in the same message", () => {
+    const text = `---REFINEMENT PLAN---
+## Plan
+1. Update classifier
+2. Add regression tests
+---END REFINEMENT---
+
+What would you like me to do next?
+1) Commit and push
+2) Add more tests
+3) Stop here`;
+    const result = detectTextInteractivePrompt(text);
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
   // --- Ensure no over-suppression ---
 
   it("still detects JP prompt when text has no refinement markers", () => {

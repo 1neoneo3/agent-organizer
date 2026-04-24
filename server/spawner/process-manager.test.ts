@@ -977,4 +977,12 @@ describe("streaming refinement plan suppresses text-based detection", () => {
     assert.strictEqual(result.detected, true);
     assert.strictEqual(result.detectedAt, 1);
   });
+
+  it("scenario 12: single assistant chunk with full plan plus trailing prompt is detected after stripping the plan body", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## Plan\n1. Step A\n---END REFINEMENT---\n\n対象ファイルのパスを指定してください。",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 0);
+  });
 });
