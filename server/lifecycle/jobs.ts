@@ -10,6 +10,17 @@ import type { Agent, Task } from "../types/runtime.js";
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 const pendingOrphanRespawns = new Set<string>();
 
+// Agent roles that must never be auto-respawned as implementers.
+// When orphan recovery picks up an in_progress task whose assigned_agent_id
+// still points at a reviewer/QA agent (legacy data or race condition), the
+// respawn is skipped so the task parks and waits for manual or dispatcher
+// intervention instead of running implementation work on the wrong agent.
+const NON_IMPLEMENTER_ROLES: ReadonlySet<string> = new Set([
+  "code_reviewer",
+  "security_reviewer",
+  "tester",
+]);
+
 // Orphan recovery thresholds for stages where an auto-agent should always be
 // running (auto-reviewer, auto-qa, auto-test-gen). Tasks
 // whose last_heartbeat_at is older than this are treated as stuck.
@@ -227,7 +238,9 @@ export function recoverInProgressOrphans(
       const parkReason =
         respawnDecision.kind === "budget_exhausted"
           ? `Orphan recovery: parked at in_progress. Auto-respawn budget exhausted (${task.auto_respawn_count}/${maxAutoRespawn}). Run the task again to resume.`
-          : "Orphan recovery: parked at in_progress (did not regress to inbox). Run the task again to resume.";
+          : respawnDecision.kind === "wrong_role"
+            ? `Orphan recovery: parked at in_progress. Assigned agent has non-implementer role "${respawnDecision.agentRole}" — skipped auto-respawn. Run the task with an implementer agent to resume.`
+            : "Orphan recovery: parked at in_progress (did not regress to inbox). Run the task again to resume.";
       db.prepare(
         "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
       ).run(task.id, parkReason);
@@ -330,6 +343,7 @@ function hasActive(active: Map<string, unknown> | Set<string>, id: string): bool
 type AutoRespawnDecision =
   | { kind: "respawn"; agent: Agent }
   | { kind: "budget_exhausted" }
+  | { kind: "wrong_role"; agentRole: string }
   | { kind: "skip" };
 
 /**
@@ -348,7 +362,7 @@ type AutoRespawnDecision =
  */
 function evaluateAutoRespawn(
   db: DatabaseSync,
-  task: { id: string; assigned_agent_id: string | null; auto_respawn_count: number },
+  task: { id: string; status: string; assigned_agent_id: string | null; auto_respawn_count: number },
   maxAutoRespawn: number,
 ): AutoRespawnDecision {
   if (task.auto_respawn_count >= maxAutoRespawn) {
@@ -362,6 +376,14 @@ function evaluateAutoRespawn(
   ).get(task.assigned_agent_id) as Agent | undefined;
   if (!agent || agent.status !== "idle") {
     return { kind: "skip" };
+  }
+  // Guard: non-implementer agents (reviewer, QA, tester) must not be
+  // respawned as implementers. This can happen when assigned_agent_id
+  // was overwritten by a reviewer spawn before the fix in spawnAgent,
+  // or through a race condition. Skip so the task parks and waits for
+  // dispatcher / manual intervention.
+  if (task.status === "in_progress" && agent.role && NON_IMPLEMENTER_ROLES.has(agent.role)) {
+    return { kind: "wrong_role", agentRole: agent.role };
   }
   return { kind: "respawn", agent };
 }
