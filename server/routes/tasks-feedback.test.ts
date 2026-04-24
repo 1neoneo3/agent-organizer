@@ -487,6 +487,72 @@ describe("POST /tasks/:id/feedback — validation and edge cases", () => {
       });
     }
   });
+
+  it("returns 400 for oversized content without persisting feedback", async () => {
+    const db = await createDb();
+    const taskId = randomUUID();
+    insertTask(db, taskId, null, "in_progress");
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 } as never),
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "x".repeat(10_001) }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(existsSync(join("data", "feedback", `${taskId}.md`)), false);
+
+      const messageCount = db.prepare("SELECT COUNT(*) AS count FROM messages WHERE task_id = ?").get(taskId) as { count: number };
+      assert.equal(messageCount.count, 0);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("returns 409 for unsupported statuses without side effects", async () => {
+    const unsupportedStatuses = ["inbox", "test_generation", "qa_testing", "pr_review"] as const;
+
+    for (const status of unsupportedStatuses) {
+      const db = await createDb();
+      const agentId = randomUUID();
+      const taskId = randomUUID();
+      insertAgent(db, agentId, "idle");
+      insertTask(db, taskId, agentId, status);
+      const { server, baseUrl } = await startServer(db, {
+        queueFeedbackAndRestart: () => false,
+        spawnAgent: async () => ({ pid: 1234 } as never),
+      });
+
+      try {
+        const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: `feedback for ${status}` }),
+        });
+        assert.equal(response.status, 409);
+
+        const body = await response.json() as { error: string; status: string };
+        assert.equal(body.error, "feedback_not_allowed");
+        assert.equal(body.status, status);
+
+        assert.equal(existsSync(join("data", "feedback", `${taskId}.md`)), false);
+        const messageCount = db.prepare("SELECT COUNT(*) AS count FROM messages WHERE task_id = ?").get(taskId) as { count: number };
+        assert.equal(messageCount.count, 0);
+      } finally {
+        db.close();
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+    }
+  });
 });
 
 describe("POST /tasks/:id/feedback — in_progress tasks", () => {

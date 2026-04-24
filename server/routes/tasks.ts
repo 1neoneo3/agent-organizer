@@ -76,6 +76,19 @@ const UpdateTaskSchema = z.object({
   settings_overrides: SettingsOverridesPatch,
 });
 
+const FEEDBACK_CONTENT_MAX_CHARS = 10_000;
+const FEEDBACK_ALLOWED_STATUSES = new Set<Task["status"]>([
+  "refinement",
+  "in_progress",
+  "human_review",
+  "done",
+  "cancelled",
+]);
+
+const FeedbackSchema = z.object({
+  content: z.string().trim().min(1).max(FEEDBACK_CONTENT_MAX_CHARS),
+});
+
 
 /**
  * Resolve the repository_url for a task at write time. Precedence:
@@ -235,6 +248,29 @@ function fetchTaskById(
   taskId: string,
 ): Task | undefined {
   return db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
+}
+
+function isFeedbackAllowedStatus(status: Task["status"]): boolean {
+  return FEEDBACK_ALLOWED_STATUSES.has(status);
+}
+
+function withImmediateTransaction<T>(
+  db: RuntimeContext["db"],
+  work: () => T,
+): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = work();
+    db.exec("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Double-fault guard: preserve the original failure.
+    }
+    throw error;
+  }
 }
 
 type TasksRouterDeps = {
@@ -1126,8 +1162,11 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
-    const schema = z.object({ content: z.string().trim().min(1) });
-    const parsed = schema.safeParse(req.body);
+    if (!isFeedbackAllowedStatus(task.status)) {
+      return res.status(409).json({ error: "feedback_not_allowed", status: task.status });
+    }
+
+    const parsed = FeedbackSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     if (feedbackInFlight.has(task.id)) {
@@ -1158,15 +1197,12 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       let freshCompletedAt: number | null = task.completed_at ?? null;
 
       // --- TX1: core DB writes (message, log, revision marker, running-refinement round-trip) ---
-      db.exec("BEGIN IMMEDIATE");
-      try {
+      withImmediateTransaction(db, () => {
         const current = db.prepare("SELECT status, completed_at FROM tasks WHERE id = ?").get(task.id) as { status: string; completed_at: number | null } | undefined;
         if (!current) {
-          db.exec("ROLLBACK");
           throw new RouteResponseError(404, { error: "not_found" });
         }
         if (current.status !== task.status) {
-          db.exec("ROLLBACK");
           throw new RouteResponseError(409, { error: "status_changed", expected_status: task.status, current_status: current.status });
         }
         freshCompletedAt = current.completed_at;
@@ -1200,13 +1236,8 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
             refinementTransitionDone = true;
           }
         }
-
-        db.exec("COMMIT");
         shouldRestoreFeedbackFile = false;
-      } catch (txErr) {
-        try { db.exec("ROLLBACK"); } catch { /* double-fault guard */ }
-        throw txErr;
-      }
+      });
       // --- End TX1 ---
 
       // Broadcasts after COMMIT
@@ -1247,15 +1278,12 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
       // --- TX2: idle-agent status updates with a fresh status guard ---
       let freshTask: Task | undefined;
-      db.exec("BEGIN IMMEDIATE");
-      try {
+      withImmediateTransaction(db, () => {
         const current = fetchTaskById(db, task.id);
         if (!current) {
-          db.exec("ROLLBACK");
           throw new RouteResponseError(404, { error: "not_found" });
         }
         if (current.status !== task.status) {
-          db.exec("ROLLBACK");
           throw new RouteResponseError(409, { error: "status_changed", expected_status: task.status, current_status: current.status });
         }
 
@@ -1274,11 +1302,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         }
 
         freshTask = fetchTaskById(db, task.id);
-        db.exec("COMMIT");
-      } catch (txErr) {
-        try { db.exec("ROLLBACK"); } catch { /* double-fault guard */ }
-        throw txErr;
-      }
+      });
       // --- End TX2 ---
 
       if (freshTask) {
