@@ -47,4 +47,18 @@ export function isUuidLikeTitle(title: string): boolean {
   return UUID_RE.test(title);
 }
 
+/**
+ * Existing corrupted rows have already lost the original human title, so the
+ * best remediation we can do at startup is replace the UUID placeholder with a
+ * stable, readable fallback tied to the repaired task number.
+ */
+export function buildRecoveredTaskTitle(
+  taskNumber: string | null,
+  taskId: string,
+): string {
+  return taskNumber
+    ? `Recovered task ${taskNumber}`
+    : `Recovered task ${taskId.slice(0, 8)}`;
+}
+
 export { VALID_TASK_NUMBER_SQL };

@@ -377,6 +377,13 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const updates = parsed.data;
     const existingTask = existing as unknown as Task;
 
+    if (updates.title !== undefined && isUuidLikeTitle(updates.title)) {
+      return res.status(400).json({
+        error: "invalid_title",
+        message: "Title must not be a machine-generated UUID placeholder",
+      });
+    }
+
     // Validate + apply settings_overrides patch. We merge (not replace)
     // so callers can flip a single toggle without having to round-trip
     // the full overrides blob. `null` value removes a key (see

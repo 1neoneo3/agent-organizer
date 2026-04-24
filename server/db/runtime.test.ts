@@ -568,6 +568,37 @@ describe("initializeDb", () => {
     assert.ok(num2 > num1, "repaired numbers must be sequential (ordered by created_at)");
   });
 
+  it("rewrites depends_on references that pointed at repaired broken task numbers", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("dep-valid-10", "Valid dependency", "done", "small", "#10", now - 3000, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("dep-broken", "Broken dependency", "done", "small", "#40b0c5", now - 2000, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, task_size, task_number, depends_on, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run("dep-child", "Child task", "inbox", "small", "#11", JSON.stringify(["#40b0c5", "#10"]), now - 1000, now);
+
+    const reinitialized = initializeDb();
+    const repairedParent = reinitialized
+      .prepare("SELECT task_number FROM tasks WHERE id = ?")
+      .get("dep-broken") as { task_number: string };
+    const repairedChild = reinitialized
+      .prepare("SELECT depends_on FROM tasks WHERE id = ?")
+      .get("dep-child") as { depends_on: string | null };
+
+    assert.notEqual(repairedParent.task_number, "#40b0c5");
+    assert.equal(
+      repairedChild.depends_on,
+      JSON.stringify([repairedParent.task_number, "#10"]),
+      "depends_on should follow the repaired task_number mapping",
+    );
+  });
+
   it("repairBrokenTaskNumbers is idempotent — rerunning does not change already-repaired values", async () => {
     const { initializeDb } = await import("./runtime.js");
     const db = initializeDb();
@@ -585,6 +616,35 @@ describe("initializeDb", () => {
 
     assert.equal(after1, after2, "second repair run must not change an already-repaired value");
     assert.match(after1, /^#\d+$/, "repaired value must be valid decimal");
+  });
+
+  it("repairs UUID placeholder titles after task_number remediation", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      "task-title-corrupt",
+      "Task 40b0c57e-1234-5678-9abc-def012345678",
+      "done",
+      "small",
+      "#082098",
+      now,
+      now,
+    );
+
+    const repaired = initializeDb()
+      .prepare("SELECT title, task_number FROM tasks WHERE id = ?")
+      .get("task-title-corrupt") as { title: string; task_number: string };
+
+    assert.match(repaired.task_number, /^#\d+$/, "startup repair must first normalize task_number");
+    assert.equal(
+      repaired.title,
+      `Recovered task ${repaired.task_number}`,
+      "UUID placeholder titles should be rewritten to a readable fallback tied to the repaired task_number",
+    );
   });
 
   it("split-into-tasks children inherit both plan AND completed_at (regression: child refinement re-run)", async () => {
