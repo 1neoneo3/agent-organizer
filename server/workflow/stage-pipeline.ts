@@ -442,8 +442,8 @@ export function determineNextStage(
     const passed = logs.some((l) =>
       l.message.includes("[SELF_REVIEW:PASS]"),
     );
-    if (passed) return nextStage("pr_review", activeStages);
-    return nextStage("in_progress", activeStages);
+    if (passed) return nextStage("in_progress", activeStages);
+    return "in_progress";
   }
 
   // Implementation completed — check if resuming from a failed stage

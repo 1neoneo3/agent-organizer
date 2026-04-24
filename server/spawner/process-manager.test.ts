@@ -504,7 +504,7 @@ describe("determineCompletionStatus", () => {
     insertStdoutLog(db, task.id, "[SELF_REVIEW:PASS]", 5_000);
 
     const status = determineCompletionStatus(db, task, true);
-    assert.equal(status, "pr_review");
+    assert.equal(status, "in_progress");
   });
 
   it("ignores review markers that only appear inside stdout tool results", () => {
