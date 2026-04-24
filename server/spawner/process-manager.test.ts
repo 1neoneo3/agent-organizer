@@ -1344,4 +1344,56 @@ describe("persistRefinementPlanExtraction", () => {
 
     assert.equal(row.refinement_revision_completed_at, null, "must not stamp when no revision was requested");
   });
+
+  it("stamps revision and saves plan in fallback case when no existing plan and revision was requested", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tfallback-noexist-rev", status: "refinement" });
+    db.prepare(
+      `UPDATE tasks
+       SET refinement_plan = NULL,
+           refinement_completed_at = NULL,
+           refinement_revision_requested_at = 3000,
+           refinement_revision_completed_at = NULL
+       WHERE id = ?`,
+    ).run(task.id);
+
+    persistRefinementPlanExtraction(db, task.id, { kind: "fallback", plan: "markerless prose" }, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 5_000,
+    });
+
+    const row = db.prepare(
+      "SELECT refinement_plan, refinement_revision_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_plan: string | null; refinement_revision_completed_at: number | null };
+
+    assert.equal(row.refinement_plan, "markerless prose", "plan saved as fallback");
+    assert.equal(row.refinement_revision_completed_at, 5_000, "revision stamped as completed");
+  });
+
+  it("does not stamp refinement_revision_completed_at for plan kind when no revision was requested", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan-no-rev", status: "refinement" });
+    db.prepare(
+      `UPDATE tasks
+       SET refinement_plan = NULL,
+           refinement_completed_at = NULL,
+           refinement_revision_requested_at = NULL,
+           refinement_revision_completed_at = NULL
+       WHERE id = ?`,
+    ).run(task.id);
+
+    const plan = "---REFINEMENT PLAN---\n## Plan\n1. Do X\n---END REFINEMENT---";
+    persistRefinementPlanExtraction(db, task.id, { kind: "plan", plan }, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 5_000,
+    });
+
+    const row = db.prepare(
+      "SELECT refinement_revision_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_revision_completed_at: number | null };
+
+    assert.equal(row.refinement_revision_completed_at, null, "must not stamp when no revision was requested");
+  });
 });
