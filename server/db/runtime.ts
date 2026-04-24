@@ -57,6 +57,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddMultiUrls(db);
   migrateAddAutoRespawnCount(db);
   migrateAddRefinementCompletedAt(db);
+  migrateAddRefinementRevisionTracking(db);
   migrateAddPlannedFiles(db);
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
@@ -364,6 +365,21 @@ function migrateAddRefinementCompletedAt(db: DatabaseSync): void {
       AND refinement_plan IS NOT NULL
       AND refinement_plan <> ''
   `);
+}
+
+function migrateAddRefinementRevisionTracking(db: DatabaseSync): void {
+  // Track the latest plan revise request separately from the canonical
+  // refinement completion timestamp so the UI can tell:
+  //   1. a revise was requested and is still pending
+  //   2. the revised plan has already been produced
+  // without opening the task detail.
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "refinement_revision_requested_at")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN refinement_revision_requested_at INTEGER");
+  }
+  if (!cols.some((c) => c.name === "refinement_revision_completed_at")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN refinement_revision_completed_at INTEGER");
+  }
 }
 
 function migrateAddRefinementStage(db: DatabaseSync): void {

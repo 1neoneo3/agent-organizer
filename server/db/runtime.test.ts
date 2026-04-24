@@ -221,6 +221,14 @@ describe("initializeDb", () => {
       cols.some((c) => c.name === "refinement_completed_at"),
       "tasks.refinement_completed_at column should exist",
     );
+    assert.ok(
+      cols.some((c) => c.name === "refinement_revision_requested_at"),
+      "tasks.refinement_revision_requested_at column should exist",
+    );
+    assert.ok(
+      cols.some((c) => c.name === "refinement_revision_completed_at"),
+      "tasks.refinement_revision_completed_at column should exist",
+    );
 
     // Insert a row mimicking a pre-migration task (completed refinement
     // but no refinement_completed_at). NULL the column to simulate the

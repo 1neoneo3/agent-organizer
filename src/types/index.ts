@@ -28,6 +28,9 @@ export interface Task {
   depends_on: string | null;
   result: string | null;
   refinement_plan: string | null;
+  refinement_completed_at?: number | null;
+  refinement_revision_requested_at?: number | null;
+  refinement_revision_completed_at?: number | null;
   pr_url: string | null;
   review_count: number;
   directive_id: string | null;

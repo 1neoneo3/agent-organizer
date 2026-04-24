@@ -10,6 +10,7 @@ import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/in
 import { buildAgentViewState } from "./agent-view.js";
 import { getResumeActionState } from "./task-resume.js";
 import { formatModelName } from "../../formatModelName.js";
+import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 
 /**
  * Layout mode for the task detail view.
@@ -158,6 +159,7 @@ export function TaskDetailModal({
   const idleAgents = agentView.idleAgents;
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
   const roleLabel = agent ? agentView.roleLabelById.get(agent.id) ?? null : null;
+  const feedbackUi = getTaskFeedbackUi(task.status);
 
   const handleSendFeedback = async () => {
     if (!feedbackText.trim()) return;
@@ -803,12 +805,33 @@ export function TaskDetailModal({
             </div>
           )}
 
-          {/* CEO Feedback */}
-          {task.status === "in_progress" && (
+          {/* Feedback */}
+          {feedbackUi && (
             <div style={{ marginBottom: "16px" }}>
               <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
-                Feedback
+                {feedbackUi.detailHeading}
               </h3>
+              <p style={{ fontSize: "12px", color: "var(--text-secondary)", margin: "0 0 8px" }}>
+                {feedbackUi.detailDescription}
+              </p>
+              {task.status === "human_review" && (
+                <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                  <button
+                    onClick={async () => { await approveTask(task.id); }}
+                    className="eb-btn eb-btn--primary"
+                    style={{ fontSize: "12px" }}
+                  >
+                    Approve Review
+                  </button>
+                  <button
+                    onClick={async () => { await rejectTask(task.id); }}
+                    className="eb-btn eb-btn--danger"
+                    style={{ fontSize: "12px" }}
+                  >
+                    Reject Review
+                  </button>
+                </div>
+              )}
               <div style={{ display: "flex", gap: "8px" }}>
                 <textarea
                   style={{
@@ -819,13 +842,13 @@ export function TaskDetailModal({
                     padding: "8px 12px",
                     fontSize: "13px",
                     color: "var(--text-primary)",
-                    height: "64px",
+                    height: task.status === "human_review" ? "84px" : "64px",
                     resize: "none",
                     outline: "none",
                   }}
                   value={feedbackText}
                   onChange={(e) => setFeedbackText(e.target.value)}
-                  placeholder="Send feedback to the running agent..."
+                  placeholder={feedbackUi.detailPlaceholder}
                 />
                 <button
                   onClick={handleSendFeedback}
@@ -833,7 +856,7 @@ export function TaskDetailModal({
                   className="eb-btn eb-btn--primary"
                   style={{ alignSelf: "flex-end", fontSize: "12px", opacity: (!feedbackText.trim() || sendingFeedback) ? 0.5 : 1 }}
                 >
-                  {sendingFeedback ? "..." : "Send"}
+                  {sendingFeedback ? "..." : feedbackUi.detailSendLabel}
                 </button>
               </div>
             </div>

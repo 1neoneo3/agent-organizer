@@ -6,6 +6,8 @@ import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-time.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
+import { getRefinementRevisionState } from "./task-refinement-state.js";
+import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 
 const SIZE_LABEL: Record<string, string> = {
   small: "S",
@@ -133,6 +135,35 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
   const statusColor = STATUS_COLORS[task.status] ?? "var(--status-inbox)";
   const createdAtLabel = formatRelativeTaskTime(task.created_at);
   const createdAtTooltip = formatTaskTimestamp(task.created_at);
+  const refinementRevisionState = getRefinementRevisionState(task);
+  const feedbackUi = getTaskFeedbackUi(task.status);
+  const revisionBadge = task.status === "refinement" && refinementRevisionState !== "not_requested"
+    ? refinementRevisionState === "completed"
+      ? {
+          label: "Revised",
+          color: "var(--status-done)",
+          background: "var(--bg-tertiary)",
+        }
+      : {
+          label: "Revising",
+          color: "var(--status-progress)",
+          background: "var(--bg-tertiary)",
+        }
+    : null;
+  const planBanner = task.status === "refinement"
+    ? refinementRevisionState === "pending"
+      ? { label: "Revision Requested", color: "var(--status-progress)" }
+      : task.refinement_plan
+        ? {
+            label: refinementRevisionState === "completed"
+              ? "Revised Plan Ready"
+              : "Implementation Plan Ready",
+            color: refinementRevisionState === "completed"
+              ? "var(--status-done)"
+              : "var(--status-refinement)",
+          }
+        : null
+    : null;
 
   return (
     <div
@@ -217,6 +248,18 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
               Input
             </span>
           )}
+          {revisionBadge && (
+            <span style={{
+              padding: "2px 6px",
+              background: revisionBadge.background,
+              color: revisionBadge.color,
+              borderRadius: "4px",
+              fontSize: "10px",
+              fontWeight: 600,
+            }}>
+              {revisionBadge.label}
+            </span>
+          )}
           <span style={{
             display: "inline-flex",
             alignItems: "center",
@@ -275,8 +318,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         </div>
       )}
 
-      {/* Refinement Plan — review prompt */}
-      {task.status === "refinement" && task.refinement_plan && (
+      {/* Refinement Plan / revise status */}
+      {planBanner && (
         <div
           style={{
             padding: "8px 12px",
@@ -288,8 +331,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             justifyContent: "space-between",
           }}
         >
-          <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-refinement)" }}>
-            Implementation Plan Ready
+          <span style={{ fontSize: "11px", fontWeight: 600, color: planBanner.color }}>
+            {planBanner.label}
           </span>
           <button
             onClick={() => { play("select"); onSelect?.(task.id); }}
@@ -315,6 +358,11 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
           <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-human-review)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
             Human Review Required
           </div>
+          {feedbackUi?.cardDescription && (
+            <div style={{ fontSize: "10px", color: "var(--text-secondary)", marginBottom: "6px", lineHeight: 1.4 }}>
+              {feedbackUi.cardDescription}
+            </div>
+          )}
           <div style={{ display: "flex", gap: "6px" }}>
             <button
               onClick={async () => { play("confirm"); await approveTask(task.id); }}
@@ -322,6 +370,13 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
               style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
             >
               Approve
+            </button>
+            <button
+              onClick={() => { play("select"); onSelect?.(task.id); }}
+              className="eb-btn"
+              style={{ flex: 1, fontSize: "11px", padding: "5px 8px" }}
+            >
+              {feedbackUi?.cardActionLabel ?? "Feedback"}
             </button>
             <button
               onClick={async () => { play("select"); await rejectTask(task.id); }}

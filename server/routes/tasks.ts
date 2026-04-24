@@ -185,6 +185,27 @@ function nextTaskNumber(db: RuntimeContext["db"]): string {
   return `#${(row?.max_num ?? 0) + 1}`;
 }
 
+function markRefinementRevisionRequested(
+  db: RuntimeContext["db"],
+  taskId: string,
+  now: number,
+): void {
+  db.prepare(
+    `UPDATE tasks
+     SET refinement_revision_requested_at = ?,
+         refinement_revision_completed_at = NULL,
+         updated_at = ?
+     WHERE id = ?`,
+  ).run(now, now, taskId);
+}
+
+function fetchTaskById(
+  db: RuntimeContext["db"],
+  taskId: string,
+): Task | undefined {
+  return db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
+}
+
 export function createTasksRouter(ctx: RuntimeContext): Router {
   const router = Router();
   const { db, ws, cache } = ctx;
@@ -1113,6 +1134,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // 5. Deliver feedback to agent
     const previousStatus = task.status;
+    const isRefinementRevision = previousStatus === "refinement";
+
+    if (isRefinementRevision) {
+      markRefinementRevisionRequested(db, task.id, now);
+    }
 
     if (task.status === "in_progress" || (task.status === "refinement" && !task.completed_at)) {
       // Running refinement: log the inbox round-trip before killing
@@ -1126,6 +1152,12 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       // Running task: kill + respawn with --resume
       const restarted = queueFeedbackAndRestart(task.id, content, previousStatus);
       if (restarted) {
+        if (isRefinementRevision) {
+          const freshTask = fetchTaskById(db, task.id);
+          if (freshTask) {
+            ws.broadcast("task_update", freshTask);
+          }
+        }
         return res.json({ sent: true, restarted, feedback_path: feedbackPath });
       }
       // Process already exited — fall through to idle-agent respawn below
@@ -1133,10 +1165,24 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Agent process not running: respawn idle agent with --resume
     const agentId = task.assigned_agent_id;
-    if (!agentId) return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
+    if (!agentId) {
+      if (isRefinementRevision) {
+        const freshTask = fetchTaskById(db, task.id);
+        if (freshTask) {
+          ws.broadcast("task_update", freshTask);
+        }
+      }
+      return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
+    }
 
     const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agentId) as Agent | undefined;
     if (!agent || agent.status === "working") {
+      if (isRefinementRevision) {
+        const freshTask = fetchTaskById(db, task.id);
+        if (freshTask) {
+          ws.broadcast("task_update", freshTask);
+        }
+      }
       return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
     }
 
@@ -1148,7 +1194,6 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
         "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
       ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
       db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
-      ws.broadcast("task_update", { id: task.id, status: "refinement" });
     } else {
       // Manual feedback-rework is an explicit user intent — reset the
       // auto-respawn counter so a mid-rework crash gets a full retry budget.
@@ -1156,7 +1201,10 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       ws.broadcast("task_update", { id: task.id, status: "in_progress" });
     }
 
-    const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    const freshTask = fetchTaskById(db, task.id) as Task;
+    if (previousStatus === "refinement") {
+      ws.broadcast("task_update", freshTask);
+    }
     spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
         cache,

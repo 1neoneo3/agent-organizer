@@ -432,7 +432,7 @@ describe("determineCompletionStatus", () => {
     // Log from the current run decides the verdict.
     insertAssistantLog(db, task.id, "[REVIEW:PASS]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "done");
   });
 
@@ -442,7 +442,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "[REVIEW:NEEDS_CHANGES]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -452,7 +452,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "レビューしましたが判定タグを出力し忘れました", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -463,7 +463,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "レビュー完了（タグなし）", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -483,7 +483,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "[CI_CHECK:FAIL:no CI workflow found]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -493,7 +493,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "CI確認を実施しましたが判定タグ未出力", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -514,7 +514,7 @@ describe("determineCompletionStatus", () => {
     insertStdoutLog(db, task.id, '{"type":"user","message":{"content":"preview [REVIEW:NEEDS_CHANGES]"}}', 11_000);
     insertAssistantLog(db, task.id, "レビュー結果です\n[REVIEW:PASS]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "done");
   });
 
@@ -525,6 +525,16 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "実装修正を反映しました。", 12_000);
 
     const status = determineCompletionStatus(db, task, false, false);
+    assert.equal(status, "pr_review");
+  });
+
+  it("does not infer a review run from review_count on implementation completion", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "in_progress", review_count: 2, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "[REVIEW:NEEDS_CHANGES]", 12_000);
+
+    const status = determineCompletionStatus(db, task, false);
     assert.equal(status, "pr_review");
   });
 
@@ -539,7 +549,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
     insertAssistantLog(db, task.id, "[REVIEW:security:PASS]", 13_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "done");
   });
 
@@ -551,7 +561,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
     insertAssistantLog(db, task.id, "[REVIEW:security:NEEDS_CHANGES:SQL injection in query builder]", 13_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -563,7 +573,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:NEEDS_CHANGES:poor error handling]", 12_000);
     insertAssistantLog(db, task.id, "[REVIEW:security:PASS]", 13_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -575,7 +585,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
     // security verdict never arrives (agent crashed or timed out)
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "in_progress");
   });
 
@@ -586,7 +596,7 @@ describe("determineCompletionStatus", () => {
     // No [REVIEWER_PANEL:...] marker — legacy single-reviewer flow
     insertAssistantLog(db, task.id, "[REVIEW:PASS]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task, false, true);
     assert.equal(status, "done");
   });
 });
@@ -797,8 +807,12 @@ describe("persistRefinementPlanExtraction", () => {
     const db = createDb();
     const task = insertTask(db, { id: "trevise", status: "refinement" });
     db.prepare(
-      "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ? WHERE id = ?",
-    ).run("---REFINEMENT PLAN---\nOLD PLAN\n---END REFINEMENT---", 1_000, task.id);
+      `UPDATE tasks
+       SET refinement_plan = ?,
+           refinement_completed_at = ?,
+           refinement_revision_requested_at = ?
+       WHERE id = ?`,
+    ).run("---REFINEMENT PLAN---\nOLD PLAN\n---END REFINEMENT---", 1_000, 4_000, task.id);
 
     const revisedPlan = [
       "---REFINEMENT PLAN---",
@@ -821,15 +835,22 @@ describe("persistRefinementPlanExtraction", () => {
     );
 
     const row = db.prepare(
-      "SELECT refinement_plan, refinement_completed_at, planned_files FROM tasks WHERE id = ?",
+      `SELECT refinement_plan,
+              refinement_completed_at,
+              refinement_revision_completed_at,
+              planned_files
+       FROM tasks
+       WHERE id = ?`,
     ).get(task.id) as {
       refinement_plan: string | null;
       refinement_completed_at: number | null;
+      refinement_revision_completed_at: number | null;
       planned_files: string | null;
     };
 
     assert.equal(row.refinement_plan, revisedPlan);
     assert.equal(row.refinement_completed_at, 5_000);
+    assert.equal(row.refinement_revision_completed_at, 5_000);
     assert.deepEqual(JSON.parse(row.planned_files ?? "[]"), ["src/revised.ts"]);
   });
 

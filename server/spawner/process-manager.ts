@@ -429,8 +429,17 @@ export function persistRefinementPlanExtraction(
   extraction: RefinementPlanExtractionResult,
   context: { stage: string; agentId: string | null; now?: number },
 ): void {
+  const now = context.now ?? Date.now();
   const updatePlanStmt = db.prepare(
-    "UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ?, planned_files = ? WHERE id = ?",
+    `UPDATE tasks
+     SET refinement_plan = ?,
+         refinement_completed_at = ?,
+         refinement_revision_completed_at = CASE
+           WHEN refinement_revision_requested_at IS NOT NULL THEN ?
+           ELSE refinement_revision_completed_at
+         END,
+         planned_files = ?
+     WHERE id = ?`,
   );
   const updatePlanFallbackStmt = db.prepare(
     "UPDATE tasks SET refinement_plan = ? WHERE id = ?",
@@ -442,7 +451,7 @@ export function persistRefinementPlanExtraction(
   if (extraction.kind === "plan") {
     const plannedFiles = extractPlannedFilesFromPlan(extraction.plan);
     const plannedFilesJson = plannedFiles.length > 0 ? JSON.stringify(plannedFiles) : null;
-    updatePlanStmt.run(extraction.plan, context.now ?? Date.now(), plannedFilesJson, taskId);
+    updatePlanStmt.run(extraction.plan, now, now, plannedFilesJson, taskId);
     return;
   }
 
@@ -1308,11 +1317,6 @@ export async function spawnAgent(
       ws.broadcast("cli_output", deduped.map((e) => ({ task_id: task.id, ...e })), { taskId: task.id });
     }
 
-    // Check for self-review result
-    if (selfReview && text.includes("[SELF_REVIEW:PASS]")) {
-      db.prepare("UPDATE tasks SET review_count = review_count + 1, updated_at = ? WHERE id = ?").run(Date.now(), task.id);
-    }
-
     recordStdoutChunkMs(performance.now() - chunkStart);
   });
 
@@ -1862,7 +1866,7 @@ export function determineCompletionStatus(
   db: DatabaseSync,
   task: Task,
   selfReview: boolean,
-  reviewRun = task.review_count > 0,
+  reviewRun = false,
   workflow: ProjectWorkflow | null = null,
 ): string {
   return determineNextStage(db, task, selfReview, reviewRun, workflow);
