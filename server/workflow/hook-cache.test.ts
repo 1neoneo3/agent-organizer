@@ -1,15 +1,22 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, beforeEach } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import {
-  detectDependencyFiles,
   computeFingerprint,
-  shouldSkipHook,
-  recordHookSuccess,
+  detectDependencyFiles,
   invalidateHookCache,
+  recordHookSuccess,
+  shouldSkipHook,
 } from "./hook-cache.js";
 
 describe("detectDependencyFiles", () => {
@@ -70,6 +77,40 @@ describe("detectDependencyFiles", () => {
     assert.ok(files);
     assert.ok(files.includes("pnpm-lock.yaml"));
   });
+
+  it("detects short alias: pnpm i", () => {
+    const files = detectDependencyFiles("pnpm i");
+    assert.ok(files);
+    assert.ok(files.includes("pnpm-lock.yaml"));
+    assert.ok(files.includes("package.json"));
+  });
+
+  it("detects short alias: npm i", () => {
+    const files = detectDependencyFiles("npm i");
+    assert.ok(files);
+    assert.ok(files.includes("package-lock.json"));
+    assert.ok(files.includes("package.json"));
+  });
+
+  it("trims leading/trailing whitespace", () => {
+    const files = detectDependencyFiles("  pnpm install  ");
+    assert.ok(files);
+    assert.ok(files.includes("pnpm-lock.yaml"));
+  });
+
+  it("does not match partial command names", () => {
+    assert.equal(detectDependencyFiles("pnpm-install"), null);
+    assert.equal(detectDependencyFiles("npmi"), null);
+  });
+
+  it("returns a new array each call (no shared mutation)", () => {
+    const a = detectDependencyFiles("pnpm install");
+    const b = detectDependencyFiles("pnpm install");
+    assert.ok(a);
+    assert.ok(b);
+    assert.notEqual(a, b);
+    assert.deepEqual(a, b);
+  });
 });
 
 describe("computeFingerprint", () => {
@@ -109,10 +150,51 @@ describe("computeFingerprint", () => {
 
   it("handles missing dependency files gracefully", () => {
     const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
-    // No package.json or pnpm-lock.yaml
 
     const fp = computeFingerprint("pnpm install", dir);
     assert.ok(fp);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("is deterministic for identical inputs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
+    writeFileSync(join(dir, "package.json"), '{"name":"test"}');
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: 9");
+
+    const fp1 = computeFingerprint("pnpm install", dir);
+    const fp2 = computeFingerprint("pnpm install", dir);
+    assert.equal(fp1, fp2);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("differs for different commands even with same dependency files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
+    writeFileSync(join(dir, "package.json"), '{"name":"test"}');
+    writeFileSync(join(dir, "package-lock.json"), "{}");
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: 9");
+
+    const fpPnpm = computeFingerprint("pnpm install", dir);
+    const fpNpm = computeFingerprint("npm install", dir);
+    assert.ok(fpPnpm);
+    assert.ok(fpNpm);
+    assert.notEqual(fpPnpm, fpNpm);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("changes when package.json changes (not just lockfile)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
+    writeFileSync(join(dir, "package.json"), '{"name":"v1"}');
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: 9");
+
+    const fp1 = computeFingerprint("pnpm install", dir);
+
+    writeFileSync(join(dir, "package.json"), '{"name":"v2"}');
+    const fp2 = computeFingerprint("pnpm install", dir);
+
+    assert.notEqual(fp1, fp2);
 
     rmSync(dir, { recursive: true });
   });
@@ -127,6 +209,11 @@ describe("shouldSkipHook / recordHookSuccess", () => {
     cacheDir = mkdtempSync(join(tmpdir(), "ao-cache-dir-"));
     writeFileSync(join(cwd, "package.json"), '{"name":"test"}');
     writeFileSync(join(cwd, "pnpm-lock.yaml"), "lockfileVersion: 9");
+  });
+
+  afterEach(() => {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(cacheDir, { recursive: true, force: true });
   });
 
   it("does not skip when no cache exists", () => {
@@ -164,5 +251,84 @@ describe("shouldSkipHook / recordHookSuccess", () => {
     writeFileSync(join(cacheDir, `${key}.json`), "NOT VALID JSON");
 
     assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), false);
+  });
+
+  it("isolates cache entries per command", () => {
+    writeFileSync(join(cwd, "package-lock.json"), "{}");
+
+    recordHookSuccess("pnpm install", cwd, cacheDir);
+    assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), true);
+    assert.equal(shouldSkipHook("npm install", cwd, cacheDir), false);
+  });
+
+  it("isolates cache entries per cwd", () => {
+    const cwd2 = mkdtempSync(join(tmpdir(), "ao-cache-cwd2-"));
+    writeFileSync(join(cwd2, "package.json"), '{"name":"other"}');
+    writeFileSync(join(cwd2, "pnpm-lock.yaml"), "lockfileVersion: 9");
+
+    recordHookSuccess("pnpm install", cwd, cacheDir);
+    assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), true);
+    assert.equal(shouldSkipHook("pnpm install", cwd2, cacheDir), false);
+
+    rmSync(cwd2, { recursive: true, force: true });
+  });
+
+  it("creates cacheDir recursively if it does not exist", () => {
+    const nested = join(cacheDir, "sub", "dir");
+    assert.equal(existsSync(nested), false);
+
+    recordHookSuccess("pnpm install", cwd, nested);
+    assert.equal(existsSync(nested), true);
+    assert.equal(shouldSkipHook("pnpm install", cwd, nested), true);
+  });
+
+  it("recordHookSuccess is a no-op for unknown commands", () => {
+    recordHookSuccess("echo hello", cwd, cacheDir);
+    const files = readdirSync(cacheDir).filter((f) => f.endsWith(".json"));
+    assert.equal(files.length, 0);
+  });
+
+  it("handles multiple install hooks cached simultaneously", () => {
+    writeFileSync(join(cwd, "package-lock.json"), "{}");
+    writeFileSync(join(cwd, "yarn.lock"), "");
+
+    recordHookSuccess("pnpm install", cwd, cacheDir);
+    recordHookSuccess("npm ci", cwd, cacheDir);
+    recordHookSuccess("yarn install", cwd, cacheDir);
+
+    assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), true);
+    assert.equal(shouldSkipHook("npm ci", cwd, cacheDir), true);
+    assert.equal(shouldSkipHook("yarn install", cwd, cacheDir), true);
+  });
+
+  it("re-records cache after dependency change", () => {
+    recordHookSuccess("pnpm install", cwd, cacheDir);
+    assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), true);
+
+    writeFileSync(join(cwd, "pnpm-lock.yaml"), "lockfileVersion: 10");
+    assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), false);
+
+    recordHookSuccess("pnpm install", cwd, cacheDir);
+    assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), true);
+  });
+});
+
+describe("invalidateHookCache edge cases", () => {
+  it("does not throw on non-existent directory", () => {
+    const missing = join(tmpdir(), "ao-cache-nonexistent-" + Date.now());
+    assert.doesNotThrow(() => invalidateHookCache(missing));
+  });
+
+  it("preserves non-json files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-inv-"));
+    writeFileSync(join(dir, "keep.txt"), "data");
+    writeFileSync(join(dir, "remove.json"), "{}");
+
+    invalidateHookCache(dir);
+
+    assert.equal(existsSync(join(dir, "keep.txt")), true);
+    assert.equal(existsSync(join(dir, "remove.json")), false);
+
+    rmSync(dir, { recursive: true, force: true });
   });
 });
