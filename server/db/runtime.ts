@@ -7,6 +7,12 @@ import { detectRepositoryUrl } from "../workflow/git-utils.js";
 
 let db: DatabaseSync | null = null;
 
+const LEAKED_TEST_TASKS_CLEANUP_KEY = "leaked_test_tasks_cleaned_v2";
+const REFINEMENT_FEEDBACK_REGRESSION_DESCRIPTION = "Refinement feedback regression";
+const UUID_V4ISH_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const HEX_TASK_NUMBER_RE = /^#[0-9a-f]{6}$/i;
+
 export function getDb(): DatabaseSync {
   if (!db) throw new Error("Database not initialized. Call initializeDb() first.");
   return db;
@@ -83,6 +89,30 @@ export function recompactTaskNumbers(db: DatabaseSync): void {
       update.run(expected, rows[i].id);
     }
   }
+}
+
+type LeakedRefinementFeedbackTaskRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  task_number: string | null;
+  assigned_agent_id: string | null;
+};
+
+function isLeakedRefinementFeedbackTask(
+  row: Pick<LeakedRefinementFeedbackTaskRow, "id" | "title" | "description" | "task_number">,
+): boolean {
+  if (row.description !== REFINEMENT_FEEDBACK_REGRESSION_DESCRIPTION) return false;
+
+  const titleMatch = /^Task ([0-9a-f-]+)$/i.exec(row.title);
+  if (!titleMatch) return false;
+
+  const titleTaskId = titleMatch[1];
+  if (!UUID_V4ISH_RE.test(titleTaskId)) return false;
+  if (row.id.toLowerCase() !== titleTaskId.toLowerCase()) return false;
+  if (!HEX_TASK_NUMBER_RE.test(row.task_number ?? "")) return false;
+
+  return (row.task_number ?? "").toLowerCase() === `#${titleTaskId.slice(0, 6).toLowerCase()}`;
 }
 
 function migrateAddTaskLogHotQueryIndexes(db: DatabaseSync): void {
@@ -550,25 +580,22 @@ function migrateAddLogStageAgent(db: DatabaseSync): void {
 
 function migrateCleanupLeakedTestTasks(db: DatabaseSync): void {
   const alreadyRun = db.prepare(
-    "SELECT 1 FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'"
-  ).get();
+    "SELECT 1 FROM settings WHERE key = ?"
+  ).get(LEAKED_TEST_TASKS_CLEANUP_KEY);
   if (alreadyRun) return;
 
-  const taskIds = (
+  const leakedTasks = (
     db.prepare(
-      `SELECT id FROM tasks
-       WHERE title = 'Refinement feedback test task'
-          OR (
-            description = 'Refinement feedback regression'
-            AND title = 'Task ' || id
-          )`
-    ).all() as Array<{ id: string }>
-  ).map((r) => r.id);
+      "SELECT id, title, description, task_number, assigned_agent_id FROM tasks"
+    ).all() as LeakedRefinementFeedbackTaskRow[]
+  ).filter(isLeakedRefinementFeedbackTask);
+
+  const taskIds = leakedTasks.map((row) => row.id);
 
   if (taskIds.length === 0) {
     db.prepare(
       "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
-    ).run("leaked_test_tasks_cleaned_v1", String(Date.now()));
+    ).run(LEAKED_TEST_TASKS_CLEANUP_KEY, String(Date.now()));
     return;
   }
 
@@ -577,20 +604,9 @@ function migrateCleanupLeakedTestTasks(db: DatabaseSync): void {
   db.exec("BEGIN TRANSACTION");
   try {
     // Collect orphaned agent IDs before deleting tasks
-    const orphanAgentIds = (
-      db.prepare(
-        `SELECT DISTINCT assigned_agent_id AS aid
-         FROM tasks
-         WHERE assigned_agent_id IS NOT NULL
-           AND (
-             title = 'Refinement feedback test task'
-             OR (
-               description = 'Refinement feedback regression'
-               AND title = 'Task ' || id
-             )
-           )`
-      ).all() as Array<{ aid: string }>
-    ).map((r) => r.aid);
+    const orphanAgentIds = leakedTasks
+      .map((row) => row.assigned_agent_id)
+      .filter((aid): aid is string => Boolean(aid));
 
     // Delete child rows first — messages uses ON DELETE SET NULL, not CASCADE
     db.prepare(`DELETE FROM messages  WHERE task_id IN (${ph})`).run(...taskIds);
@@ -613,7 +629,7 @@ function migrateCleanupLeakedTestTasks(db: DatabaseSync): void {
 
     db.prepare(
       "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
-    ).run("leaked_test_tasks_cleaned_v1", String(Date.now()));
+    ).run(LEAKED_TEST_TASKS_CLEANUP_KEY, String(Date.now()));
 
     db.exec("COMMIT");
   } catch (e) {

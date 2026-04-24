@@ -582,11 +582,54 @@ describe("initializeDb", () => {
 
 describe("migrateCleanupLeakedTestTasks", () => {
   const cleanupPaths: string[] = [];
+  const leakedTaskId = "123e4567-e89b-12d3-a456-426614174000";
+  const leakedTaskNumber = "#123e45";
 
   function freshDbPath(): string {
     const p = join(mkdtempSync(join(tmpdir(), "ao-cleanup-")), "test.db");
     cleanupPaths.push(p);
     return p;
+  }
+
+  function resetCleanupFlags(db: import("node:sqlite").DatabaseSync): void {
+    db.prepare(
+      "DELETE FROM settings WHERE key IN ('leaked_test_tasks_cleaned_v1', 'leaked_test_tasks_cleaned_v2')",
+    ).run();
+  }
+
+  function insertAgent(
+    db: import("node:sqlite").DatabaseSync,
+    id: string,
+    name: string,
+    now: number,
+  ): void {
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
+    ).run(id, name, now, now);
+  }
+
+  function insertLeakedFeedbackTask(
+    db: import("node:sqlite").DatabaseSync,
+    {
+      id = leakedTaskId,
+      assignedAgentId = "agent-leak",
+      createdAt,
+      updatedAt = createdAt,
+      description = "Refinement feedback regression",
+      taskNumber = leakedTaskNumber,
+    }: {
+      id?: string;
+      assignedAgentId?: string;
+      createdAt: number;
+      updatedAt?: number;
+      description?: string;
+      taskNumber?: string;
+    },
+  ): void {
+    db.prepare(
+      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES (?, ?, ?, 'refinement', ?, 'medium', ?, ?, ?)`,
+    ).run(id, `Task ${id}`, description, assignedAgentId, taskNumber, createdAt, updatedAt);
   }
 
   afterEach(() => {
@@ -603,95 +646,121 @@ describe("migrateCleanupLeakedTestTasks", () => {
     const db = initializeDb(freshDbPath());
 
     const flag = db.prepare(
-      "SELECT value FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'",
+      "SELECT value FROM settings WHERE key = 'leaked_test_tasks_cleaned_v2'",
     ).get() as { value: string } | undefined;
 
     assert.ok(flag, "cleanup flag should be set even when no leaked tasks exist");
   });
 
-  it("deletes leaked 'Refinement feedback test task' rows and all child data", async () => {
+  it("re-runs the cleanup under v2 even when the broken v1 flag already exists", async () => {
     const { initializeDb } = await import("./runtime.js");
     const dbPath = freshDbPath();
     const db = initializeDb(dbPath);
 
-    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+    resetCleanupFlags(db);
 
     const now = Date.now();
+    insertAgent(db, "agent-leak", "Leaked Agent", now);
+    insertLeakedFeedbackTask(db, { createdAt: now });
     db.prepare(
-      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
-    ).run("agent-leaked", "Leaked Agent", now, now);
-
-    db.prepare(
-      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES (?, 'Refinement feedback test task', 'inbox', 'agent-leaked', 'small', '#10', ?, ?)`,
-    ).run("leaked-task-1", now, now);
-
-    db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message) VALUES ('leaked-task-1', 'system', 'leaked log')",
-    ).run();
-    db.prepare(
-      "INSERT INTO messages (id, sender_type, content, task_id, created_at) VALUES ('msg-leaked', 'user', 'leaked msg', 'leaked-task-1', ?)",
-    ).run(now);
-    db.prepare(
-      "INSERT INTO subtasks (id, task_id, title, status, created_at) VALUES ('sub-leaked', 'leaked-task-1', 'leaked sub', 'pending', ?)",
-    ).run(now);
+      "INSERT INTO settings (key, value) VALUES ('leaked_test_tasks_cleaned_v1', ?)",
+    ).run(String(now));
 
     const db2 = initializeDb(dbPath);
 
     assert.equal(
-      db2.prepare("SELECT id FROM tasks WHERE id = 'leaked-task-1'").get(),
+      db2.prepare("SELECT id FROM tasks WHERE id = ?").get(leakedTaskId),
+      undefined,
+      "v2 cleanup should delete the real leaked task even if v1 was already set",
+    );
+    assert.ok(
+      db2.prepare("SELECT value FROM settings WHERE key = 'leaked_test_tasks_cleaned_v2'").get(),
+      "v2 flag should be stored after the rerun",
+    );
+  });
+
+  it("deletes leaked refinement feedback regression rows and all child data", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const dbPath = freshDbPath();
+    const db = initializeDb(dbPath);
+
+    resetCleanupFlags(db);
+
+    const now = Date.now();
+    insertAgent(db, "agent-leak", "Leaked Agent", now);
+    insertLeakedFeedbackTask(db, { createdAt: now });
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', 'leaked log')",
+    ).run(leakedTaskId);
+    db.prepare(
+      "INSERT INTO messages (id, sender_type, content, task_id, created_at) VALUES ('msg-leaked', 'user', 'leaked msg', ?, ?)",
+    ).run(leakedTaskId, now);
+    db.prepare(
+      "INSERT INTO subtasks (id, task_id, title, status, created_at) VALUES ('sub-leaked', ?, 'leaked sub', 'pending', ?)",
+    ).run(leakedTaskId, now);
+
+    const db2 = initializeDb(dbPath);
+
+    assert.equal(
+      db2.prepare("SELECT id FROM tasks WHERE id = ?").get(leakedTaskId),
       undefined,
       "leaked task should be deleted",
     );
     assert.equal(
-      (db2.prepare("SELECT * FROM task_logs WHERE task_id = 'leaked-task-1'").all()).length,
+      (db2.prepare("SELECT * FROM task_logs WHERE task_id = ?").all(leakedTaskId)).length,
       0,
       "task_logs for leaked task should be deleted",
     );
     assert.equal(
-      (db2.prepare("SELECT * FROM messages WHERE task_id = 'leaked-task-1'").all()).length,
+      (db2.prepare("SELECT * FROM messages WHERE task_id = ?").all(leakedTaskId)).length,
       0,
       "messages for leaked task should be deleted",
     );
     assert.equal(
-      (db2.prepare("SELECT * FROM subtasks WHERE task_id = 'leaked-task-1'").all()).length,
+      (db2.prepare("SELECT * FROM subtasks WHERE task_id = ?").all(leakedTaskId)).length,
       0,
       "subtasks for leaked task should be deleted",
     );
   });
 
-  it("preserves tasks with different titles", async () => {
+  it("preserves tasks that only partially resemble the leaked test signature", async () => {
     const { initializeDb } = await import("./runtime.js");
     const dbPath = freshDbPath();
     const db = initializeDb(dbPath);
 
-    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+    resetCleanupFlags(db);
 
     const now = Date.now();
-    db.prepare(
-      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
-    ).run("agent-mix", "Mix Agent", now, now);
+    insertAgent(db, "agent-a", "Agent A", now);
+    insertAgent(db, "agent-b", "Agent B", now + 1);
+    insertAgent(db, "agent-c", "Agent C", now + 2);
 
     db.prepare(
-      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES ('keep-task', 'Normal task', 'inbox', 'agent-mix', 'small', '#1', ?, ?)`,
-    ).run(now, now);
-
+      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('keep-a', ?, 'Refinement feedback regression', 'refinement', 'agent-a', 'medium', '#77', ?, ?)`,
+    ).run(`Task ${leakedTaskId}`, now, now);
     db.prepare(
-      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES ('leak-task', 'Refinement feedback test task', 'inbox', 'agent-mix', 'small', '#2', ?, ?)`,
-    ).run(now + 1, now + 1);
+      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('keep-b', 'Task keep-b', 'Normal description', 'refinement', 'agent-b', 'medium', ?, ?, ?)`,
+    ).run(leakedTaskNumber, now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('keep-c', 'Task keep-c', 'Refinement feedback regression', 'refinement', 'agent-c', 'medium', '#12', ?, ?)`,
+    ).run(now + 2, now + 2);
 
     const db2 = initializeDb(dbPath);
 
     assert.ok(
-      db2.prepare("SELECT id FROM tasks WHERE id = 'keep-task'").get(),
-      "normal task should be preserved",
+      db2.prepare("SELECT id FROM tasks WHERE id = 'keep-a'").get(),
+      "same description/title shape without matching id+task_number should be preserved",
     );
-    assert.equal(
-      db2.prepare("SELECT id FROM tasks WHERE id = 'leak-task'").get(),
-      undefined,
-      "leaked task should be deleted",
+    assert.ok(
+      db2.prepare("SELECT id FROM tasks WHERE id = 'keep-b'").get(),
+      "same task_number without leaked description should be preserved",
+    );
+    assert.ok(
+      db2.prepare("SELECT id FROM tasks WHERE id = 'keep-c'").get(),
+      "same description without leaked hex task_number should be preserved",
     );
   });
 
@@ -700,28 +769,28 @@ describe("migrateCleanupLeakedTestTasks", () => {
     const dbPath = freshDbPath();
     const db = initializeDb(dbPath);
 
-    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+    resetCleanupFlags(db);
 
     const now = Date.now();
-    db.prepare(
-      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
-    ).run("agent-shared", "Shared Agent", now, now);
-    db.prepare(
-      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
-    ).run("agent-orphan", "Orphan Agent", now, now);
+    insertAgent(db, "agent-shared", "Shared Agent", now);
+    insertAgent(db, "agent-orphan", "Orphan Agent", now + 1);
 
     db.prepare(
-      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES ('normal-task', 'Normal task', 'inbox', 'agent-shared', 'small', '#1', ?, ?)`,
+      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('normal-task', 'Normal task', 'Normal description', 'inbox', 'agent-shared', 'small', '#1', ?, ?)`,
     ).run(now, now);
-    db.prepare(
-      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES ('leak-shared', 'Refinement feedback test task', 'inbox', 'agent-shared', 'small', '#2', ?, ?)`,
-    ).run(now + 1, now + 1);
-    db.prepare(
-      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES ('leak-orphan', 'Refinement feedback test task', 'inbox', 'agent-orphan', 'small', '#3', ?, ?)`,
-    ).run(now + 2, now + 2);
+    insertLeakedFeedbackTask(db, {
+      id: "123e4567-e89b-12d3-a456-426614174111",
+      assignedAgentId: "agent-shared",
+      taskNumber: "#123e45",
+      createdAt: now + 1,
+    });
+    insertLeakedFeedbackTask(db, {
+      id: "123e4567-e89b-12d3-a456-426614174222",
+      assignedAgentId: "agent-orphan",
+      taskNumber: "#123e45",
+      createdAt: now + 2,
+    });
 
     const db2 = initializeDb(dbPath);
 
@@ -736,31 +805,34 @@ describe("migrateCleanupLeakedTestTasks", () => {
     );
   });
 
-  it("recompacts task numbers to fill gaps left by deleted tasks", async () => {
+  it("recompacts task numbers to fill gaps left by deleted leaked tasks", async () => {
     const { initializeDb } = await import("./runtime.js");
     const dbPath = freshDbPath();
     const db = initializeDb(dbPath);
 
-    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+    resetCleanupFlags(db);
 
     const now = Date.now();
+    insertAgent(db, "agent-leak", "Leaked Agent", now);
     db.prepare(
-      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
-       VALUES ('task-a', 'First task', 'inbox', 'small', '#1', ?, ?)`,
+      `INSERT INTO tasks (id, title, description, status, task_size, task_number, created_at, updated_at)
+       VALUES ('task-a', 'First task', 'Normal description', 'inbox', 'small', '#1', ?, ?)`,
     ).run(now, now);
+    insertLeakedFeedbackTask(db, {
+      id: leakedTaskId,
+      assignedAgentId: "agent-leak",
+      taskNumber: leakedTaskNumber,
+      createdAt: now + 1,
+    });
     db.prepare(
-      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
-       VALUES ('task-b', 'Refinement feedback test task', 'inbox', 'small', '#2', ?, ?)`,
-    ).run(now + 1, now + 1);
-    db.prepare(
-      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
-       VALUES ('task-c', 'Third task', 'inbox', 'small', '#3', ?, ?)`,
+      `INSERT INTO tasks (id, title, description, status, task_size, task_number, created_at, updated_at)
+       VALUES ('task-c', 'Third task', 'Normal description', 'inbox', 'small', '#3', ?, ?)`,
     ).run(now + 2, now + 2);
 
     const db2 = initializeDb(dbPath);
 
     const tasks = db2.prepare(
-      "SELECT id, task_number FROM tasks ORDER BY CAST(SUBSTR(task_number, 2) AS INTEGER) ASC",
+      "SELECT id, task_number FROM tasks ORDER BY CAST(SUBSTR(task_number, 2) AS INTEGER) ASC, created_at ASC",
     ).all() as Array<{ id: string; task_number: string }>;
 
     assert.equal(tasks.length, 2);
@@ -770,77 +842,24 @@ describe("migrateCleanupLeakedTestTasks", () => {
     assert.equal(tasks[1].task_number, "#2");
   });
 
-  it("deletes leaked refinement feedback regression rows and recompacts numbering", async () => {
-    const { initializeDb } = await import("./runtime.js");
-    const dbPath = freshDbPath();
-    const db = initializeDb(dbPath);
-
-    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
-
-    const now = Date.now();
-    db.prepare(
-      `INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at)
-       VALUES ('agent-keep', 'Keep Agent', 'claude', 'idle', ?, ?)`,
-    ).run(now, now);
-    db.prepare(
-      `INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at)
-       VALUES ('agent-leak', 'Leaked Agent', 'claude', 'idle', ?, ?)`,
-    ).run(now + 1, now + 1);
-
-    db.prepare(
-      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES ('keep-task', 'Legit task', 'Normal description', 'inbox', 'agent-keep', 'small', '#1', ?, ?)`,
-    ).run(now, now);
-    db.prepare(
-      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
-       VALUES ('123e4567-e89b-12d3-a456-426614174000', 'Task 123e4567-e89b-12d3-a456-426614174000', 'Refinement feedback regression', 'refinement', 'agent-leak', 'medium', '#abc123', ?, ?)`,
-    ).run(now + 1, now + 1);
-    db.prepare(
-      `INSERT INTO messages (id, sender_type, sender_id, content, message_type, task_id, created_at)
-       VALUES ('msg-leak', 'user', NULL, 'leaked message', 'directive', '123e4567-e89b-12d3-a456-426614174000', ?)`,
-    ).run(now + 1);
-
-    const db2 = initializeDb(dbPath);
-
-    assert.equal(
-      db2.prepare("SELECT id FROM tasks WHERE id = '123e4567-e89b-12d3-a456-426614174000'").get(),
-      undefined,
-      "regression-leaked task should be deleted",
-    );
-    assert.equal(
-      db2.prepare("SELECT id FROM agents WHERE id = 'agent-leak'").get(),
-      undefined,
-      "orphaned leaked agent should be deleted",
-    );
-    assert.equal(
-      db2.prepare("SELECT id FROM messages WHERE id = 'msg-leak'").get(),
-      undefined,
-      "child messages for leaked tasks should be deleted",
-    );
-    const remainingTasks = (
-      db2.prepare("SELECT id, task_number FROM tasks ORDER BY created_at ASC").all() as Array<{
-        id: string;
-        task_number: string;
-      }>
-    ).map((task) => ({ id: task.id, task_number: task.task_number }));
-    assert.deepEqual(remainingTasks, [{ id: "keep-task", task_number: "#1" }]);
-  });
-
   it("is idempotent — second initializeDb does not re-run the migration", async () => {
     const { initializeDb } = await import("./runtime.js");
     const dbPath = freshDbPath();
     const db = initializeDb(dbPath);
 
     const now = Date.now();
-    db.prepare(
-      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
-       VALUES ('late-task', 'Refinement feedback test task', 'inbox', 'small', '#99', ?, ?)`,
-    ).run(now, now);
+    insertAgent(db, "agent-late", "Late Agent", now);
+    insertLeakedFeedbackTask(db, {
+      id: "123e4567-e89b-12d3-a456-426614174999",
+      assignedAgentId: "agent-late",
+      taskNumber: "#123e45",
+      createdAt: now,
+    });
 
     const db2 = initializeDb(dbPath);
 
     assert.ok(
-      db2.prepare("SELECT id FROM tasks WHERE id = 'late-task'").get(),
+      db2.prepare("SELECT id FROM tasks WHERE id = '123e4567-e89b-12d3-a456-426614174999'").get(),
       "task inserted after flag was set should not be deleted on re-init",
     );
   });
