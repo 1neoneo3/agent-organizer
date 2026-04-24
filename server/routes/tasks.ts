@@ -1151,10 +1151,10 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     let refinementTransitionDone = false;
 
-    if (task.status === "in_progress" || (task.status === "refinement" && !task.completed_at)) {
+    if (task.status === "in_progress" || task.status === "refinement") {
       // Running refinement: log the inbox round-trip before killing
       if (task.status === "refinement") {
-        db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, task.id);
+        db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
         db.prepare(
           "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
         ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);

@@ -1013,4 +1013,89 @@ describe("persistRefinementPlanExtraction", () => {
     // Second call overwrites the timestamp, which is fine — same plan.
     assert.equal(row.refinement_completed_at, 3_000);
   });
+
+  it("stamps revision_completed_at across multiple revision cycles", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tmulti-rev", status: "refinement" });
+
+    const plan1 = "---REFINEMENT PLAN---\nV1\n---END REFINEMENT---";
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: plan1 },
+      { stage: "refinement", agentId: "agent-1", now: 1_000 },
+    );
+
+    // Simulate first revision request
+    db.prepare(
+      "UPDATE tasks SET refinement_revision_requested_at = ?, refinement_revision_completed_at = NULL WHERE id = ?",
+    ).run(2_000, task.id);
+
+    const plan2 = "---REFINEMENT PLAN---\nV2 revised\n---END REFINEMENT---";
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: plan2 },
+      { stage: "refinement", agentId: "agent-1", now: 3_000 },
+    );
+
+    const afterFirst = db.prepare(
+      "SELECT refinement_plan, refinement_completed_at, refinement_revision_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as {
+      refinement_plan: string | null;
+      refinement_completed_at: number | null;
+      refinement_revision_completed_at: number | null;
+    };
+    assert.equal(afterFirst.refinement_plan, plan2);
+    assert.equal(afterFirst.refinement_completed_at, 3_000);
+    assert.equal(afterFirst.refinement_revision_completed_at, 3_000);
+
+    // Simulate second revision request
+    db.prepare(
+      "UPDATE tasks SET refinement_revision_requested_at = ?, refinement_revision_completed_at = NULL WHERE id = ?",
+    ).run(4_000, task.id);
+
+    const plan3 = "---REFINEMENT PLAN---\nV3 final\n---END REFINEMENT---";
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: plan3 },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const afterSecond = db.prepare(
+      "SELECT refinement_plan, refinement_completed_at, refinement_revision_completed_at, refinement_revision_requested_at FROM tasks WHERE id = ?",
+    ).get(task.id) as {
+      refinement_plan: string | null;
+      refinement_completed_at: number | null;
+      refinement_revision_completed_at: number | null;
+      refinement_revision_requested_at: number | null;
+    };
+    assert.equal(afterSecond.refinement_plan, plan3);
+    assert.equal(afterSecond.refinement_completed_at, 5_000);
+    assert.equal(afterSecond.refinement_revision_completed_at, 5_000);
+    assert.equal(afterSecond.refinement_revision_requested_at, 4_000);
+  });
+
+  it("does not stamp revision_completed_at when no revision was requested", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tno-rev", status: "refinement" });
+
+    const plan = "---REFINEMENT PLAN---\nInitial\n---END REFINEMENT---";
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 1_000 },
+    );
+
+    const row = db.prepare(
+      "SELECT refinement_revision_requested_at, refinement_revision_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as {
+      refinement_revision_requested_at: number | null;
+      refinement_revision_completed_at: number | null;
+    };
+    assert.equal(row.refinement_revision_requested_at, null);
+    assert.equal(row.refinement_revision_completed_at, null);
+  });
 });
