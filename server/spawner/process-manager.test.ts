@@ -4,17 +4,14 @@ import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import {
   buildRefinementRevisionPrompt,
-  clearPendingInteractivePrompt,
+  createPlanBlockTracker,
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
   extractRefinementPlanFromLogs,
-  getPendingInteractivePrompt,
   isReviewRunTask,
   persistRefinementPlanExtraction,
-  registerTextInteractivePromptFromAssistantChunk,
   resolveCompletionStatusAfterPromotion,
 } from "./process-manager.js";
-import { StructuredBlockTracker, detectTextInteractivePrompt } from "./event-classifier.js";
 import type { Task } from "../types/runtime.js";
 
 function createDb(): DatabaseSync {
@@ -755,6 +752,115 @@ describe("extractRefinementPlanFromLogs", () => {
   });
 });
 
+describe("createPlanBlockTracker", () => {
+  it("tracks plan block with markers in a single chunk", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---REFINEMENT PLAN---\n## Plan\n- Step A");
+    assert.strictEqual(tracker.isInsidePlanBlock, true);
+
+    tracker.update("---END REFINEMENT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+  });
+
+  it("tracks plan block when start marker is split across chunks", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("Here is the plan:\n---REFINE");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "partial start marker should not trigger");
+
+    tracker.update("MENT PLAN---\n## Plan\n- 作業ディレクトリを指定してください");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "combined chunks should detect start marker");
+
+    tracker.update("追加情報が必要です。");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "should stay inside plan block");
+
+    tracker.update("---END REFINEMENT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "end marker should close block");
+  });
+
+  it("tracks plan block when end marker is split across chunks", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---REFINEMENT PLAN---\n## Plan");
+    assert.strictEqual(tracker.isInsidePlanBlock, true);
+
+    tracker.update("- details\n---END REFINE");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "partial end marker should not close block");
+
+    tracker.update("MENT---\n\nDone.");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "combined chunks should detect end marker");
+  });
+
+  it("handles both markers in a single chunk", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---REFINEMENT PLAN---\n## Short plan\n---END REFINEMENT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "both markers in one chunk → block opened and closed");
+  });
+
+  it("does not false-positive on text without markers", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("対象ファイルのパスを指定してください。");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+
+    tracker.update("Please provide the build target directory.");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+  });
+});
+
+describe("extractRefinementPlanFromLogs — interactive prompt kill scenario", () => {
+  it("extracts plan from DB logs when killed mid-run", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill1", started_at: 1_000 });
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      "---REFINEMENT PLAN---\n## Plan\n- Step A\n---END REFINEMENT---",
+      2_000,
+    );
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "plan");
+    assert.match(result.plan, /Step A/);
+  });
+
+  it("returns empty when no logs exist at kill time", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill2", started_at: 1_000 });
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "empty");
+  });
+
+  it("extracts plan from inMemoryAssistantLogs when DB has no matching logs", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill3", started_at: 1_000 });
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500, [
+      "---REFINEMENT PLAN---\n## In-memory plan\n- from classified buffer\n---END REFINEMENT---",
+    ]);
+    assert.equal(result.kind, "plan");
+    assert.match(result.plan, /In-memory plan/);
+    assert.match(result.plan, /classified buffer/);
+  });
+
+  it("extracts plan when plan and trigger text coexist in the same chunk (in-memory)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill4", started_at: 1_000 });
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500, [
+      "---REFINEMENT PLAN---\n## Plan\n- 作業ディレクトリを指定してください\n---END REFINEMENT---",
+      "追加情報が必要です。対象のファイルパスを教えてください。",
+    ]);
+    assert.equal(result.kind, "plan");
+    assert.match(result.plan, /---REFINEMENT PLAN---/);
+    assert.match(result.plan, /作業ディレクトリ/);
+  });
+});
+
 describe("buildRefinementRevisionPrompt", () => {
   it("asks the resumed refinement agent to emit a complete canonical plan", () => {
     const prompt = buildRefinementRevisionPrompt("Add test coverage to the implementation plan.");
@@ -845,261 +951,66 @@ describe("persistRefinementPlanExtraction", () => {
     assert.equal(log.stage, "refinement");
     assert.equal(log.agent_id, "agent-1");
   });
-});
 
-// Simulate the stdout handler's gating logic: feed chunks to the tracker,
-// then only run detectTextInteractivePrompt when tracker.insideBlock is false.
-function simulateStreamingDetection(chunks: string[]): { detected: boolean; detectedAt: number | null } {
-  const tracker = new StructuredBlockTracker();
-  for (let i = 0; i < chunks.length; i++) {
-    tracker.feed(chunks[i]);
-    if (!tracker.insideBlock) {
-      const result = detectTextInteractivePrompt(chunks[i]);
-      if (result) return { detected: true, detectedAt: i };
-    }
-  }
-  return { detected: false, detectedAt: null };
-}
-
-describe("streaming refinement plan suppresses text-based detection", () => {
-  it("scenario 1: intact markers suppress detection of JP patterns inside plan", () => {
-    const result = simulateStreamingDetection([
-      "---REFINEMENT PLAN---\n## 背景\n",
-      "追加情報が必要な理由を説明します。対象ファイルを指定してください。",
-      "## 実装計画\n1. ファイル修正\n2. テスト追加",
-      "---END REFINEMENT---",
-    ]);
-    assert.strictEqual(result.detected, false);
-  });
-
-  it("scenario 2: start marker split across chunks suppresses detection", () => {
-    const result = simulateStreamingDetection([
-      "計画を出力します。\n---REFINE",
-      "MENT PLAN---\n## 技術要件\n追加情報が必要です",
-      "## 実装計画\n1. ファイル修正\n2. テスト追加",
-      "---END REFINEMENT---",
-    ]);
-    assert.strictEqual(result.detected, false);
-  });
-
-  it("scenario 3: end marker split across chunks keeps block active until complete", () => {
-    const tracker = new StructuredBlockTracker();
-    tracker.feed("---REFINEMENT PLAN--- body");
-    assert.strictEqual(tracker.insideBlock, true);
-
-    tracker.feed("指定してください ---END REFINE");
-    assert.strictEqual(tracker.insideBlock, true);
-
-    tracker.feed("MENT--- done");
-    assert.strictEqual(tracker.insideBlock, false);
-  });
-
-  it("scenario 4: prompt outside plan block is still detected", () => {
-    const result = simulateStreamingDetection([
-      "---REFINEMENT PLAN---\n## plan body",
-      "---END REFINEMENT---",
-      "タスクを進めるには追加情報が必要です",
-    ]);
-    assert.strictEqual(result.detected, true);
-    assert.strictEqual(result.detectedAt, 2);
-  });
-
-  it("scenario 5: start marker split across three chunks", () => {
-    const result = simulateStreamingDetection([
-      "intro ---",
-      "REFINEMENT ",
-      "PLAN--- 追加情報が必要です body",
-      "more body 指定してください",
-      "---END REFINEMENT---",
-    ]);
-    assert.strictEqual(result.detected, false);
-  });
-
-  // --- #466 realistic bug reproduction ---
-
-  it("scenario 6: full refinement revision output with dense JP patterns (#466)", () => {
-    const result = simulateStreamingDetection([
-      "---REFINEMENT PLAN---\n",
-      "## 背景\nagent-organizer の text-based interactive prompt detection が ",
-      "refinement plan 本文を誤検知して停止する不具合を修正する。\n",
-      "## 要件\n- 追加情報が必要な場合のみ Input Required とする\n",
-      "- 対象ファイルを指定してください等のパターンが plan 内にあっても無視\n",
-      "## 変更ファイル\n- `event-classifier.ts` — StructuredBlockTracker 追加\n",
-      "## 実装計画\n1. tracker クラス追加\n2. ガード追加\n3. テスト追加\n",
-      "---END REFINEMENT---",
-    ]);
-    assert.strictEqual(result.detected, false);
-  });
-
-  it("scenario 7: English prompt patterns inside plan are suppressed", () => {
-    const result = simulateStreamingDetection([
-      "---REFINEMENT PLAN---\n## Requirements\n",
-      "Please provide the target directory path.\n",
-      "Could you specify the deployment branch?\n",
-      "## Plan\n1. Update config\n2. Add validation\n",
-      "---END REFINEMENT---",
-    ]);
-    assert.strictEqual(result.detected, false);
-  });
-
-  it("scenario 8: two consecutive plan blocks, prompt between is detected", () => {
-    const result = simulateStreamingDetection([
-      "---REFINEMENT PLAN---\n## First plan\n---END REFINEMENT---",
-      "タスクを進めるには追加情報が必要です",
-      "---REFINEMENT PLAN---\n## Second plan\n---END REFINEMENT---",
-    ]);
-    assert.strictEqual(result.detected, true);
-    assert.strictEqual(result.detectedAt, 1);
-  });
-
-  it("scenario 9: plan with many small chunks never fires false positive", () => {
-    const chunks = ["---REFINEMENT PLAN---\n"];
-    for (let i = 0; i < 15; i++) {
-      chunks.push(`step ${i}: 対象ファイルを指定してください。追加情報が必要です。\n`);
-    }
-    chunks.push("---END REFINEMENT---");
-
-    const result = simulateStreamingDetection(chunks);
-    assert.strictEqual(result.detected, false);
-  });
-
-  it("scenario 10: no plan markers means JP prompt is detected normally", () => {
-    const result = simulateStreamingDetection([
-      "前の作業が完了しました。",
-      "タスクを進めるには追加情報が必要です。対象ファイルを指定してください。",
-    ]);
-    assert.strictEqual(result.detected, true);
-    assert.strictEqual(result.detectedAt, 1);
-  });
-
-  it("scenario 11: plan output followed by explicit options prompt after block end", () => {
-    const result = simulateStreamingDetection([
-      "---REFINEMENT PLAN---\n## Plan\n1. Step A\n---END REFINEMENT---",
-      "次のアクションをどうしますか？\n\n1. コミットして push\n2. テスト追加\n3. 停止",
-    ]);
-    assert.strictEqual(result.detected, true);
-    assert.strictEqual(result.detectedAt, 1);
-  });
-
-  it("scenario 12: single assistant chunk with full plan plus trailing prompt is detected after stripping the plan body", () => {
-    const result = simulateStreamingDetection([
-      "---REFINEMENT PLAN---\n## Plan\n1. Step A\n---END REFINEMENT---\n\n対象ファイルのパスを指定してください。",
-    ]);
-    assert.strictEqual(result.detected, true);
-    assert.strictEqual(result.detectedAt, 0);
-  });
-});
-
-describe("registerTextInteractivePromptFromAssistantChunk", () => {
-  it("does not persist or detect a split-marker refinement plan chunk sequence (#465 regression)", () => {
+  it("saves a canonical plan even when called after a non-zero exit (simulating kill-salvage)", () => {
+    // Regression for #468: when a refinement process is killed by
+    // interactive-prompt detection (false positive), exit code is
+    // non-zero but the plan may already be in the logs. The extraction
+    // + persistence path must still work.
     const db = createDb();
-    const task = insertTask(db, { id: "tprompt-refinement" });
-    const tracker = new StructuredBlockTracker();
+    const task = insertTask(db, { id: "tkill-salvage", status: "refinement" });
 
-    const chunks = [
-      "preface\n---REFINE",
-      "MENT PLAN---\n## 背景\nrefinement plan 本文をそのまま保存する\n",
-      "## 要件\n- 追加情報が必要な場合のみ Input Required とする\n",
-      "- 対象ファイルを指定してください等の文言が plan 内にあっても無視\n",
-      "## 実装計画\n1. event-classifier.ts を調整\n2. process-manager.ts を調整\n",
-      "---END REFINEMENT---",
-    ];
+    const plan = "---REFINEMENT PLAN---\n## Plan\n1. Do X\n---END REFINEMENT---";
+    insertStagedAssistantLog(db, task.id, "refinement", plan, 2_000);
 
-    for (const chunk of chunks) {
-      const result = registerTextInteractivePromptFromAssistantChunk(
-        db,
-        task.id,
-        chunk,
-        tracker,
-        12_345,
-      );
-      assert.deepStrictEqual(result, { detected: false });
-    }
+    // Simulate what persistRefinementPlanFromCurrentRun does:
+    const extraction = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    persistRefinementPlanExtraction(db, task.id, extraction, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 3_000,
+    });
 
     const row = db.prepare(
-      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
-    ).get(task.id) as { interactive_prompt_data: string | null };
+      "SELECT refinement_plan, refinement_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_plan: string | null; refinement_completed_at: number | null };
 
-    assert.equal(getPendingInteractivePrompt(task.id), undefined);
-    assert.equal(row.interactive_prompt_data, null);
+    assert.equal(row.refinement_plan, plan);
+    assert.equal(row.refinement_completed_at, 3_000);
   });
 
-  it("persists a real prompt once the refinement block has ended", () => {
+  it("does not overwrite a plan saved by kill-salvage when performFinalization runs", () => {
+    // After interactive-prompt kill, the plan is salvaged immediately.
+    // Then performFinalization also calls persistRefinementPlanFromCurrentRun.
+    // The second call must not destroy the saved plan.
     const db = createDb();
-    const task = insertTask(db, { id: "tprompt-real" });
-    const tracker = new StructuredBlockTracker();
+    const task = insertTask(db, { id: "tdouble-save", status: "refinement" });
 
-    for (const chunk of [
-      "---REFINEMENT PLAN---\n## Plan\n1. Update classifier\n",
-      "---END REFINEMENT---",
-    ]) {
-      const result = registerTextInteractivePromptFromAssistantChunk(
-        db,
-        task.id,
-        chunk,
-        tracker,
-        20_000,
-      );
-      assert.deepStrictEqual(result, { detected: false });
-    }
+    const plan = "---REFINEMENT PLAN---\n## Plan\n- Step 1\n---END REFINEMENT---";
+    insertStagedAssistantLog(db, task.id, "refinement", plan, 2_000);
 
-    const detected = registerTextInteractivePromptFromAssistantChunk(
-      db,
-      task.id,
-      "対象ファイルのパスを指定してください。",
-      tracker,
-      20_001,
-    );
+    // First save (kill-salvage)
+    const extraction1 = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    persistRefinementPlanExtraction(db, task.id, extraction1, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 2_500,
+    });
 
-    assert.equal(detected.detected, true);
-    if (!detected.detected) {
-      assert.fail("expected a real text prompt to be detected");
-    }
+    // Second save (performFinalization) — same logs, same extraction
+    const extraction2 = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    persistRefinementPlanExtraction(db, task.id, extraction2, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 3_000,
+    });
 
     const row = db.prepare(
-      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
-    ).get(task.id) as { interactive_prompt_data: string | null };
+      "SELECT refinement_plan, refinement_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_plan: string | null; refinement_completed_at: number | null };
 
-    assert.ok(row.interactive_prompt_data);
-    const persisted = JSON.parse(row.interactive_prompt_data) as {
-      createdAt: number;
-      data: { promptType: string; detectedText?: string };
-    };
-    assert.equal(persisted.createdAt, 20_001);
-    assert.equal(persisted.data.promptType, "text_input_request");
-    assert.equal(persisted.data.detectedText, "対象ファイルのパスを指定してください。");
-
-    clearPendingInteractivePrompt(task.id, db);
-  });
-
-  it("does not detect a prompt-like end chunk when the chunk closes an existing refinement block", () => {
-    const db = createDb();
-    const task = insertTask(db, { id: "tprompt-end-marker-same-chunk" });
-    const tracker = new StructuredBlockTracker();
-
-    const startChunk = registerTextInteractivePromptFromAssistantChunk(
-      db,
-      task.id,
-      "---REFINEMENT PLAN---\n## 実装計画\n1. process-manager.ts の structured block 判定を修正する\n",
-      tracker,
-      30_000,
-    );
-    assert.deepStrictEqual(startChunk, { detected: false });
-
-    const endChunk = registerTextInteractivePromptFromAssistantChunk(
-      db,
-      task.id,
-      "対象ファイルを指定してください\n---END REFINEMENT---",
-      tracker,
-      30_001,
-    );
-    assert.deepStrictEqual(endChunk, { detected: false });
-
-    const row = db.prepare(
-      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
-    ).get(task.id) as { interactive_prompt_data: string | null };
-
-    assert.equal(getPendingInteractivePrompt(task.id), undefined);
-    assert.equal(row.interactive_prompt_data, null);
+    assert.equal(row.refinement_plan, plan);
+    // Second call overwrites the timestamp, which is fine — same plan.
+    assert.equal(row.refinement_completed_at, 3_000);
   });
 });
