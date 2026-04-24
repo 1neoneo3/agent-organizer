@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { rmSync } from "node:fs";
+import { rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { before, after, afterEach, describe, it } from "node:test";
@@ -507,6 +507,322 @@ describe("POST /tasks/:id/feedback edge cases", () => {
       assert.equal(row.auto_respawn_count, 0, "auto_respawn_count should be reset to 0");
       assert.equal(row.completed_at, null, "completed_at should be cleared");
       assert.equal(spawnedPreviousStatus, "pr_review", "previousStatus should be the status before feedback");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+describe("POST /tasks/:id/feedback additional coverage", () => {
+  before(() => {
+    rmSync(TEST_DB_PATH, { force: true });
+  });
+
+  after(() => {
+    rmSync(TEST_DB_PATH, { force: true });
+  });
+
+  afterEach(() => {
+    rmSync(join("data", "feedback"), { recursive: true, force: true });
+    rmSync(TEST_DB_PATH, { force: true });
+  });
+
+  it("in_progress task with running process: restarts via queueFeedbackAndRestart, no stage transitions", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertInProgressTask(db, taskId, agentId);
+
+    let queueCalls = 0;
+    let queuedMessage = "";
+    let queuedPreviousStatus = "";
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: (_id, msg, prev) => {
+        queueCalls += 1;
+        queuedMessage = msg;
+        queuedPreviousStatus = prev;
+        return true;
+      },
+      spawnAgent: async () => {
+        throw new Error("spawnAgent should not run for in_progress running task");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Fix the edge case." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { sent: boolean; restarted: boolean };
+      assert.equal(body.sent, true);
+      assert.equal(body.restarted, true);
+      assert.equal(queueCalls, 1);
+      assert.equal(queuedMessage, "Fix the edge case.");
+      assert.equal(queuedPreviousStatus, "in_progress");
+      assert.deepEqual(getTransitions(db, taskId), [], "in_progress feedback should not produce refinement transitions");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("deleted agent (agent row missing): returns restarted=false, no spawn", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+    db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
+
+    let spawnCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        return { pid: 0 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Agent was deleted." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { sent: boolean; restarted: boolean };
+      assert.equal(body.sent, true);
+      assert.equal(body.restarted, false, "should not restart when agent row is missing");
+      assert.equal(spawnCalls, 0);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("persists feedback to file system and stores message in database", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    const feedbackContent = "Add retry logic for transient failures.";
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: feedbackContent }),
+      });
+      assert.equal(response.status, 200);
+
+      const feedbackPath = join("data", "feedback", `${taskId}.md`);
+      assert.ok(existsSync(feedbackPath), "feedback file should exist");
+      const fileContent = readFileSync(feedbackPath, "utf-8");
+      assert.ok(fileContent.includes(feedbackContent), "feedback file should contain the content");
+      assert.ok(fileContent.includes("CEO Feedback"), "feedback file should contain header");
+
+      const msg = db.prepare(
+        "SELECT content, message_type, sender_type FROM messages WHERE task_id = ? AND message_type = 'directive'",
+      ).get(taskId) as { content: string; message_type: string; sender_type: string } | undefined;
+      assert.ok(msg, "directive message should be stored");
+      assert.equal(msg.content, feedbackContent);
+      assert.equal(msg.sender_type, "user");
+
+      const log = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '[CEO Feedback]%'",
+      ).get(taskId) as { message: string } | undefined;
+      assert.ok(log, "CEO Feedback log should be stored");
+      assert.ok(log.message.includes(feedbackContent));
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("accepts whitespace-only content (min(1) checks length, not trimmed length)", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "   " }),
+      });
+      assert.equal(response.status, 200, "whitespace passes z.string().min(1) validation");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("broadcasts task_update via websocket on non-refinement idle-agent path", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertInProgressTask(db, taskId, agentId);
+    db.prepare("UPDATE tasks SET status = 'pr_review', updated_at = ? WHERE id = ?")
+      .run(Date.now(), taskId);
+
+    const { server, baseUrl, events } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Rework the PR." }),
+      });
+      assert.equal(response.status, 200);
+
+      const taskUpdates = events.filter((e) => e.type === "task_update");
+      assert.ok(taskUpdates.length >= 1, "should broadcast at least one task_update for status reset");
+
+      const statusUpdate = taskUpdates.find(
+        (e) => (e.payload as { status?: string }).status === "in_progress",
+      );
+      assert.ok(statusUpdate, "should broadcast task_update with in_progress status");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("spawnAgent failure does not crash the response (async fire-and-forget)", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        throw new Error("simulated spawn failure");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "This should succeed despite spawn error." }),
+      });
+      // Response is sent before spawnAgent runs (fire-and-forget)
+      assert.equal(response.status, 200);
+      const body = await response.json() as { sent: boolean; restarted: boolean };
+      assert.equal(body.sent, true);
+      assert.equal(body.restarted, true);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("sequential feedbacks on refinement task accumulate correct number of transitions", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      for (const msg of ["First feedback.", "Second feedback.", "Third feedback."]) {
+        // Re-read agent status (spawnAgent mock sets it to working in real scenario)
+        // Reset agent to idle for each iteration to simulate agent finishing
+        db.prepare("UPDATE agents SET status = 'idle', updated_at = ? WHERE id = ?")
+          .run(Date.now(), agentId);
+        db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?")
+          .run(Date.now(), taskId);
+
+        const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ content: msg }),
+        });
+        assert.equal(response.status, 200);
+      }
+
+      const transitions = getTransitions(db, taskId);
+      assert.equal(transitions.length, 6, "3 feedbacks × 2 transitions each = 6 total");
+      for (let i = 0; i < transitions.length; i += 2) {
+        assert.equal(transitions[i], "__STAGE_TRANSITION__:refinement→inbox");
+        assert.equal(transitions[i + 1], "__STAGE_TRANSITION__:inbox→refinement");
+      }
+
+      const feedbackLogs = (
+        db.prepare(
+          "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '[CEO Feedback]%' ORDER BY id ASC",
+        ).all(taskId) as Array<{ message: string }>
+      );
+      assert.equal(feedbackLogs.length, 3, "should have 3 CEO Feedback log entries");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("missing content field returns 400", async () => {
+    const db = await createDb();
+    const taskId = randomUUID();
+    insertUnassignedRefinementTask(db, taskId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 0 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      assert.equal(response.status, 400, "missing content field should return 400");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
