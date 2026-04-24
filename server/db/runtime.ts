@@ -4,6 +4,11 @@ import { dirname } from "node:path";
 import { SCHEMA_SQL } from "./schema.js";
 import { DB_PATH, SETTINGS_DEFAULTS, DEFAULT_CLI_MODELS } from "../config/runtime.js";
 import { detectRepositoryUrl } from "../workflow/git-utils.js";
+import {
+  VALID_TASK_NUMBER_SQL,
+  buildRecoveredTaskTitle,
+  isUuidLikeTitle,
+} from "../domain/task-number.js";
 
 let db: DatabaseSync | null = null;
 
@@ -63,7 +68,10 @@ export function initializeDb(): DatabaseSync {
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
   migrateStageAgentSelectionSettings(db);
+  const repairedTaskNumberMap = repairBrokenTaskNumbers(db);
   backfillTaskNumbers(db);
+  repairBrokenDependsOnReferences(db, repairedTaskNumberMap);
+  repairMachineGeneratedTaskTitles(db);
   seedDefaults(db);
   backfillCliModels(db);
   return db;
@@ -532,6 +540,48 @@ function migrateAddLogStageAgent(db: DatabaseSync): void {
   `);
 }
 
+/**
+ * Detect and repair task_number values that are UUID hex fragments
+ * (e.g. `#40b0c5`, `#082098`) rather than sequential decimals. Such
+ * values poison `nextTaskNumber()` by inflating the MAX and causing
+ * all subsequent task numbers to jump. The repair re-assigns these
+ * rows with the next valid sequential number.
+ *
+ * Detection: any `#`-prefixed task_number where the numeric part does
+ * not survive a round-trip through INTEGER (leading zeros are stripped,
+ * hex letters cause partial parsing).
+ */
+function repairBrokenTaskNumbers(db: DatabaseSync): Map<string, string> {
+  const broken = db
+    .prepare(
+      `SELECT id, task_number FROM tasks
+       WHERE task_number LIKE '#%'
+         AND LENGTH(task_number) > 1
+         AND CAST(CAST(SUBSTR(task_number, 2) AS INTEGER) AS TEXT) != SUBSTR(task_number, 2)
+       ORDER BY created_at ASC`,
+    ).all() as Array<{ id: string; task_number: string }>;
+  if (broken.length === 0) return new Map();
+
+  const maxRow = db
+    .prepare(
+      `SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE ${VALID_TASK_NUMBER_SQL}`,
+    )
+    .get() as { max_num: number | null } | undefined;
+  let seq = (maxRow?.max_num ?? 0) + 1;
+  const repaired = new Map<string, string>();
+
+  const update = db.prepare(
+    "UPDATE tasks SET task_number = ? WHERE id = ?",
+  );
+  for (const row of broken) {
+    const newTaskNumber = `#${seq}`;
+    update.run(newTaskNumber, row.id);
+    repaired.set(row.task_number, newTaskNumber);
+    seq++;
+  }
+  return repaired;
+}
+
 function backfillTaskNumbers(db: DatabaseSync): void {
   const rows = db.prepare(
     "SELECT id FROM tasks WHERE task_number IS NULL ORDER BY created_at ASC"
@@ -539,7 +589,7 @@ function backfillTaskNumbers(db: DatabaseSync): void {
   if (rows.length === 0) return;
 
   const maxRow = db.prepare(
-    "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
+    `SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE ${VALID_TASK_NUMBER_SQL}`
   ).get() as { max_num: number | null } | undefined;
   let seq = (maxRow?.max_num ?? 0) + 1;
 
@@ -547,6 +597,58 @@ function backfillTaskNumbers(db: DatabaseSync): void {
   for (const row of rows) {
     update.run(`#${seq}`, row.id);
     seq++;
+  }
+}
+
+function repairBrokenDependsOnReferences(
+  db: DatabaseSync,
+  repairedTaskNumberMap: ReadonlyMap<string, string>,
+): void {
+  if (repairedTaskNumberMap.size === 0) return;
+
+  const rows = db.prepare(
+    "SELECT id, depends_on FROM tasks WHERE depends_on IS NOT NULL ORDER BY created_at ASC",
+  ).all() as Array<{ id: string; depends_on: string | null }>;
+  if (rows.length === 0) return;
+
+  const update = db.prepare("UPDATE tasks SET depends_on = ?, updated_at = ? WHERE id = ?");
+  const now = Date.now();
+
+  for (const row of rows) {
+    if (!row.depends_on) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.depends_on);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+
+    let changed = false;
+    const repairedDependsOn = parsed.map((entry) => {
+      if (typeof entry !== "string") return entry;
+      const repaired = repairedTaskNumberMap.get(entry);
+      if (!repaired) return entry;
+      changed = true;
+      return repaired;
+    });
+
+    if (!changed) continue;
+    update.run(JSON.stringify(repairedDependsOn), now, row.id);
+  }
+}
+
+function repairMachineGeneratedTaskTitles(db: DatabaseSync): void {
+  const rows = db.prepare(
+    "SELECT id, title, task_number FROM tasks WHERE title LIKE 'Task %' ORDER BY created_at ASC",
+  ).all() as Array<{ id: string; title: string; task_number: string | null }>;
+  if (rows.length === 0) return;
+
+  const update = db.prepare("UPDATE tasks SET title = ?, updated_at = ? WHERE id = ?");
+  for (const row of rows) {
+    if (!isUuidLikeTitle(row.title)) continue;
+    update.run(buildRecoveredTaskTitle(row.task_number, row.id), Date.now(), row.id);
   }
 }
 

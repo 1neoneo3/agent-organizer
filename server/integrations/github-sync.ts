@@ -14,6 +14,7 @@ import {
   GITHUB_SYNC_REPO,
   GITHUB_SYNC_TOKEN,
 } from "../config/runtime.js";
+import { nextTaskNumber } from "../domain/task-number.js";
 
 export interface GitHubIssue {
   id: number;
@@ -24,13 +25,6 @@ export interface GitHubIssue {
   state: "open" | "closed";
   pull_request?: unknown;
   labels?: Array<{ name?: string } | string>;
-}
-
-function nextTaskNumber(db: DatabaseSync): string {
-  const row = db.prepare(
-    "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
-  ).get() as { max_num: number | null } | undefined;
-  return `#${(row?.max_num ?? 0) + 1}`;
 }
 
 function priorityFromLabels(issue: GitHubIssue): number {

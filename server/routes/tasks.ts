@@ -30,6 +30,7 @@ import {
   isBlocked,
 } from "../domain/task-dependencies.js";
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
+import { nextTaskNumber, isUuidLikeTitle } from "../domain/task-number.js";
 import {
   isTaskOverridableKey,
   mergeOverrides,
@@ -190,13 +191,6 @@ function sendMeasuredJson(
   res.type("application/json").send(body);
 }
 
-function nextTaskNumber(db: RuntimeContext["db"]): string {
-  const row = db.prepare(
-    "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
-  ).get() as { max_num: number | null } | undefined;
-  return `#${(row?.max_num ?? 0) + 1}`;
-}
-
 function markRefinementRevisionRequested(
   db: RuntimeContext["db"],
   taskId: string,
@@ -276,6 +270,13 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     const { title, description, assigned_agent_id, project_path, priority, task_size, repository_url, repository_urls, settings_overrides: overridesPatch } = parsed.data;
+
+    if (isUuidLikeTitle(title)) {
+      return res.status(400).json({
+        error: "invalid_title",
+        message: "Title must not be a machine-generated UUID placeholder",
+      });
+    }
 
     // Reject unknown override keys up front so typos cannot silently
     // create dead config in tasks.settings_overrides.
@@ -375,6 +376,13 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     const updates = parsed.data;
     const existingTask = existing as unknown as Task;
+
+    if (updates.title !== undefined && isUuidLikeTitle(updates.title)) {
+      return res.status(400).json({
+        error: "invalid_title",
+        message: "Title must not be a machine-generated UUID placeholder",
+      });
+    }
 
     // Validate + apply settings_overrides patch. We merge (not replace)
     // so callers can flip a single toggle without having to round-trip
