@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { before, after, afterEach, describe, it } from "node:test";
@@ -8,9 +8,9 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
-import { createTasksRouter } from "./tasks.js";
 
-const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
+const TEST_DB_DIR = mkdtempSync(join(tmpdir(), "ao-feedback-route-"));
+const TEST_DB_PATH = join(TEST_DB_DIR, "test.db");
 process.env.DB_PATH = TEST_DB_PATH;
 
 function createCache(): CacheService {
@@ -40,14 +40,23 @@ function createWsRecorder() {
 }
 
 async function createDb(): Promise<DatabaseSync> {
-  const { initializeDb } = await import("../db/runtime.js");
-  return initializeDb();
+  const mod = await import("../db/runtime.js");
+  try {
+    const prev = mod.getDb();
+    prev.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    prev.close();
+  } catch { /* no prior connection */ }
+  rmSync(TEST_DB_PATH, { force: true });
+  rmSync(`${TEST_DB_PATH}-wal`, { force: true });
+  rmSync(`${TEST_DB_PATH}-shm`, { force: true });
+  return mod.initializeDb();
 }
 
 async function startServer(
   db: DatabaseSync,
-  deps: Parameters<typeof createTasksRouter>[1],
+  deps: Parameters<typeof import("./tasks.js").createTasksRouter>[1],
 ): Promise<{ server: Server; baseUrl: string; events: Array<{ type: string; payload: unknown; options?: unknown }> }> {
+  const { createTasksRouter } = await import("./tasks.js");
   const { ws, events } = createWsRecorder();
   const app = express();
   app.use(express.json());
@@ -98,17 +107,12 @@ function getTask(db: DatabaseSync, taskId: string): Record<string, unknown> | un
 }
 
 describe("POST /tasks/:id/feedback refinement regressions", () => {
-  before(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
-
   after(() => {
-    rmSync(TEST_DB_PATH, { force: true });
+    rmSync(TEST_DB_DIR, { recursive: true, force: true });
   });
 
   afterEach(() => {
     rmSync(join("data", "feedback"), { recursive: true, force: true });
-    rmSync(TEST_DB_PATH, { force: true });
   });
 
   it("returns 404 when the task does not exist", async () => {
@@ -431,6 +435,158 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
       db.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("completed refinement task (completed_at set) takes idle-agent respawn path", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    const now = Date.now();
+    const taskNumber = `#${++testTaskSeq}`;
+    db.prepare(
+      `INSERT INTO tasks (id, title, description, assigned_agent_id, status, task_size, task_number, completed_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'refinement', 'medium', ?, ?, ?, ?)`,
+    ).run(taskId, "Completed refinement", "desc", agentId, taskNumber, now, now, now);
+
+    let spawnCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async (_db, _ws, _agent, task, options) => {
+        spawnCalls += 1;
+        assert.equal(task.status, "refinement");
+        assert.equal(options?.previousStatus, "refinement");
+        return { pid: 1 } as never;
+      },
+    });
+    try {
+      const res = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise the completed plan." }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnCalls, 1);
+
+      const task = getTask(db, taskId);
+      assert.ok(task);
+      assert.ok(typeof task.refinement_revision_requested_at === "number");
+      assert.equal(task.refinement_revision_completed_at, null);
+      assert.deepEqual(getTransitions(db, taskId), [
+        "__STAGE_TRANSITION__:refinement→inbox",
+        "__STAGE_TRANSITION__:inbox→refinement",
+      ]);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+      });
+    }
+  });
+
+  it("non-refinement feedback resets auto_respawn_count and clears completed_at", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    const now = Date.now();
+    const taskNumber = `#${++testTaskSeq}`;
+    db.prepare(
+      `INSERT INTO tasks (id, title, description, assigned_agent_id, status, task_size, task_number, completed_at, auto_respawn_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'done', 'medium', ?, ?, 3, ?, ?)`,
+    ).run(taskId, "Auto-respawned task", "desc", agentId, taskNumber, now, now, now);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1 }) as never,
+    });
+    try {
+      const res = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Rework the implementation." }),
+      });
+      assert.equal(res.status, 200);
+      const task = getTask(db, taskId);
+      assert.ok(task);
+      assert.equal(task.status, "in_progress");
+      assert.equal(task.completed_at, null);
+      assert.equal(task.auto_respawn_count, 0);
+      assert.equal(task.refinement_revision_requested_at, null);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+      });
+    }
+  });
+
+  it("persists feedback message in the messages table", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1 }) as never,
+    });
+    try {
+      await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Add error handling." }),
+      });
+      const msgs = db.prepare(
+        "SELECT content, message_type, task_id FROM messages WHERE task_id = ?",
+      ).all(taskId) as Array<{ content: string; message_type: string; task_id: string }>;
+      assert.equal(msgs.length, 1);
+      assert.equal(msgs[0].content, "Add error handling.");
+      assert.equal(msgs[0].message_type, "directive");
+      assert.equal(msgs[0].task_id, taskId);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+      });
+    }
+  });
+
+  it("appends feedback content to the feedback file on disk", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1 }) as never,
+    });
+    try {
+      const res = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Check edge cases." }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { feedback_path: string };
+      assert.ok(body.feedback_path);
+
+      const { readFileSync, existsSync } = await import("node:fs");
+      assert.ok(existsSync(body.feedback_path), "feedback file should exist on disk");
+      const contents = readFileSync(body.feedback_path, "utf-8");
+      assert.ok(contents.includes("Check edge cases."));
+      assert.ok(contents.includes("CEO Feedback"));
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
       });
     }
   });

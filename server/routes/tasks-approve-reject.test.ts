@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { before, after, afterEach, describe, it } from "node:test";
@@ -8,9 +8,9 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
-import { createTasksRouter } from "./tasks.js";
 
-const TEST_DB_PATH = join(tmpdir(), `ao-approve-reject-${process.pid}-${Date.now()}.db`);
+const TEST_DB_DIR = mkdtempSync(join(tmpdir(), "ao-approve-reject-"));
+const TEST_DB_PATH = join(TEST_DB_DIR, "test.db");
 process.env.DB_PATH = TEST_DB_PATH;
 
 function createCache(): CacheService {
@@ -40,14 +40,23 @@ function createWsRecorder() {
 }
 
 async function createDb(): Promise<DatabaseSync> {
-  const { initializeDb } = await import("../db/runtime.js");
-  return initializeDb();
+  const mod = await import("../db/runtime.js");
+  try {
+    const prev = mod.getDb();
+    prev.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    prev.close();
+  } catch { /* no prior connection */ }
+  rmSync(TEST_DB_PATH, { force: true });
+  rmSync(`${TEST_DB_PATH}-wal`, { force: true });
+  rmSync(`${TEST_DB_PATH}-shm`, { force: true });
+  return mod.initializeDb();
 }
 
 async function startServer(
   db: DatabaseSync,
-  deps: Parameters<typeof createTasksRouter>[1],
+  deps: Parameters<typeof import("./tasks.js").createTasksRouter>[1],
 ): Promise<{ server: Server; baseUrl: string; events: Array<{ type: string; payload: unknown; options?: unknown }> }> {
+  const { createTasksRouter } = await import("./tasks.js");
   const { ws, events } = createWsRecorder();
   const app = express();
   app.use(express.json());
@@ -100,16 +109,8 @@ function getLogs(db: DatabaseSync, taskId: string): string[] {
 }
 
 describe("POST /tasks/:id/approve and /reject — refinement regressions", () => {
-  before(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
-
   after(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
-
-  afterEach(() => {
-    rmSync(TEST_DB_PATH, { force: true });
+    rmSync(TEST_DB_DIR, { recursive: true, force: true });
   });
 
   // --- approve ---
@@ -300,6 +301,169 @@ describe("POST /tasks/:id/approve and /reject — refinement regressions", () =>
       assert.equal(res.status, 200);
       const body = (await res.json()) as { rejected: boolean; reason: string };
       assert.equal(body.reason, "Refinement plan rejected");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+      });
+    }
+  });
+
+  // --- human_review approve/reject ---
+
+  it("advances human_review task to done on approval", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertTask(db, taskId, agentId, "human_review");
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('default_enable_human_review', 'true') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run();
+
+    const { server, baseUrl } = await startServer(db, {
+      spawnAgent: async () => ({ pid: 0 }) as never,
+    });
+    try {
+      const res = await fetch(`${baseUrl}/tasks/${taskId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { approved: boolean; next_status: string };
+      assert.equal(body.approved, true);
+      assert.equal(body.next_status, "done");
+
+      const task = getTask(db, taskId);
+      assert.ok(task);
+      assert.equal(task.status, "done");
+
+      const logs = getLogs(db, taskId);
+      assert.ok(logs.some((l) => l.includes("Human review") && l.includes("approved")));
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+      });
+    }
+  });
+
+  it("rejects human_review task and releases the agent", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertTask(db, taskId, agentId, "human_review");
+
+    const { server, baseUrl, events } = await startServer(db, {
+      spawnAgent: async () => ({ pid: 0 }) as never,
+    });
+    try {
+      const res = await fetch(`${baseUrl}/tasks/${taskId}/reject`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Needs more unit tests" }),
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { rejected: boolean; reason: string };
+      assert.equal(body.rejected, true);
+      assert.equal(body.reason, "Needs more unit tests");
+
+      const task = getTask(db, taskId);
+      assert.ok(task);
+      assert.equal(task.status, "inbox");
+      assert.equal(task.assigned_agent_id, null);
+
+      const agent = getAgent(db, agentId);
+      assert.ok(agent);
+      assert.equal(agent.status, "idle");
+
+      const logs = getLogs(db, taskId);
+      assert.ok(logs.some((l) => l.includes("Human review") && l.includes("rejected")));
+
+      assert.ok(events.some((e) => e.type === "agent_status"));
+      assert.ok(events.some((e) => e.type === "task_update"));
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+      });
+    }
+  });
+
+  it("reject human_review uses default reason when none is provided", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertTask(db, taskId, agentId, "human_review");
+
+    const { server, baseUrl } = await startServer(db, {
+      spawnAgent: async () => ({ pid: 0 }) as never,
+    });
+    try {
+      const res = await fetch(`${baseUrl}/tasks/${taskId}/reject`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as { rejected: boolean; reason: string };
+      assert.equal(body.reason, "Rejected by human reviewer");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+      });
+    }
+  });
+
+  // --- dependency blocking ---
+
+  it("returns 409 when refinement approval is blocked by unfinished dependency", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const depTaskId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertTask(db, depTaskId, null, "in_progress");
+    const depTask = getTask(db, depTaskId);
+    const depTaskNumber = depTask!.task_number as string;
+
+    insertTask(db, taskId, agentId, "refinement");
+    db.prepare("UPDATE tasks SET depends_on = ? WHERE id = ?").run(
+      JSON.stringify([depTaskNumber]),
+      taskId,
+    );
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('default_enable_refinement', 'true') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run();
+
+    const { server, baseUrl, events } = await startServer(db, {
+      spawnAgent: async () => ({ pid: 0 }) as never,
+    });
+    try {
+      const res = await fetch(`${baseUrl}/tasks/${taskId}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+      assert.equal(res.status, 409);
+      const body = (await res.json()) as { error: string; returned_to: string };
+      assert.equal(body.error, "blocked_by_dependencies");
+      assert.equal(body.returned_to, "inbox");
+
+      const task = getTask(db, taskId);
+      assert.ok(task);
+      assert.equal(task.status, "inbox");
+      assert.equal(task.assigned_agent_id, null);
+
+      const agent = getAgent(db, agentId);
+      assert.ok(agent);
+      assert.equal(agent.status, "idle");
+
+      const logs = getLogs(db, taskId);
+      assert.ok(logs.some((l) => l.includes("blocked") && l.includes("inbox")));
+
+      assert.ok(events.some((e) => e.type === "task_update"));
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {

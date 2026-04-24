@@ -42,4 +42,14 @@ describe("getRefinementRevisionState", () => {
       "completed",
     );
   });
+
+  it("returns completed when completedAt equals requestedAt (boundary)", () => {
+    assert.equal(
+      getRefinementRevisionState({
+        refinement_revision_requested_at: 5_000,
+        refinement_revision_completed_at: 5_000,
+      }),
+      "completed",
+    );
+  });
 });
