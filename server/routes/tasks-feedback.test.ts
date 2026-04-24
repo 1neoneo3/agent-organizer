@@ -2,16 +2,51 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { before, after, afterEach, describe, it } from "node:test";
 import express from "express";
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
+import { SCHEMA_SQL } from "../db/schema.js";
 import { createTasksRouter } from "./tasks.js";
 
-const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
-process.env.DB_PATH = TEST_DB_PATH;
+function createTestDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(SCHEMA_SQL);
+
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS task_logs_fill_metadata
+    AFTER INSERT ON task_logs
+    FOR EACH ROW
+    WHEN NEW.stage IS NULL OR NEW.agent_id IS NULL
+    BEGIN
+      UPDATE task_logs
+      SET stage = COALESCE(NEW.stage, (SELECT status FROM tasks WHERE id = NEW.task_id)),
+          agent_id = COALESCE(NEW.agent_id, (SELECT assigned_agent_id FROM tasks WHERE id = NEW.task_id))
+      WHERE id = NEW.id;
+    END;
+  `);
+
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS tasks_log_stage_transition
+    AFTER UPDATE OF status ON tasks
+    FOR EACH ROW
+    WHEN NEW.status IS NOT OLD.status
+    BEGIN
+      INSERT INTO task_logs (task_id, kind, message, stage, agent_id)
+      VALUES (
+        NEW.id,
+        'system',
+        '__STAGE_TRANSITION__:' || COALESCE(OLD.status, 'null') || '→' || NEW.status,
+        NEW.status,
+        NEW.assigned_agent_id
+      );
+    END;
+  `);
+
+  return db;
+}
 
 function createCache(): CacheService {
   return {
@@ -37,11 +72,6 @@ function createWsRecorder() {
     },
     events,
   };
-}
-
-async function createDb(): Promise<DatabaseSync> {
-  const { initializeDb } = await import("../db/runtime.js");
-  return initializeDb();
 }
 
 async function startServer(
@@ -74,13 +104,16 @@ function insertAgent(db: DatabaseSync, agentId: string, status: "idle" | "workin
   ).run(agentId, `Agent ${agentId}`, status, now, now);
 }
 
+let taskCounter = 0;
+
 function insertRefinementTask(db: DatabaseSync, taskId: string, agentId: string): void {
   const now = Date.now();
+  taskCounter += 1;
   db.prepare(
     `INSERT INTO tasks (
       id, title, description, assigned_agent_id, status, task_size, task_number, created_at, updated_at
     ) VALUES (?, ?, ?, ?, 'refinement', 'medium', ?, ?, ?)`,
-  ).run(taskId, `Task ${taskId}`, "Refinement feedback regression", agentId, `#${taskId.slice(0, 6)}`, now, now);
+  ).run(taskId, `Task ${taskId}`, "Refinement feedback regression", agentId, `#${taskCounter}`, now, now);
 }
 
 function getTransitions(db: DatabaseSync, taskId: string): string[] {
@@ -93,20 +126,15 @@ function getTransitions(db: DatabaseSync, taskId: string): string[] {
 
 describe("POST /tasks/:id/feedback refinement regressions", () => {
   before(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
-
-  after(() => {
-    rmSync(TEST_DB_PATH, { force: true });
+    taskCounter = 0;
   });
 
   afterEach(() => {
     rmSync(join("data", "feedback"), { recursive: true, force: true });
-    rmSync(TEST_DB_PATH, { force: true });
   });
 
   it("records one refinement round-trip when an active child process is restarted", async () => {
-    const db = await createDb();
+    const db = createTestDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "working");
@@ -150,7 +178,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
   });
 
   it("does not duplicate transitions when feedback falls through to idle-agent respawn", async () => {
-    const db = await createDb();
+    const db = createTestDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "idle");
