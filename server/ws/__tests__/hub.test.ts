@@ -200,4 +200,118 @@ describe("createWsHub", () => {
     const flushed = JSON.parse(ws.sent[2]!).payload as Array<{ message: string }>;
     assert.deepEqual(flushed.map((p) => p.message), ["three"]);
   });
+
+  it("suppresses duplicate task_update payloads for the same entity", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 1);
+  });
+
+  it("delivers task_update when payload differs from last delivered", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "done" });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 2);
+    assert.equal(JSON.parse(ws.sent[1]!).payload.status, "done");
+  });
+
+  it("suppresses duplicate agent_status payloads", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("agent_status", { id: "agent-1", status: "idle", current_task_id: null });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("agent_status", { id: "agent-1", status: "idle", current_task_id: null });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("agent_status", { id: "agent-1", status: "working", current_task_id: "task-1" });
+    assert.equal(ws.sent.length, 2);
+  });
+
+  it("does not update dedup state when no recipients exist", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 0);
+    t.mock.timers.tick(50);
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+    assert.equal(JSON.parse(ws.sent[0]!).payload.status, "in_progress");
+  });
+
+  it("coalesces task_update by entity id within batch window", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "qa_testing" });
+    hub.broadcast("task_update", { id: "task-1", status: "done" });
+
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 2);
+    assert.equal(JSON.parse(ws.sent[1]!).payload.status, "done");
+  });
+
+  it("flushes task_update as individual messages, not arrays", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    hub.broadcast("task_update", { id: "task-2", status: "done" });
+    hub.broadcast("task_update", { id: "task-3", status: "inbox" });
+
+    assert.equal(ws.sent.length, 1);
+
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 3);
+    for (let i = 0; i < 3; i++) {
+      const msg = JSON.parse(ws.sent[i]!);
+      assert.equal(msg.type, "task_update");
+      assert.ok(!Array.isArray(msg.payload));
+    }
+    assert.equal(JSON.parse(ws.sent[0]!).payload.id, "task-1");
+    assert.equal(JSON.parse(ws.sent[1]!).payload.id, "task-2");
+    assert.equal(JSON.parse(ws.sent[2]!).payload.id, "task-3");
+  });
 });

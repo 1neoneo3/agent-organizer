@@ -62,13 +62,9 @@ export const TASK_RUN_HARD_TIMEOUT_MS = 30 * 60 * 1000; // 30 min
 
 export const WS_BATCH_INTERVALS: Record<string, number> = {
   subtask_update: 150,
-  // cli_output is the busiest event on the bus: every stdout chunk from
-  // every running agent produces one broadcast. Under parallel load this
-  // floods the main thread with JSON.stringify + ws.send calls and
-  // starves DB writes. Batching at 80ms is below the human perception
-  // threshold for "live log" feel but cuts the call rate roughly 10x
-  // when 10 agents are streaming simultaneously.
   cli_output: 80,
+  task_update: 50,
+  agent_status: 50,
 };
 export const WS_MAX_BATCH_QUEUE = 60;
 

@@ -4,6 +4,9 @@ import { recordWsBroadcast } from "../perf/metrics.js";
 
 const PING_INTERVAL_MS = 30_000;
 
+const DEDUP_TYPES = new Set(["task_update", "agent_status"]);
+const COALESCE_FLUSH_TYPES = new Set(["task_update", "agent_status"]);
+
 interface BroadcastOptions {
   taskId?: string;
 }
@@ -18,6 +21,13 @@ export interface WsHub {
   dispose(): void;
 }
 
+function extractEntityId(payload: unknown): string | null {
+  if (payload && typeof payload === "object" && !Array.isArray(payload) && "id" in payload) {
+    return String((payload as Record<string, unknown>).id);
+  }
+  return null;
+}
+
 export function createWsHub(): WsHub {
   const clients = new Set<WebSocket>();
   const taskSubscriptions = new WeakMap<WebSocket, Set<string>>();
@@ -25,6 +35,7 @@ export function createWsHub(): WsHub {
     string,
     { type: string; queue: Array<{ payload: unknown; taskId?: string }>; timer: ReturnType<typeof setTimeout> }
   >();
+  const lastDelivered = new Map<string, string>();
 
   // --- ping/pong heartbeat ---
   const aliveMap = new WeakMap<WebSocket, boolean>();
@@ -32,7 +43,6 @@ export function createWsHub(): WsHub {
   const pingTimer = setInterval(() => {
     for (const ws of clients) {
       if (aliveMap.get(ws) === false) {
-        // No pong received since last ping — terminate
         ws.terminate();
         clients.delete(ws);
         continue;
@@ -60,6 +70,10 @@ export function createWsHub(): WsHub {
 
   function dispose(): void {
     clearInterval(pingTimer);
+    for (const batch of batches.values()) {
+      clearTimeout(batch.timer);
+    }
+    batches.clear();
   }
   // --- end heartbeat ---
 
@@ -72,6 +86,19 @@ export function createWsHub(): WsHub {
   }
 
   function sendRaw(type: string, payload: unknown, taskId?: string): void {
+    let dedupKey: string | null = null;
+    let payloadHash: string | null = null;
+    if (DEDUP_TYPES.has(type)) {
+      const entityId = extractEntityId(payload);
+      if (entityId) {
+        dedupKey = `${type}:${entityId}`;
+        payloadHash = JSON.stringify(payload);
+        if (lastDelivered.get(dedupKey) === payloadHash) {
+          return;
+        }
+      }
+    }
+
     const message = JSON.stringify({ type, payload, ts: Date.now() });
     const byteLength = Buffer.byteLength(message);
     let delivered = 0;
@@ -81,37 +108,33 @@ export function createWsHub(): WsHub {
         delivered += 1;
       }
     }
-    // Only count an actual broadcast if at least one client received it,
-    // so idle-but-connected-less intervals don't bloat the counter.
     if (delivered > 0) {
       recordWsBroadcast(byteLength * delivered);
+      if (dedupKey && payloadHash) {
+        lastDelivered.set(dedupKey, payloadHash);
+        if (lastDelivered.size > 2000) {
+          lastDelivered.delete(lastDelivered.keys().next().value!);
+        }
+      }
     }
   }
 
   function flushBatch(batchKey: string): void {
     const batch = batches.get(batchKey);
     if (!batch) return;
-    // Always tear down the batch entry after the timer fires, even when the
-    // queue is empty. Previously an empty-queue flush returned early without
-    // deleting the entry, leaving a stale batch record whose timer had
-    // already expired. Subsequent broadcasts then appended to that dead
-    // queue forever — no new timer was scheduled because the batch "existed"
-    // — and clients stopped receiving events after the first burst that
-    // fell into this window. Cleaning up here makes the next broadcast
-    // re-open a fresh batch with a fresh timer.
     if (batch.queue.length > 0) {
       const items = batch.queue.splice(0);
-      // Flatten when individual payloads are already arrays. Without this,
-      // batching a stream of `[log, log]` payloads would produce the nested
-      // form `[[log, log], [log]]`, which clients handling `cli_output`
-      // treat as single entries and end up looking at a raw Array as a
-      // "log record". Flattening produces a uniform flat array for
-      // subscribers, regardless of whether the original broadcasts sent
-      // scalars or arrays.
-      const flattened = items.flatMap((item) =>
-        Array.isArray(item.payload) ? item.payload : [item.payload],
-      );
-      sendRaw(batch.type, flattened, items[0]?.taskId);
+
+      if (COALESCE_FLUSH_TYPES.has(batch.type)) {
+        for (const item of items) {
+          sendRaw(batch.type, item.payload, item.taskId);
+        }
+      } else {
+        const flattened = items.flatMap((item) =>
+          Array.isArray(item.payload) ? item.payload : [item.payload],
+        );
+        sendRaw(batch.type, flattened, items[0]?.taskId);
+      }
     }
     batches.delete(batchKey);
   }
@@ -126,7 +149,6 @@ export function createWsHub(): WsHub {
     const batchKey = options?.taskId ? `${type}:${options.taskId}` : type;
     const existing = batches.get(batchKey);
     if (!existing) {
-      // First event: send immediately, open batch window
       sendRaw(type, payload, options?.taskId);
       batches.set(batchKey, {
         type,
@@ -136,9 +158,22 @@ export function createWsHub(): WsHub {
       return;
     }
 
+    if (COALESCE_FLUSH_TYPES.has(type)) {
+      const entityId = extractEntityId(payload);
+      if (entityId) {
+        const idx = existing.queue.findIndex(
+          (item) => extractEntityId(item.payload) === entityId,
+        );
+        if (idx >= 0) {
+          existing.queue[idx] = { payload, taskId: options?.taskId };
+          return;
+        }
+      }
+    }
+
     existing.queue.push({ payload, taskId: options?.taskId });
     if (existing.queue.length > WS_MAX_BATCH_QUEUE) {
-      existing.queue.shift(); // shed oldest
+      existing.queue.shift();
     }
   }
 
