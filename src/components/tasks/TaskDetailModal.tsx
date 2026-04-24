@@ -480,14 +480,22 @@ export function TaskDetailModal({
               data-testid="refinement-action-bar"
               style={{
                 position: "sticky",
-                bottom: 0,
+                // The scroll-container parent has `padding: "0 24px 20px"`.
+                // `bottom: 0` sticks the bar at the parent's content-box
+                // bottom, which sits 20px ABOVE the visible viewport edge
+                // (inside the padding-bottom). That leaves a 20px strip
+                // below the bar through which scrolled content behind
+                // stays visible. `bottom: -20px` pushes the sticky anchor
+                // down into the padding area so the bar covers the strip.
+                bottom: "-20px",
                 marginTop: "4px",
                 marginLeft: "-24px",
                 marginRight: "-24px",
+                marginBottom: "-20px",
                 paddingLeft: "24px",
                 paddingRight: "24px",
                 paddingTop: "10px",
-                paddingBottom: "12px",
+                paddingBottom: "32px",
                 background: "var(--bg-secondary)",
                 borderTop: "1px solid var(--border-default)",
                 display: "flex",
