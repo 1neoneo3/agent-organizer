@@ -3,6 +3,7 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
+import { handleSpawnFailure } from "./spawn-failures.js";
 
 /**
  * Trigger automatic QA testing when a task transitions to "qa_testing".
@@ -56,6 +57,13 @@ export async function triggerAutoQa(
   // Lazy import to break circular dependency (auto-qa <-> process-manager)
   const { spawnAgent } = await import("./process-manager.js");
   spawnAgent(db, ws, tester, currentTask, { cache }).catch((err) => {
+    const handled = handleSpawnFailure(db, ws, currentTask.id, err, {
+      cache,
+      source: "Auto QA",
+    });
+    if (handled.handled) {
+      return;
+    }
     console.error(`[auto-qa] spawnAgent failed for task ${currentTask.id}:`, err);
   });
 }

@@ -171,11 +171,19 @@ export async function triggerParallelTester(
     (
       await import("../spawner/process-manager.js")
     ).spawnAgent;
+  const { handleSpawnFailure } = await import("../spawner/spawn-failures.js");
 
   spawnAgent(db, ws, tester, task, {
     cache: options.cache,
     parallelTester: true,
   }).catch((err) => {
+    const handled = handleSpawnFailure(db, ws, task.id, err, {
+      cache: options.cache,
+      source: "Parallel tester",
+    });
+    if (handled.handled) {
+      return;
+    }
     console.error(`[parallel-impl] tester spawn failed for task ${task.id}:`, err);
   });
 

@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
 import { AUTO_DISPATCH_INTERVAL_MS } from "../config/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
+import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import { resolveStageAgentOverride } from "../spawner/stage-agent-resolver.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
@@ -234,6 +235,13 @@ function createDefaultTaskStarter(
 ): (task: Task, agent: Agent) => void {
   return (task, agent) => {
     spawnAgent(db, ws, agent, task, { cache }).catch((err) => {
+      const handled = handleSpawnFailure(db, ws, task.id, err, {
+        cache,
+        source: "Auto dispatcher",
+      });
+      if (handled.handled) {
+        return;
+      }
       console.error(`[auto-dispatcher] spawnAgent failed for task ${task.id}:`, err);
     });
   };

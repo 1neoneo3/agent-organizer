@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
+import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { CacheService } from "../cache/cache-service.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
@@ -67,6 +68,13 @@ export function autoDispatchTask(
   const spawnResult = spawnAgent(db, ws, agent, task, { cache: options.cache });
   if (spawnResult && typeof (spawnResult as Promise<unknown>).catch === "function") {
     (spawnResult as Promise<unknown>).catch((err) => {
+      const handled = handleSpawnFailure(db, ws, task.id, err, {
+        cache: options.cache,
+        source: "Auto dispatch",
+      });
+      if (handled.handled) {
+        return;
+      }
       console.error(`[auto-dispatch] spawnAgent failed for task ${task.id}:`, err);
     });
   }

@@ -3,6 +3,7 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
+import { handleSpawnFailure } from "./spawn-failures.js";
 
 /**
  * Trigger automatic ci-check verification when a task transitions to "ci_check".
@@ -44,7 +45,16 @@ export async function triggerAutoCiCheck(
   ws.broadcast("cli_output", [{ task_id: currentTask.id, kind: "system", message: `[Auto Pre-Deploy] Starting ci-check verification with agent: ${agent.name}` }], { taskId: currentTask.id });
 
   const { spawnAgent } = await import("./process-manager.js");
-  spawnAgent(db, ws, agent, currentTask, { cache });
+  spawnAgent(db, ws, agent, currentTask, { cache }).catch((err) => {
+    const handled = handleSpawnFailure(db, ws, currentTask.id, err, {
+      cache,
+      source: "Auto ci-check",
+    });
+    if (handled.handled) {
+      return;
+    }
+    console.error(`[auto-ci-check] spawnAgent failed for task ${currentTask.id}:`, err);
+  });
 }
 
 function countCiCheckIterations(db: DatabaseSync, taskId: string): number {

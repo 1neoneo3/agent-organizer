@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
+import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
@@ -170,6 +171,13 @@ export function recoverInProgressOrphans(
         // before spawning the main CLI process). Failures are logged so
         // the next orphan-recovery tick retries.
         spawnAgent(db, ws, respawnDecision.agent, freshTask, { cache }).catch((error) => {
+          const handled = handleSpawnFailure(db, ws, task.id, error, {
+            cache,
+            source: "Orphan recovery auto-respawn",
+          });
+          if (handled.handled) {
+            return;
+          }
           const msg = error instanceof Error ? error.message : String(error);
           db.prepare(
             "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",

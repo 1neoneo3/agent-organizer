@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
+import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
 import { triggerAutoCiCheck } from "../spawner/auto-ci-check.js";
@@ -605,8 +606,19 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     // auto-respawn history so the task gets a fresh budget from zero.
     db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
 
-    const result = await spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
-    res.json({ started: true, pid: result.pid });
+    try {
+      const result = await spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
+      res.json({ started: true, pid: result.pid });
+    } catch (error) {
+      const handled = handleSpawnFailure(db, ws, task.id, error, {
+        cache,
+        source: "Manual run",
+      });
+      if (handled.handled) {
+        return res.status(409).json({ error: handled.code, message: handled.message });
+      }
+      return res.status(500).json({ error: "spawn_failed", message: formatSpawnFailureForUser(error) });
+    }
   });
 
   // Stop a running task
@@ -662,10 +674,20 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
-    const result = await spawnAgent(db, ws, agent, freshTask, { cache });
-
-    await invalidateTaskCaches();
-    res.json({ resumed: true, pid: result.pid });
+    try {
+      const result = await spawnAgent(db, ws, agent, freshTask, { cache });
+      await invalidateTaskCaches();
+      res.json({ resumed: true, pid: result.pid });
+    } catch (error) {
+      const handled = handleSpawnFailure(db, ws, task.id, error, {
+        cache,
+        source: "Manual resume",
+      });
+      if (handled.handled) {
+        return res.status(409).json({ error: handled.code, message: handled.message });
+      }
+      return res.status(500).json({ error: "spawn_failed", message: formatSpawnFailureForUser(error) });
+    }
   });
 
   // Approve a task in human_review or refinement — advance to next stage
@@ -758,6 +780,13 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       if (agent && agent.status === "idle") {
         setTimeout(() => {
           spawnAgent(db, ws, agent, updatedTask, { cache }).catch((err) => {
+            const handled = handleSpawnFailure(db, ws, updatedTask.id, err, {
+              cache,
+              source: "Refinement approval auto-run",
+            });
+            if (handled.handled) {
+              return;
+            }
             const message = err instanceof Error ? err.message : String(err);
             console.error(`[tasks.approve] spawnAgent failed for task ${updatedTask.id}:`, err);
             try {
@@ -1129,6 +1158,13 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
+      const handled = handleSpawnFailure(db, ws, task.id, err, {
+        cache,
+        source: "Feedback resume",
+      });
+      if (handled.handled) {
+        return;
+      }
       console.error(`[tasks.feedback] spawnAgent failed for task ${task.id}:`, err);
     });
 
@@ -1199,6 +1235,13 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true }).catch((err) => {
+      const handled = handleSpawnFailure(db, ws, task.id, err, {
+        cache,
+        source: "Interactive prompt resume",
+      });
+      if (handled.handled) {
+        return;
+      }
       console.error(`[tasks.interactive-response] spawnAgent failed for task ${task.id}:`, err);
     });
 

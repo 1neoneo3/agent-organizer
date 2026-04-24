@@ -45,6 +45,7 @@ import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 import { runWorkflowHooks } from "../workflow/hooks.js";
+import { createBeforeRunFailureError } from "./spawn-failures.js";
 import { getTaskSetting } from "../domain/task-settings.js";
 import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
 
@@ -115,6 +116,10 @@ export function initReviewerSession(
 /** Test-only helper: inspect the current session for a task, or undefined. */
 export function getReviewerSession(taskId: string): ReviewerSession | undefined {
   return reviewerSessions.get(taskId);
+}
+
+export function clearReviewerSession(taskId: string): void {
+  reviewerSessions.delete(taskId);
 }
 
 /** Restore pending interactive prompts from DB on server startup */
@@ -859,6 +864,9 @@ export async function spawnAgent(
         spawnStage,
         agent.id,
       );
+    }
+    if (beforeResults.some((result) => !result.ok)) {
+      throw createBeforeRunFailureError(beforeResults);
     }
   }
 

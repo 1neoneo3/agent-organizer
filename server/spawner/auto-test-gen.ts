@@ -3,6 +3,7 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
+import { handleSpawnFailure } from "./spawn-failures.js";
 
 /**
  * Trigger automatic test generation when a task transitions to "test_generation".
@@ -44,7 +45,16 @@ export async function triggerAutoTestGen(
   ws.broadcast("cli_output", [{ task_id: currentTask.id, kind: "system", message: `[Auto Test Gen] Starting test generation with agent: ${agent.name}` }], { taskId: currentTask.id });
 
   const { spawnAgent } = await import("./process-manager.js");
-  spawnAgent(db, ws, agent, currentTask, { cache });
+  spawnAgent(db, ws, agent, currentTask, { cache }).catch((err) => {
+    const handled = handleSpawnFailure(db, ws, currentTask.id, err, {
+      cache,
+      source: "Auto test generation",
+    });
+    if (handled.handled) {
+      return;
+    }
+    console.error(`[auto-test-gen] spawnAgent failed for task ${currentTask.id}:`, err);
+  });
 }
 
 function countTestGenIterations(db: DatabaseSync, taskId: string): number {

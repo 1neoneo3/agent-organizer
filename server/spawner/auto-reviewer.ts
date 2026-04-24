@@ -128,9 +128,10 @@ export async function triggerAutoReview(
   );
 
   // Lazy import to break circular dependency (auto-reviewer <-> process-manager)
-  const { spawnAgent, spawnSecondaryReviewer, initReviewerSession } = await import(
+  const { spawnAgent, spawnSecondaryReviewer, initReviewerSession, clearReviewerSession } = await import(
     "./process-manager.js"
   );
+  const { handleSpawnFailure } = await import("./spawn-failures.js");
 
   const [primary, ...secondaries] = assignments;
 
@@ -145,12 +146,23 @@ export async function triggerAutoReview(
   spawnAgent(db, ws, primary.agent, freshTask, {
     cache,
     reviewerRole: primary.role,
+  }).then(() => {
+    for (const secondary of secondaries) {
+      spawnSecondaryReviewer(db, ws, secondary.agent, freshTask, secondary.role, cache);
+    }
   }).catch((err) => {
+    if (secondaries.length > 0) {
+      clearReviewerSession(freshTask.id);
+    }
+    const handled = handleSpawnFailure(db, ws, freshTask.id, err, {
+      cache,
+      source: "Auto reviewer",
+    });
+    if (handled.handled) {
+      return;
+    }
     console.error(`[auto-reviewer] primary spawn failed for task ${freshTask.id}:`, err);
   });
-  for (const secondary of secondaries) {
-    spawnSecondaryReviewer(db, ws, secondary.agent, freshTask, secondary.role, cache);
-  }
 }
 
 /**

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { SCHEMA_SQL } from "../db/schema.js";
 import { recoverInProgressOrphans, recoverStuckAutoStages } from "./jobs.js";
+import { createHookFailureFromCommands } from "../spawner/spawn-failures.js";
 
 // ---- Test doubles ---------------------------------------------------------
 
@@ -247,6 +248,27 @@ describe("recoverInProgressOrphans", () => {
       auto_respawn_count: number;
     };
     assert.equal(row.auto_respawn_count, 0, "no increment when respawn skipped");
+  });
+
+  it("moves the task to human_review when auto-respawn hits a non-retryable before_run failure", async () => {
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const fakeSpawn = (() => Promise.reject(
+      createHookFailureFromCommands(["pnpm install"]),
+    )) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    await Promise.resolve();
+
+    const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
+    assert.equal(row.status, "human_review");
+
+    const logs = db.prepare("SELECT message FROM task_logs WHERE task_id = 't1' ORDER BY id ASC").all() as Array<{
+      message: string;
+    }>;
+    assert.ok(logs.some((log) => /Orphan recovery auto-respawn: before_run failed: pnpm install/.test(log.message)));
   });
 
   it("still bounces refinement-without-plan orphans back to inbox", () => {
