@@ -345,7 +345,7 @@ describe("POST /tasks/:id/feedback edge cases", () => {
     insertUnassignedRefinementTask(db, taskId);
 
     let spawnCalls = 0;
-    const { server, baseUrl } = await startServer(db, {
+    const { server, baseUrl, events } = await startServer(db, {
       queueFeedbackAndRestart: () => false,
       spawnAgent: async () => {
         spawnCalls += 1;
@@ -373,6 +373,12 @@ describe("POST /tasks/:id/feedback edge cases", () => {
         ],
         "transitions are still recorded via the running-process path even without an agent",
       );
+      const refinementUpdate = events.find(
+        (event) => event.type === "task_update"
+          && (event.payload as { id?: string; status?: string }).id === taskId
+          && (event.payload as { id?: string; status?: string }).status === "refinement",
+      );
+      assert.ok(refinementUpdate, "should broadcast a refinement task_update when no agent is assigned");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -393,7 +399,7 @@ describe("POST /tasks/:id/feedback edge cases", () => {
     insertRefinementTask(db, taskId, agentId);
 
     let spawnCalls = 0;
-    const { server, baseUrl } = await startServer(db, {
+    const { server, baseUrl, events } = await startServer(db, {
       queueFeedbackAndRestart: () => false,
       spawnAgent: async () => {
         spawnCalls += 1;
@@ -421,6 +427,12 @@ describe("POST /tasks/:id/feedback edge cases", () => {
         ],
         "running-process path records transitions; idle-agent path skips due to refinementTransitionDone=true",
       );
+      const refinementUpdate = events.find(
+        (event) => event.type === "task_update"
+          && (event.payload as { id?: string; status?: string }).id === taskId
+          && (event.payload as { id?: string; status?: string }).status === "refinement",
+      );
+      assert.ok(refinementUpdate, "should broadcast a refinement task_update when assigned agent is busy");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -584,7 +596,7 @@ describe("POST /tasks/:id/feedback additional coverage", () => {
     db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
 
     let spawnCalls = 0;
-    const { server, baseUrl } = await startServer(db, {
+    const { server, baseUrl, events } = await startServer(db, {
       queueFeedbackAndRestart: () => false,
       spawnAgent: async () => {
         spawnCalls += 1;
@@ -604,6 +616,16 @@ describe("POST /tasks/:id/feedback additional coverage", () => {
       assert.equal(body.sent, true);
       assert.equal(body.restarted, false, "should not restart when agent row is missing");
       assert.equal(spawnCalls, 0);
+      assert.deepEqual(getTransitions(db, taskId), [
+        "__STAGE_TRANSITION__:refinement→inbox",
+        "__STAGE_TRANSITION__:inbox→refinement",
+      ]);
+      const refinementUpdate = events.find(
+        (event) => event.type === "task_update"
+          && (event.payload as { id?: string; status?: string }).id === taskId
+          && (event.payload as { id?: string; status?: string }).status === "refinement",
+      );
+      assert.ok(refinementUpdate, "should broadcast a refinement task_update when the assigned agent row is missing");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -659,7 +681,7 @@ describe("POST /tasks/:id/feedback additional coverage", () => {
     }
   });
 
-  it("accepts whitespace-only content (min(1) checks length, not trimmed length)", async () => {
+  it("rejects whitespace-only content with 400", async () => {
     const db = await createDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
@@ -677,7 +699,46 @@ describe("POST /tasks/:id/feedback additional coverage", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ content: "   " }),
       });
-      assert.equal(response.status, 200, "whitespace passes z.string().min(1) validation");
+      assert.equal(response.status, 400);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("trims surrounding whitespace before storing feedback", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "  Tighten acceptance criteria.  " }),
+      });
+      assert.equal(response.status, 200);
+
+      const msg = db.prepare(
+        "SELECT content FROM messages WHERE task_id = ? AND message_type = 'directive'",
+      ).get(taskId) as { content: string } | undefined;
+      assert.ok(msg);
+      assert.equal(msg.content, "Tighten acceptance criteria.");
+
+      const log = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '[CEO Feedback]%'",
+      ).get(taskId) as { message: string } | undefined;
+      assert.ok(log);
+      assert.equal(log.message, "[CEO Feedback] Tighten acceptance criteria.");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
