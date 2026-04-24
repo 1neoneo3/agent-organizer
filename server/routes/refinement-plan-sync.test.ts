@@ -18,8 +18,7 @@ function createDb(): DatabaseSync {
 
 function createFakeWs() {
   const sent: Array<{ type: string; payload: unknown }> = [];
-  return {
-    sent,
+  const hub: WsHub = {
     clients: new Set(),
     addClient() {},
     removeClient() {},
@@ -29,7 +28,8 @@ function createFakeWs() {
       sent.push({ type, payload });
     },
     dispose() {},
-  } satisfies WsHub;
+  };
+  return Object.assign(hub, { sent });
 }
 
 function createFakeCache(): CacheService {
@@ -101,8 +101,10 @@ async function putRefinementPlan(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  return { status: res.status, body: (await res.json()) as unknown as Record<string, unknown> };
 }
+
+type TaskLike = Record<string, unknown>;
 
 describe("PUT /tasks/:id/refinement-plan", () => {
   let db: DatabaseSync;
@@ -131,8 +133,8 @@ describe("PUT /tasks/:id/refinement-plan", () => {
     });
 
     assert.equal(status, 200);
-    assert.equal((body as Task).refinement_plan, "---REFINEMENT PLAN---\nNew plan content\n---END REFINEMENT---");
-    assert.ok((body as Task).refinement_completed_at);
+    assert.equal((body as TaskLike).refinement_plan, "---REFINEMENT PLAN---\nNew plan content\n---END REFINEMENT---");
+    assert.ok((body as TaskLike).refinement_completed_at);
 
     const row = db.prepare("SELECT refinement_plan, refinement_completed_at FROM tasks WHERE id = ?").get("t1") as {
       refinement_plan: string;
@@ -191,7 +193,7 @@ describe("PUT /tasks/:id/refinement-plan", () => {
     });
 
     assert.equal(status, 200);
-    assert.equal((body as Task).refinement_completed_at, existingTimestamp);
+    assert.equal((body as TaskLike).refinement_completed_at, existingTimestamp);
   });
 
   it("sets refinement_completed_at when it was null", async () => {
@@ -202,7 +204,7 @@ describe("PUT /tasks/:id/refinement-plan", () => {
       content: "First plan",
     });
 
-    const completedAt = (body as Task).refinement_completed_at as number;
+    const completedAt = (body as TaskLike).refinement_completed_at as number;
     assert.ok(completedAt >= before);
   });
 
@@ -214,8 +216,8 @@ describe("PUT /tasks/:id/refinement-plan", () => {
 
     const taskUpdates = ws.sent.filter((m) => m.type === "task_update");
     assert.ok(taskUpdates.length > 0);
-    assert.equal((taskUpdates[0].payload as Task).id, "t7");
-    assert.equal((taskUpdates[0].payload as Task).refinement_plan, "WS test plan");
+    assert.equal((taskUpdates[0].payload as TaskLike).id, "t7");
+    assert.equal((taskUpdates[0].payload as TaskLike).refinement_plan, "WS test plan");
   });
 
   it("returns 404 for non-existent task", async () => {
