@@ -11,6 +11,7 @@ import {
   persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
 } from "./process-manager.js";
+import { StructuredBlockTracker, detectTextInteractivePrompt } from "./event-classifier.js";
 import type { Task } from "../types/runtime.js";
 
 function createDb(): DatabaseSync {
@@ -840,5 +841,74 @@ describe("persistRefinementPlanExtraction", () => {
     assert.match(log.message, /existing refinement_plan preserved/);
     assert.equal(log.stage, "refinement");
     assert.equal(log.agent_id, "agent-1");
+  });
+});
+
+// Simulate the stdout handler's gating logic: feed chunks to the tracker,
+// then only run detectTextInteractivePrompt when tracker.insideBlock is false.
+function simulateStreamingDetection(chunks: string[]): { detected: boolean; detectedAt: number | null } {
+  const tracker = new StructuredBlockTracker();
+  for (let i = 0; i < chunks.length; i++) {
+    tracker.feed(chunks[i]);
+    if (!tracker.insideBlock) {
+      const result = detectTextInteractivePrompt(chunks[i]);
+      if (result) return { detected: true, detectedAt: i };
+    }
+  }
+  return { detected: false, detectedAt: null };
+}
+
+describe("streaming refinement plan suppresses text-based detection", () => {
+  it("scenario 1: intact markers suppress detection of JP patterns inside plan", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## 背景\n",
+      "追加情報が必要な理由を説明します。対象ファイルを指定してください。",
+      "## 実装計画\n1. ファイル修正\n2. テスト追加",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 2: start marker split across chunks suppresses detection", () => {
+    const result = simulateStreamingDetection([
+      "計画を出力します。\n---REFINE",
+      "MENT PLAN---\n## 技術要件\n追加情報が必要です",
+      "## 実装計画\n1. ファイル修正\n2. テスト追加",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 3: end marker split across chunks keeps block active until complete", () => {
+    const tracker = new StructuredBlockTracker();
+    tracker.feed("---REFINEMENT PLAN--- body");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("指定してください ---END REFINE");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("MENT--- done");
+    assert.strictEqual(tracker.insideBlock, false);
+  });
+
+  it("scenario 4: prompt outside plan block is still detected", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## plan body",
+      "---END REFINEMENT---",
+      "タスクを進めるには追加情報が必要です",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 2);
+  });
+
+  it("scenario 5: start marker split across three chunks", () => {
+    const result = simulateStreamingDetection([
+      "intro ---",
+      "REFINEMENT ",
+      "PLAN--- 追加情報が必要です body",
+      "more body 指定してください",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
   });
 });

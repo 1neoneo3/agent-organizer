@@ -83,6 +83,47 @@ function extractFromToolUse(block: Record<string, unknown>): InteractivePromptDa
   return { promptType, toolUseId, allowedPrompts };
 }
 
+// --------------- Structured Block Tracking ---------------
+
+const STRUCTURED_BLOCK_START = "---REFINEMENT PLAN---";
+const STRUCTURED_BLOCK_END = "---END REFINEMENT---";
+const STRUCTURED_BLOCK_BUFFER_SIZE = Math.max(
+  STRUCTURED_BLOCK_START.length,
+  STRUCTURED_BLOCK_END.length,
+);
+
+/**
+ * Tracks whether the assistant output stream is currently inside a
+ * structured block (e.g. a refinement plan bounded by marker lines).
+ *
+ * Uses a rolling buffer so that markers split across chunk boundaries
+ * are detected reliably — no assumption that a single chunk contains
+ * the full marker string.
+ */
+export class StructuredBlockTracker {
+  private tailBuffer = "";
+  private _insideBlock = false;
+
+  get insideBlock(): boolean {
+    return this._insideBlock;
+  }
+
+  feed(chunk: string): void {
+    const window = this.tailBuffer + chunk;
+
+    const startIdx = window.lastIndexOf(STRUCTURED_BLOCK_START);
+    const endIdx = window.lastIndexOf(STRUCTURED_BLOCK_END);
+
+    if (startIdx !== -1 && (endIdx === -1 || startIdx > endIdx)) {
+      this._insideBlock = true;
+    } else if (endIdx !== -1 && (startIdx === -1 || endIdx > startIdx)) {
+      this._insideBlock = false;
+    }
+
+    this.tailBuffer = window.slice(-STRUCTURED_BLOCK_BUFFER_SIZE);
+  }
+}
+
 // --------------- Text-based Interactive Prompt Detection ---------------
 
 // Patterns that strongly indicate the agent is requesting user input.
@@ -162,6 +203,12 @@ export function detectTextInteractivePrompt(
   // Skip very short messages — unlikely to be a genuine input request.
   // Threshold is low (10) because CJK languages pack more meaning per character.
   if (assistantText.length < 10) return null;
+
+  // Refinement plan output is never an interactive prompt regardless of
+  // content. Check the start marker alone (end marker may not have
+  // arrived yet in the same text). This runs before hasExplicitOptionsPrompt
+  // so that plans containing "?" + numbered lists are not misclassified.
+  if (assistantText.includes(STRUCTURED_BLOCK_START)) return null;
 
   // Strong override: an explicit "question + 2+ numbered options" block
   // is unambiguously a prompt. It wins over the completion-summary

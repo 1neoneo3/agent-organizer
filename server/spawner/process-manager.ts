@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOWED_TOOLS } from "./cli-tools.js";
 import { runExplorePhase } from "./explore-phase.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
-import { classifyEvent, isIgnoredEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
+import { classifyEvent, isIgnoredEvent, parseInteractivePrompt, detectTextInteractivePrompt, StructuredBlockTracker, type InteractivePromptData } from "./event-classifier.js";
 import {
   buildTaskPrompt,
   buildReviewPrompt,
@@ -990,6 +990,11 @@ export async function spawnAgent(
   // Flag to stop processing stdout after an interactive prompt is detected and process killed
   let interactivePromptKilled = false;
 
+  // Track structured output blocks (e.g. refinement plans) across streaming
+  // chunks so text-based interactive prompt detection is suppressed while
+  // inside such a block. Uses a rolling buffer to handle marker splits.
+  const structuredBlockTracker = new StructuredBlockTracker();
+
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
 
@@ -1250,8 +1255,14 @@ export async function spawnAgent(
         }
 
         // Text-based interactive prompt detection (for Codex/Gemini/any provider)
-        // Only check "assistant" kind events — agent's direct text output
-        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
+        // Only check "assistant" kind events — agent's direct text output.
+        // Feed every assistant chunk into the structured-block tracker first
+        // so that the rolling buffer sees markers before we decide whether
+        // to run the heuristic detector.
+        if (event && event.kind === "assistant") {
+          structuredBlockTracker.feed(event.message);
+        }
+        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id) && !structuredBlockTracker.insideBlock) {
           const textPrompt = detectTextInteractivePrompt(event.message);
           if (textPrompt) {
             const entry = { data: textPrompt, createdAt: Date.now() };

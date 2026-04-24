@@ -5,6 +5,7 @@ import {
   detectTextInteractivePrompt,
   isIgnoredEvent,
   parseInteractivePrompt,
+  StructuredBlockTracker,
 } from "./event-classifier.js";
 
 describe("detectTextInteractivePrompt", () => {
@@ -190,6 +191,44 @@ What do you want next?
     const result = detectTextInteractivePrompt(text);
     assert.strictEqual(result, null);
   });
+
+  // --- Refinement plan false-positive prevention ---
+
+  it("does not detect refinement plan text with start marker only", () => {
+    const text = `---REFINEMENT PLAN---
+## 背景
+追加情報が必要な理由を説明します。
+## 技術要件
+- データの保存先を指定してください`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null);
+  });
+
+  it("does not detect refinement plan text with both markers and JP patterns", () => {
+    const text = `---REFINEMENT PLAN---
+## 要求
+- 追加情報を反映してほしい
+- 対象ファイルを指定してください
+## 実装計画
+1. ファイル修正
+---END REFINEMENT---`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null);
+  });
+
+  it("does not detect refinement plan text with ? + numbered list", () => {
+    const text = `---REFINEMENT PLAN---
+## リスク
+既存APIの互換性は大丈夫？
+
+## 実装計画
+1. event-classifier.ts の修正
+2. テストの追加
+3. process-manager.ts の修正
+---END REFINEMENT---`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null);
+  });
 });
 
 describe("parseInteractivePrompt", () => {
@@ -312,5 +351,72 @@ describe("classifyEvent: codex command_execution", () => {
     assert.ok(!isIgnoredEvent(ev));
     assert.strictEqual(ev!.kind, "assistant");
     assert.strictEqual(ev!.message, "Hello from codex");
+  });
+});
+
+describe("StructuredBlockTracker", () => {
+  it("tracks entry and exit with intact markers in single chunks", () => {
+    const tracker = new StructuredBlockTracker();
+    assert.strictEqual(tracker.insideBlock, false);
+
+    tracker.feed("---REFINEMENT PLAN---\n## Background");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("\nSome plan body text...");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("\n---END REFINEMENT---");
+    assert.strictEqual(tracker.insideBlock, false);
+  });
+
+  it("detects start marker split across two chunks", () => {
+    const tracker = new StructuredBlockTracker();
+    tracker.feed("prefix text ---REFINE");
+    assert.strictEqual(tracker.insideBlock, false);
+
+    tracker.feed("MENT PLAN--- plan body");
+    assert.strictEqual(tracker.insideBlock, true);
+  });
+
+  it("detects end marker split across two chunks", () => {
+    const tracker = new StructuredBlockTracker();
+    tracker.feed("---REFINEMENT PLAN--- body");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("more body ---END REFINE");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("MENT--- after plan");
+    assert.strictEqual(tracker.insideBlock, false);
+  });
+
+  it("detects start marker split across three chunks", () => {
+    const tracker = new StructuredBlockTracker();
+    tracker.feed("intro ---");
+    assert.strictEqual(tracker.insideBlock, false);
+
+    tracker.feed("REFINEMENT ");
+    assert.strictEqual(tracker.insideBlock, false);
+
+    tracker.feed("PLAN--- body text");
+    assert.strictEqual(tracker.insideBlock, true);
+  });
+
+  it("handles both markers in a single chunk (short plan)", () => {
+    const tracker = new StructuredBlockTracker();
+    tracker.feed("---REFINEMENT PLAN---\nshort\n---END REFINEMENT---");
+    assert.strictEqual(tracker.insideBlock, false);
+  });
+
+  it("returns to false after block ends, allowing subsequent detection", () => {
+    const tracker = new StructuredBlockTracker();
+    tracker.feed("---REFINEMENT PLAN--- body");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("---END REFINEMENT---");
+    assert.strictEqual(tracker.insideBlock, false);
+
+    tracker.feed("追加情報が必要です");
+    assert.strictEqual(tracker.insideBlock, false);
   });
 });
