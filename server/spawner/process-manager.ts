@@ -6,7 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOWED_TOOLS } from "./cli-tools.js";
 import { runExplorePhase } from "./explore-phase.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
-import { classifyEvent, isIgnoredEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
+import { classifyEvent, isIgnoredEvent, parseInteractivePrompt, detectTextInteractivePrompt, StructuredBlockTracker, type InteractivePromptData } from "./event-classifier.js";
 import {
   buildTaskPrompt,
   buildReviewPrompt,
@@ -64,6 +64,7 @@ const pendingFeedback = new Map<string, { message: string; previousStatus: strin
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
+const STRUCTURED_BLOCK_END = "---END REFINEMENT---";
 
 function formatWorkflowHookLog(
   phase: "before_run" | "after_run",
@@ -171,6 +172,57 @@ function persistPromptToDb(db: DatabaseSync, taskId: string, entry: { data: Inte
     db.prepare("UPDATE tasks SET interactive_prompt_data = ? WHERE id = ?")
       .run(entry ? JSON.stringify(entry) : null, taskId);
   } catch { /* best-effort persist */ }
+}
+
+/**
+ * Feed one assistant chunk into the structured-block tracker and persist a
+ * text-based interactive prompt only when the fallback heuristic is allowed to
+ * fire.
+ *
+ * Guard order matters:
+ * 1. Always feed the tracker first so split refinement markers are observed.
+ * 2. Suppress the heuristic while inside a structured refinement block.
+ * 3. Suppress when a structured prompt is already pending for the task.
+ * 4. Persist only when the remaining assistant text is an actual prompt.
+ */
+export function registerTextInteractivePromptFromAssistantChunk(
+  db: DatabaseSync,
+  taskId: string,
+  assistantText: string,
+  structuredBlockTracker: StructuredBlockTracker,
+  now: number = Date.now(),
+): { detected: false } | { detected: true; entry: { data: InteractivePromptData; createdAt: number } } {
+  const wasInsideStructuredBlock = structuredBlockTracker.insideBlock;
+  structuredBlockTracker.feed(assistantText);
+
+  if (pendingInteractivePrompts.has(taskId)) {
+    return { detected: false };
+  }
+
+  let textForDetection = assistantText;
+  if (wasInsideStructuredBlock) {
+    const endMarkerIdx = assistantText.indexOf(STRUCTURED_BLOCK_END);
+    if (endMarkerIdx === -1) {
+      return { detected: false };
+    }
+    // The chunk started inside a refinement block, so everything through the
+    // first end marker belongs to structured plan content rather than a prompt.
+    textForDetection = assistantText.slice(endMarkerIdx + STRUCTURED_BLOCK_END.length);
+  }
+
+  if (structuredBlockTracker.insideBlock) {
+    return { detected: false };
+  }
+
+  const textPrompt = detectTextInteractivePrompt(textForDetection);
+  if (!textPrompt) {
+    return { detected: false };
+  }
+
+  const entry = { data: textPrompt, createdAt: now };
+  pendingInteractivePrompts.set(taskId, entry);
+  persistPromptToDb(db, taskId, entry);
+  return { detected: true, entry };
 }
 
 export function getPendingInteractivePrompt(taskId: string): { data: InteractivePromptData; createdAt: number } | undefined {
@@ -1016,6 +1068,11 @@ export async function spawnAgent(
   // Flag to stop processing stdout after an interactive prompt is detected and process killed
   let interactivePromptKilled = false;
 
+  // Track structured output blocks (e.g. refinement plans) across streaming
+  // chunks so text-based interactive prompt detection is suppressed while
+  // inside such a block. Uses a rolling buffer to handle marker splits.
+  const structuredBlockTracker = new StructuredBlockTracker();
+
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
 
@@ -1276,14 +1333,18 @@ export async function spawnAgent(
         }
 
         // Text-based interactive prompt detection (for Codex/Gemini/any provider)
-        // Only check "assistant" kind events — agent's direct text output
-        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
-          const textPrompt = detectTextInteractivePrompt(event.message);
-          if (textPrompt) {
-            const entry = { data: textPrompt, createdAt: Date.now() };
-            pendingInteractivePrompts.set(task.id, entry);
-            persistPromptToDb(db, task.id, entry);
-            ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
+        // Only classified assistant text is eligible, and even then the
+        // fallback heuristic is disabled while streaming a structured
+        // refinement block.
+        if (event && event.kind === "assistant") {
+          const textPrompt = registerTextInteractivePromptFromAssistantChunk(
+            db,
+            task.id,
+            event.message,
+            structuredBlockTracker,
+          );
+          if (textPrompt.detected) {
+            ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt.entry.data });
             insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`, spawnStage, agent.id);
 
             interactivePromptKilled = true;

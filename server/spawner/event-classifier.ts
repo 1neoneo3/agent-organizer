@@ -83,6 +83,47 @@ function extractFromToolUse(block: Record<string, unknown>): InteractivePromptDa
   return { promptType, toolUseId, allowedPrompts };
 }
 
+// --------------- Structured Block Tracking ---------------
+
+const STRUCTURED_BLOCK_START = "---REFINEMENT PLAN---";
+const STRUCTURED_BLOCK_END = "---END REFINEMENT---";
+const STRUCTURED_BLOCK_BUFFER_SIZE = Math.max(
+  STRUCTURED_BLOCK_START.length,
+  STRUCTURED_BLOCK_END.length,
+);
+
+/**
+ * Tracks whether the assistant output stream is currently inside a
+ * structured block (e.g. a refinement plan bounded by marker lines).
+ *
+ * Uses a rolling buffer so that markers split across chunk boundaries
+ * are detected reliably — no assumption that a single chunk contains
+ * the full marker string.
+ */
+export class StructuredBlockTracker {
+  private tailBuffer = "";
+  private _insideBlock = false;
+
+  get insideBlock(): boolean {
+    return this._insideBlock;
+  }
+
+  feed(chunk: string): void {
+    const window = this.tailBuffer + chunk;
+
+    const startIdx = window.lastIndexOf(STRUCTURED_BLOCK_START);
+    const endIdx = window.lastIndexOf(STRUCTURED_BLOCK_END);
+
+    if (startIdx !== -1 && (endIdx === -1 || startIdx > endIdx)) {
+      this._insideBlock = true;
+    } else if (endIdx !== -1 && (startIdx === -1 || endIdx > startIdx)) {
+      this._insideBlock = false;
+    }
+
+    this.tailBuffer = window.slice(-STRUCTURED_BLOCK_BUFFER_SIZE);
+  }
+}
+
 // --------------- Text-based Interactive Prompt Detection ---------------
 
 // Patterns that strongly indicate the agent is requesting user input.
@@ -149,6 +190,13 @@ function hasExplicitOptionsPrompt(text: string): boolean {
   );
 }
 
+function stripStructuredBlocks(text: string): string {
+  return text.replace(
+    /---REFINEMENT PLAN---[\s\S]*?---END REFINEMENT---/g,
+    "",
+  );
+}
+
 /**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
@@ -163,13 +211,28 @@ export function detectTextInteractivePrompt(
   // Threshold is low (10) because CJK languages pack more meaning per character.
   if (assistantText.length < 10) return null;
 
+  // Refinement plan output is never an interactive prompt regardless of
+  // content. Check the start marker alone (end marker may not have
+  // arrived yet in the same text). This runs before hasExplicitOptionsPrompt
+  // so that plans containing "?" + numbered lists are not misclassified.
+  if (assistantText.includes(STRUCTURED_BLOCK_START) && !assistantText.includes(STRUCTURED_BLOCK_END)) {
+    return null;
+  }
+
+  // When a single assistant message contains a complete structured block and
+  // additional trailing text, ignore the plan body but continue checking the
+  // remainder. This preserves refinement-plan false-positive protection
+  // without swallowing a real prompt appended after the block ends.
+  const textForDetection = stripStructuredBlocks(assistantText).trim();
+  if (!textForDetection) return null;
+
   // Strong override: an explicit "question + 2+ numbered options" block
   // is unambiguously a prompt. It wins over the completion-summary
   // guard because agents sometimes finish their report with a verdict
   // tag AND a final "what next?" decision list in the same message.
-  const explicitOptions = hasExplicitOptionsPrompt(assistantText);
+  const explicitOptions = hasExplicitOptionsPrompt(textForDetection);
 
-  if (!explicitOptions && looksLikeCompletionSummary(assistantText)) return null;
+  if (!explicitOptions && looksLikeCompletionSummary(textForDetection)) return null;
 
   if (explicitOptions) {
     return {
@@ -181,7 +244,7 @@ export function detectTextInteractivePrompt(
   }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
-    if (pattern.test(assistantText)) {
+    if (pattern.test(textForDetection)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",
@@ -192,7 +255,7 @@ export function detectTextInteractivePrompt(
   }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_EN) {
-    if (pattern.test(assistantText)) {
+    if (pattern.test(textForDetection)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",

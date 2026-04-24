@@ -4,13 +4,17 @@ import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import {
   buildRefinementRevisionPrompt,
+  clearPendingInteractivePrompt,
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
   extractRefinementPlanFromLogs,
+  getPendingInteractivePrompt,
   isReviewRunTask,
   persistRefinementPlanExtraction,
+  registerTextInteractivePromptFromAssistantChunk,
   resolveCompletionStatusAfterPromotion,
 } from "./process-manager.js";
+import { StructuredBlockTracker, detectTextInteractivePrompt } from "./event-classifier.js";
 import type { Task } from "../types/runtime.js";
 
 function createDb(): DatabaseSync {
@@ -840,5 +844,262 @@ describe("persistRefinementPlanExtraction", () => {
     assert.match(log.message, /existing refinement_plan preserved/);
     assert.equal(log.stage, "refinement");
     assert.equal(log.agent_id, "agent-1");
+  });
+});
+
+// Simulate the stdout handler's gating logic: feed chunks to the tracker,
+// then only run detectTextInteractivePrompt when tracker.insideBlock is false.
+function simulateStreamingDetection(chunks: string[]): { detected: boolean; detectedAt: number | null } {
+  const tracker = new StructuredBlockTracker();
+  for (let i = 0; i < chunks.length; i++) {
+    tracker.feed(chunks[i]);
+    if (!tracker.insideBlock) {
+      const result = detectTextInteractivePrompt(chunks[i]);
+      if (result) return { detected: true, detectedAt: i };
+    }
+  }
+  return { detected: false, detectedAt: null };
+}
+
+describe("streaming refinement plan suppresses text-based detection", () => {
+  it("scenario 1: intact markers suppress detection of JP patterns inside plan", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## 背景\n",
+      "追加情報が必要な理由を説明します。対象ファイルを指定してください。",
+      "## 実装計画\n1. ファイル修正\n2. テスト追加",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 2: start marker split across chunks suppresses detection", () => {
+    const result = simulateStreamingDetection([
+      "計画を出力します。\n---REFINE",
+      "MENT PLAN---\n## 技術要件\n追加情報が必要です",
+      "## 実装計画\n1. ファイル修正\n2. テスト追加",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 3: end marker split across chunks keeps block active until complete", () => {
+    const tracker = new StructuredBlockTracker();
+    tracker.feed("---REFINEMENT PLAN--- body");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("指定してください ---END REFINE");
+    assert.strictEqual(tracker.insideBlock, true);
+
+    tracker.feed("MENT--- done");
+    assert.strictEqual(tracker.insideBlock, false);
+  });
+
+  it("scenario 4: prompt outside plan block is still detected", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## plan body",
+      "---END REFINEMENT---",
+      "タスクを進めるには追加情報が必要です",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 2);
+  });
+
+  it("scenario 5: start marker split across three chunks", () => {
+    const result = simulateStreamingDetection([
+      "intro ---",
+      "REFINEMENT ",
+      "PLAN--- 追加情報が必要です body",
+      "more body 指定してください",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  // --- #466 realistic bug reproduction ---
+
+  it("scenario 6: full refinement revision output with dense JP patterns (#466)", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n",
+      "## 背景\nagent-organizer の text-based interactive prompt detection が ",
+      "refinement plan 本文を誤検知して停止する不具合を修正する。\n",
+      "## 要件\n- 追加情報が必要な場合のみ Input Required とする\n",
+      "- 対象ファイルを指定してください等のパターンが plan 内にあっても無視\n",
+      "## 変更ファイル\n- `event-classifier.ts` — StructuredBlockTracker 追加\n",
+      "## 実装計画\n1. tracker クラス追加\n2. ガード追加\n3. テスト追加\n",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 7: English prompt patterns inside plan are suppressed", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## Requirements\n",
+      "Please provide the target directory path.\n",
+      "Could you specify the deployment branch?\n",
+      "## Plan\n1. Update config\n2. Add validation\n",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 8: two consecutive plan blocks, prompt between is detected", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## First plan\n---END REFINEMENT---",
+      "タスクを進めるには追加情報が必要です",
+      "---REFINEMENT PLAN---\n## Second plan\n---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 1);
+  });
+
+  it("scenario 9: plan with many small chunks never fires false positive", () => {
+    const chunks = ["---REFINEMENT PLAN---\n"];
+    for (let i = 0; i < 15; i++) {
+      chunks.push(`step ${i}: 対象ファイルを指定してください。追加情報が必要です。\n`);
+    }
+    chunks.push("---END REFINEMENT---");
+
+    const result = simulateStreamingDetection(chunks);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 10: no plan markers means JP prompt is detected normally", () => {
+    const result = simulateStreamingDetection([
+      "前の作業が完了しました。",
+      "タスクを進めるには追加情報が必要です。対象ファイルを指定してください。",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 1);
+  });
+
+  it("scenario 11: plan output followed by explicit options prompt after block end", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## Plan\n1. Step A\n---END REFINEMENT---",
+      "次のアクションをどうしますか？\n\n1. コミットして push\n2. テスト追加\n3. 停止",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 1);
+  });
+
+  it("scenario 12: single assistant chunk with full plan plus trailing prompt is detected after stripping the plan body", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## Plan\n1. Step A\n---END REFINEMENT---\n\n対象ファイルのパスを指定してください。",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 0);
+  });
+});
+
+describe("registerTextInteractivePromptFromAssistantChunk", () => {
+  it("does not persist or detect a split-marker refinement plan chunk sequence (#465 regression)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tprompt-refinement" });
+    const tracker = new StructuredBlockTracker();
+
+    const chunks = [
+      "preface\n---REFINE",
+      "MENT PLAN---\n## 背景\nrefinement plan 本文をそのまま保存する\n",
+      "## 要件\n- 追加情報が必要な場合のみ Input Required とする\n",
+      "- 対象ファイルを指定してください等の文言が plan 内にあっても無視\n",
+      "## 実装計画\n1. event-classifier.ts を調整\n2. process-manager.ts を調整\n",
+      "---END REFINEMENT---",
+    ];
+
+    for (const chunk of chunks) {
+      const result = registerTextInteractivePromptFromAssistantChunk(
+        db,
+        task.id,
+        chunk,
+        tracker,
+        12_345,
+      );
+      assert.deepStrictEqual(result, { detected: false });
+    }
+
+    const row = db.prepare(
+      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
+    ).get(task.id) as { interactive_prompt_data: string | null };
+
+    assert.equal(getPendingInteractivePrompt(task.id), undefined);
+    assert.equal(row.interactive_prompt_data, null);
+  });
+
+  it("persists a real prompt once the refinement block has ended", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tprompt-real" });
+    const tracker = new StructuredBlockTracker();
+
+    for (const chunk of [
+      "---REFINEMENT PLAN---\n## Plan\n1. Update classifier\n",
+      "---END REFINEMENT---",
+    ]) {
+      const result = registerTextInteractivePromptFromAssistantChunk(
+        db,
+        task.id,
+        chunk,
+        tracker,
+        20_000,
+      );
+      assert.deepStrictEqual(result, { detected: false });
+    }
+
+    const detected = registerTextInteractivePromptFromAssistantChunk(
+      db,
+      task.id,
+      "対象ファイルのパスを指定してください。",
+      tracker,
+      20_001,
+    );
+
+    assert.equal(detected.detected, true);
+    if (!detected.detected) {
+      assert.fail("expected a real text prompt to be detected");
+    }
+
+    const row = db.prepare(
+      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
+    ).get(task.id) as { interactive_prompt_data: string | null };
+
+    assert.ok(row.interactive_prompt_data);
+    const persisted = JSON.parse(row.interactive_prompt_data) as {
+      createdAt: number;
+      data: { promptType: string; detectedText?: string };
+    };
+    assert.equal(persisted.createdAt, 20_001);
+    assert.equal(persisted.data.promptType, "text_input_request");
+    assert.equal(persisted.data.detectedText, "対象ファイルのパスを指定してください。");
+
+    clearPendingInteractivePrompt(task.id, db);
+  });
+
+  it("does not detect a prompt-like end chunk when the chunk closes an existing refinement block", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tprompt-end-marker-same-chunk" });
+    const tracker = new StructuredBlockTracker();
+
+    const startChunk = registerTextInteractivePromptFromAssistantChunk(
+      db,
+      task.id,
+      "---REFINEMENT PLAN---\n## 実装計画\n1. process-manager.ts の structured block 判定を修正する\n",
+      tracker,
+      30_000,
+    );
+    assert.deepStrictEqual(startChunk, { detected: false });
+
+    const endChunk = registerTextInteractivePromptFromAssistantChunk(
+      db,
+      task.id,
+      "対象ファイルを指定してください\n---END REFINEMENT---",
+      tracker,
+      30_001,
+    );
+    assert.deepStrictEqual(endChunk, { detected: false });
+
+    const row = db.prepare(
+      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
+    ).get(task.id) as { interactive_prompt_data: string | null };
+
+    assert.equal(getPendingInteractivePrompt(task.id), undefined);
+    assert.equal(row.interactive_prompt_data, null);
   });
 });
