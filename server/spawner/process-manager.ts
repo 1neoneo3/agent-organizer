@@ -404,6 +404,38 @@ export function buildRefinementRevisionPrompt(feedback: string): string {
   ].join("\n");
 }
 
+const PLAN_START_MARKER = "---REFINEMENT PLAN---";
+const PLAN_END_MARKER = "---END REFINEMENT---";
+const PLAN_MARKER_BUFFER_SIZE = PLAN_START_MARKER.length - 1;
+
+export interface PlanBlockTracker {
+  update(text: string): void;
+  readonly isInsidePlanBlock: boolean;
+}
+
+export function createPlanBlockTracker(): PlanBlockTracker {
+  let tail = "";
+  let inside = false;
+
+  return {
+    update(text: string): void {
+      const combined = tail + text;
+      if (combined.includes(PLAN_START_MARKER)) {
+        inside = true;
+      }
+      if (combined.includes(PLAN_END_MARKER)) {
+        inside = false;
+      }
+      tail = combined.length > PLAN_MARKER_BUFFER_SIZE
+        ? combined.slice(-PLAN_MARKER_BUFFER_SIZE)
+        : combined;
+    },
+    get isInsidePlanBlock(): boolean {
+      return inside;
+    },
+  };
+}
+
 /**
  * Read all refinement-stage assistant logs for a task since `spawnStartedAt`
  * and decide whether the run produced a canonical plan, a markerless
@@ -418,6 +450,7 @@ export function extractRefinementPlanFromLogs(
   db: DatabaseSync,
   taskId: string,
   spawnStartedAt: number,
+  inMemoryAssistantLogs?: string[],
 ): RefinementPlanExtractionResult {
   const refLogs = db
     .prepare(
@@ -430,7 +463,10 @@ export function extractRefinementPlanFromLogs(
     )
     .all(taskId, spawnStartedAt) as Array<{ message: string }>;
 
-  const combined = refLogs.map((l) => l.message).join("\n");
+  const allMessages = inMemoryAssistantLogs
+    ? [...refLogs.map((l) => l.message), ...inMemoryAssistantLogs]
+    : refLogs.map((l) => l.message);
+  const combined = allMessages.join("\n");
   // Match ALL plan blocks and take the LAST one. Agents sometimes emit
   // a draft plan, then a revised final plan in the same run; taking the
   // first match would freeze the draft. Using the last match aligns with
@@ -1015,6 +1051,8 @@ export async function spawnAgent(
 
   // Flag to stop processing stdout after an interactive prompt is detected and process killed
   let interactivePromptKilled = false;
+  let killChunkAssistantMessages: string[] = [];
+  const planBlockTracker = createPlanBlockTracker();
 
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
@@ -1269,19 +1307,22 @@ export async function spawnAgent(
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
           insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`, spawnStage, agent.id);
 
-          // Salvage any refinement plan already in the logs before killing.
-          if (isRefinementRun) persistRefinementPlanFromCurrentRun();
-
-          // Kill the process so it can't auto-resolve the prompt
           interactivePromptKilled = true;
+          killChunkAssistantMessages = classified.filter((e) => e.kind === "assistant").map((e) => e.message);
+          if (isRefinementRun) persistRefinementPlanFromCurrentRun(killChunkAssistantMessages);
           try { child.kill("SIGTERM"); } catch { /* already dead */ }
           break; // Stop processing remaining lines in this chunk
         }
 
+        // Track refinement plan block boundaries across streaming chunks
+        if (event && event.kind === "assistant") {
+          planBlockTracker.update(event.message);
+        }
+
         // Text-based interactive prompt detection (for Codex/Gemini/any provider)
-        // Only check "assistant" kind events — agent's direct text output
-        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
-          const textPrompt = detectTextInteractivePrompt(event.message, { stage: spawnStage });
+        // Only check "assistant" kind events outside refinement plan blocks
+        if (event && event.kind === "assistant" && !planBlockTracker.isInsidePlanBlock && !pendingInteractivePrompts.has(task.id)) {
+          const textPrompt = detectTextInteractivePrompt(event.message);
           if (textPrompt) {
             const entry = { data: textPrompt, createdAt: Date.now() };
             pendingInteractivePrompts.set(task.id, entry);
@@ -1289,10 +1330,9 @@ export async function spawnAgent(
             ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
             insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`, spawnStage, agent.id);
 
-            // Salvage any refinement plan already in the logs before killing.
-            if (isRefinementRun) persistRefinementPlanFromCurrentRun();
-
             interactivePromptKilled = true;
+            killChunkAssistantMessages = classified.filter((e) => e.kind === "assistant").map((e) => e.message);
+            if (isRefinementRun) persistRefinementPlanFromCurrentRun(killChunkAssistantMessages);
             try { child.kill("SIGTERM"); } catch { /* already dead */ }
             break;
           }
@@ -1891,8 +1931,8 @@ export async function spawnAgent(
     // human_review: no agent trigger — waits for human approval via API
   }
 
-  function persistRefinementPlanFromCurrentRun(): void {
-    const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
+  function persistRefinementPlanFromCurrentRun(extraAssistantLogs?: string[]): void {
+    const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt, extraAssistantLogs);
     // Stamp refinement_completed_at alongside refinement_plan on the canonical
     // path so future re-spawns can tell a finished refinement from a crashed /
     // markerless one. Also stamp planned_files for the file-conflict gate.

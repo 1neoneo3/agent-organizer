@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import {
   buildRefinementRevisionPrompt,
+  createPlanBlockTracker,
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
   extractRefinementPlanFromLogs,
@@ -748,6 +749,115 @@ describe("extractRefinementPlanFromLogs", () => {
       assert.match(result.plan, /FINAL v2/);
       assert.doesNotMatch(result.plan, /DRAFT v1/);
     }
+  });
+});
+
+describe("createPlanBlockTracker", () => {
+  it("tracks plan block with markers in a single chunk", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---REFINEMENT PLAN---\n## Plan\n- Step A");
+    assert.strictEqual(tracker.isInsidePlanBlock, true);
+
+    tracker.update("---END REFINEMENT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+  });
+
+  it("tracks plan block when start marker is split across chunks", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("Here is the plan:\n---REFINE");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "partial start marker should not trigger");
+
+    tracker.update("MENT PLAN---\n## Plan\n- 作業ディレクトリを指定してください");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "combined chunks should detect start marker");
+
+    tracker.update("追加情報が必要です。");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "should stay inside plan block");
+
+    tracker.update("---END REFINEMENT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "end marker should close block");
+  });
+
+  it("tracks plan block when end marker is split across chunks", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---REFINEMENT PLAN---\n## Plan");
+    assert.strictEqual(tracker.isInsidePlanBlock, true);
+
+    tracker.update("- details\n---END REFINE");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "partial end marker should not close block");
+
+    tracker.update("MENT---\n\nDone.");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "combined chunks should detect end marker");
+  });
+
+  it("handles both markers in a single chunk", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---REFINEMENT PLAN---\n## Short plan\n---END REFINEMENT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "both markers in one chunk → block opened and closed");
+  });
+
+  it("does not false-positive on text without markers", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("対象ファイルのパスを指定してください。");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+
+    tracker.update("Please provide the build target directory.");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+  });
+});
+
+describe("extractRefinementPlanFromLogs — interactive prompt kill scenario", () => {
+  it("extracts plan from DB logs when killed mid-run", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill1", started_at: 1_000 });
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      "---REFINEMENT PLAN---\n## Plan\n- Step A\n---END REFINEMENT---",
+      2_000,
+    );
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "plan");
+    assert.match(result.plan, /Step A/);
+  });
+
+  it("returns empty when no logs exist at kill time", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill2", started_at: 1_000 });
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "empty");
+  });
+
+  it("extracts plan from inMemoryAssistantLogs when DB has no matching logs", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill3", started_at: 1_000 });
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500, [
+      "---REFINEMENT PLAN---\n## In-memory plan\n- from classified buffer\n---END REFINEMENT---",
+    ]);
+    assert.equal(result.kind, "plan");
+    assert.match(result.plan, /In-memory plan/);
+    assert.match(result.plan, /classified buffer/);
+  });
+
+  it("extracts plan when plan and trigger text coexist in the same chunk (in-memory)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tkill4", started_at: 1_000 });
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500, [
+      "---REFINEMENT PLAN---\n## Plan\n- 作業ディレクトリを指定してください\n---END REFINEMENT---",
+      "追加情報が必要です。対象のファイルパスを教えてください。",
+    ]);
+    assert.equal(result.kind, "plan");
+    assert.match(result.plan, /---REFINEMENT PLAN---/);
+    assert.match(result.plan, /作業ディレクトリ/);
   });
 });
 

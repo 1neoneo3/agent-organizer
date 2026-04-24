@@ -313,6 +313,223 @@ describe("initializeDb", () => {
     );
   });
 
+  it("refinement feedback round-trip records exactly one pair of stage transitions (regression: #476 double transition)", async () => {
+    // Regression test for issue #476: when refinement feedback fell through
+    // from the running-process path (queueFeedbackAndRestart returned false)
+    // to the idle-agent path, the refinement→inbox→refinement round-trip
+    // was executed twice, producing 4 __STAGE_TRANSITION__ markers instead
+    // of 2. The fix uses a `refinementTransitionDone` flag to skip the
+    // second path when the first already recorded the transitions.
+    //
+    // This test verifies at the DB/trigger level that performing the
+    // round-trip exactly once produces exactly 2 transition markers.
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("agent-dbl-trans", `dbl-trans-${now}`, "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run("task-dbl-trans", "Double Transition", "refinement", "agent-dbl-trans", "medium", now, now);
+
+    // Simulate the refinement feedback round-trip (exactly once)
+    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, "task-dbl-trans");
+    db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, "task-dbl-trans");
+
+    const transitions = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id ASC"
+    ).all("task-dbl-trans") as Array<{ message: string }>;
+
+    assert.equal(transitions.length, 2, `expected exactly 2 stage transitions but got ${transitions.length}: ${JSON.stringify(transitions)}`);
+    assert.equal(transitions[0].message, "__STAGE_TRANSITION__:refinement→inbox");
+    assert.equal(transitions[1].message, "__STAGE_TRANSITION__:inbox→refinement");
+  });
+
+  it("creates idx_task_logs_task_kind index on task_logs(task_id, kind)", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
+      .all() as Array<{ name: string }>;
+    const kindIndex = indexes.find((idx) => idx.name === "idx_task_logs_task_kind");
+    assert.ok(kindIndex, "idx_task_logs_task_kind should exist");
+
+    const originalIndex = indexes.find((idx) => idx.name === "idx_task_logs_task");
+    assert.ok(originalIndex, "idx_task_logs_task should still exist for created_at queries");
+  });
+
+  it("creates idx_task_logs_task_id index on task_logs(task_id, id DESC)", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
+      .all() as Array<{ name: string }>;
+    const taskIdIndex = indexes.find((idx) => idx.name === "idx_task_logs_task_id");
+    assert.ok(taskIdIndex, "idx_task_logs_task_id should exist");
+  });
+
+  it("planner picks idx_task_logs_task_id for task-scoped ORDER BY id queries", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const queries = [
+      "SELECT * FROM task_logs WHERE task_id = 'x' ORDER BY id DESC LIMIT 200 OFFSET 0",
+      "SELECT id, message FROM task_logs WHERE task_id = 'x' ORDER BY id DESC",
+      "SELECT kind, message, stage, agent_id, created_at FROM task_logs WHERE task_id = 'x' AND kind IN ('system', 'stderr') ORDER BY id DESC LIMIT 50",
+    ];
+
+    for (const sql of queries) {
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{ detail: string }>;
+      const usesTaskIdIndex = plan.some((row) =>
+        row.detail.includes("idx_task_logs_task_id"),
+      );
+      assert.ok(
+        usesTaskIdIndex,
+        `planner did not pick idx_task_logs_task_id for: ${sql}\nplan=${JSON.stringify(plan)}`,
+      );
+    }
+  });
+
+  it("planner picks idx_task_logs_task_kind for kind-filtered ORDER BY id queries", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const queries = [
+      "SELECT message FROM task_logs WHERE task_id = 'x' AND kind = 'system' ORDER BY id DESC LIMIT 1",
+      "SELECT message FROM task_logs WHERE task_id = 'x' AND kind = 'assistant' ORDER BY id DESC LIMIT 10",
+      "SELECT message FROM task_logs WHERE task_id = 'x' AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC",
+    ];
+
+    for (const sql of queries) {
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as Array<{ detail: string }>;
+      const usesKindIndex = plan.some((row) =>
+        row.detail.includes("idx_task_logs_task_kind"),
+      );
+      assert.ok(
+        usesKindIndex,
+        `planner did not pick idx_task_logs_task_kind for: ${sql}\nplan=${JSON.stringify(plan)}`,
+      );
+    }
+  });
+
+  it("kind-filtered query returns rows in correct id order using the new index", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    const agentName = `test-agent-idx-${now}`;
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-idx", agentName, "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("task-idx", "Index Test", "in_progress", "agent-idx", "small", now, now);
+
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)",
+    ).run("task-idx", "system", "sys-1", "in_progress", "agent-idx");
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)",
+    ).run("task-idx", "assistant", "ast-1", "in_progress", "agent-idx");
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)",
+    ).run("task-idx", "system", "sys-2", "in_progress", "agent-idx");
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)",
+    ).run("task-idx", "assistant", "ast-2", "in_progress", "agent-idx");
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)",
+    ).run("task-idx", "stdout", "out-1", "in_progress", "agent-idx");
+
+    const systemLogs = db
+      .prepare(
+        "SELECT id, message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC",
+      )
+      .all("task-idx") as Array<{ id: number; message: string }>;
+
+    assert.equal(systemLogs.length, 2);
+    assert.equal(systemLogs[0].message, "sys-2");
+    assert.equal(systemLogs[1].message, "sys-1");
+    assert.ok(systemLogs[0].id > systemLogs[1].id, "rows must be in descending id order");
+
+    const assistantLogs = db
+      .prepare(
+        "SELECT id, message FROM task_logs WHERE task_id = ? AND kind = 'assistant' ORDER BY id DESC LIMIT 10",
+      )
+      .all("task-idx") as Array<{ id: number; message: string }>;
+
+    assert.equal(assistantLogs.length, 2);
+    assert.equal(assistantLogs[0].message, "ast-2");
+    assert.equal(assistantLogs[1].message, "ast-1");
+
+    const allLogs = db
+      .prepare(
+        "SELECT id, message FROM task_logs WHERE task_id = ? ORDER BY id DESC",
+      )
+      .all("task-idx") as Array<{ id: number; message: string }>;
+
+    assert.equal(allLogs.length, 5);
+    for (let i = 1; i < allLogs.length; i++) {
+      assert.ok(allLogs[i - 1].id > allLogs[i].id, `rows[${i - 1}].id > rows[${i}].id`);
+    }
+  });
+
+  it("idx_task_logs_task_kind does not interfere with created_at range queries", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    const agentName = `test-agent-range-${now}`;
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-range", agentName, "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("task-range", "Range Test", "in_progress", "agent-range", "small", now, now);
+
+    const baseTime = now - 10_000;
+    for (let i = 0; i < 5; i++) {
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("task-range", "assistant", `msg-${i}`, "in_progress", "agent-range", baseTime + i * 1000);
+    }
+
+    const recent = db
+      .prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id ASC",
+      )
+      .all("task-range", baseTime + 3000) as Array<{ message: string }>;
+
+    assert.equal(recent.length, 2);
+    assert.equal(recent[0].message, "msg-3");
+    assert.equal(recent[1].message, "msg-4");
+  });
+
+  it("drops the legacy temporary task_logs(task_id) index after promoting the stable hot-query index", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tmp_task_logs_task_only ON task_logs(task_id)");
+
+    const reinitialized = initializeDb();
+    const indexes = reinitialized
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'task_logs'")
+      .all() as Array<{ name: string }>;
+
+    assert.ok(
+      indexes.some((idx) => idx.name === "idx_task_logs_task_id"),
+      "stable idx_task_logs_task_id should remain after re-initialization",
+    );
+    assert.ok(
+      !indexes.some((idx) => idx.name === "idx_tmp_task_logs_task_only"),
+      "legacy idx_tmp_task_logs_task_only should be dropped on initializeDb",
+    );
+  });
+
   it("split-into-tasks children inherit both plan AND completed_at (regression: child refinement re-run)", async () => {
     // Regression test for the Bug 3 / PR 3 review finding: children
     // created by POST /tasks/:id/split inherit the parent's
