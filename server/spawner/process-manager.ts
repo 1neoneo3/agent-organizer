@@ -60,6 +60,7 @@ import { getTaskSetting } from "../domain/task-settings.js";
 import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
+const pendingSpawns = new Set<string>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
@@ -191,6 +192,10 @@ export function clearPendingInteractivePrompt(taskId: string, db?: DatabaseSync)
 
 export function getActiveProcesses(): Map<string, ChildProcess> {
   return activeProcesses;
+}
+
+export function getPendingSpawns(): ReadonlySet<string> {
+  return pendingSpawns;
 }
 
 export function getCapturedSessionId(taskId: string): string | undefined {
@@ -730,6 +735,9 @@ export async function spawnAgent(
   // protects against orphan-recovery re-spawn racing with a user Run click
   // or a stale active-process entry.
   if (!isParallelTester && !isContinue) {
+    if (pendingSpawns.has(task.id)) {
+      return { pid: 0 };
+    }
     const existing = activeProcesses.get(task.id);
     if (existing && existing.pid !== undefined && !existing.killed) {
       return { pid: existing.pid };
@@ -845,6 +853,11 @@ export async function spawnAgent(
     }
   }
 
+  // Track preflight so orphan recovery skips this task during
+  // Explore Phase / before_run (which are awaited before the child
+  // process is registered in activeProcesses).
+  pendingSpawns.add(task.id);
+
   // Run Explore phase before Implement (if enabled and applicable)
   let exploreContext = "";
   if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isRefinementRun) {
@@ -932,20 +945,28 @@ export async function spawnAgent(
       );
     }
     if (beforeResults.some((result) => !result.ok)) {
+      pendingSpawns.delete(task.id);
       throw createBeforeRunFailureError(beforeResults);
     }
   }
 
-  const child = spawn(args[0], args.slice(1), {
-    cwd: workspace.cwd,
-    env: cleanEnv,
-    shell: process.platform === "win32",
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(args[0], args.slice(1), {
+      cwd: workspace.cwd,
+      env: cleanEnv,
+      shell: process.platform === "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+  } catch (spawnError) {
+    pendingSpawns.delete(task.id);
+    throw spawnError;
+  }
   let terminatedBySpawnError = false;
 
   activeProcesses.set(task.id, child);
+  pendingSpawns.delete(task.id);
 
   // Update task and agent status (skip for continue — already in_progress)
   if (!isContinue) {
@@ -2262,6 +2283,7 @@ export function killAgent(taskId: string, reason?: string): boolean {
     // already dead
   }
   activeProcesses.delete(taskId);
+  pendingSpawns.delete(taskId);
 
   // Also kill any secondary reviewers running for this task
   const session = reviewerSessions.get(taskId);

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { getActiveProcesses, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
+import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
@@ -49,15 +49,17 @@ export function startOrphanRecovery(
 
   return setInterval(() => {
     const active = getActiveProcesses();
+    const pending = getPendingSpawns();
 
-    recoverInProgressOrphans(db, ws, cache, active);
-    recoverStuckAutoStages(db, ws, cache, active, startedAt);
+    recoverInProgressOrphans(db, ws, cache, active, { pending });
+    recoverStuckAutoStages(db, ws, cache, active, startedAt, pending);
   }, intervalMs);
 }
 
 export interface RecoverInProgressOrphansOptions {
   spawnAgent?: typeof defaultSpawnAgent;
   maxAutoRespawn?: number;
+  pending?: ReadonlySet<string>;
 }
 
 export function recoverInProgressOrphans(
@@ -69,6 +71,7 @@ export function recoverInProgressOrphans(
 ): void {
   const spawnAgent = options.spawnAgent ?? defaultSpawnAgent;
   const maxAutoRespawn = options.maxAutoRespawn ?? ORPHAN_AUTO_RESPAWN_MAX;
+  const pendingSpawns = options.pending ?? new Set<string>();
 
   // Recover both in_progress and refinement orphans
   const orphanCandidates = db.prepare(
@@ -84,6 +87,7 @@ export function recoverInProgressOrphans(
 
   for (const task of orphanCandidates) {
     if (hasActive(active, task.id)) continue;
+    if (pendingSpawns.has(task.id)) continue;
 
     // Skip tasks awaiting interactive prompt (unless timed out)
     const pending = getPendingInteractivePrompt(task.id);
@@ -247,6 +251,7 @@ export function recoverStuckAutoStages(
   cache: CacheService | undefined,
   active: Map<string, unknown> | Set<string>,
   startedAt: number,
+  pendingSpawns?: ReadonlySet<string>,
 ): void {
   // Skip during the startup grace window so in-flight processes can recover
   // naturally and the active-process map gets a chance to repopulate.
@@ -264,6 +269,7 @@ export function recoverStuckAutoStages(
   for (const task of rows) {
     // If a live process is working on the task, let it finish.
     if (hasActive(active, task.id)) continue;
+    if (pendingSpawns?.has(task.id)) continue;
 
     const now = Date.now();
     // Atomic UPDATE: only act if the task is still in the same auto-stage.
