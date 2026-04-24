@@ -7,6 +7,7 @@ import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-tim
 import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
 import { getRefinementRevisionState } from "./task-refinement-state.js";
+import { getRevisionBadge, getPlanBanner } from "./task-card-badges.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 
 const SIZE_LABEL: Record<string, string> = {
@@ -133,33 +134,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
   const createdAtTooltip = formatTaskTimestamp(task.created_at);
   const refinementRevisionState = getRefinementRevisionState(task);
   const feedbackUi = getTaskFeedbackUi(task.status);
-  const revisionBadge = task.status === "refinement" && refinementRevisionState !== "not_requested"
-    ? refinementRevisionState === "completed"
-      ? {
-          label: "Revised",
-          color: "var(--status-done)",
-          background: "var(--bg-tertiary)",
-        }
-      : {
-          label: "Revising",
-          color: "var(--status-progress)",
-          background: "var(--bg-tertiary)",
-        }
-    : null;
-  const planBanner = task.status === "refinement"
-    ? refinementRevisionState === "pending"
-      ? { label: "Revision Requested", color: "var(--status-progress)" }
-      : task.refinement_plan
-        ? {
-            label: refinementRevisionState === "completed"
-              ? "Revised Plan Ready"
-              : "Implementation Plan Ready",
-            color: refinementRevisionState === "completed"
-              ? "var(--status-done)"
-              : "var(--status-refinement)",
-          }
-        : null
-    : null;
+  const revisionBadge = getRevisionBadge(task.status, refinementRevisionState);
+  const planBanner = getPlanBanner(task.status, refinementRevisionState, !!task.refinement_plan);
 
   return (
     <div
