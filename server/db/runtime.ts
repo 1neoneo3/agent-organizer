@@ -12,9 +12,10 @@ export function getDb(): DatabaseSync {
   return db;
 }
 
-export function initializeDb(): DatabaseSync {
-  mkdirSync(dirname(DB_PATH), { recursive: true });
-  db = new DatabaseSync(DB_PATH);
+export function initializeDb(dbPath?: string): DatabaseSync {
+  const resolvedPath = dbPath ?? DB_PATH;
+  mkdirSync(dirname(resolvedPath), { recursive: true });
+  db = new DatabaseSync(resolvedPath);
 
   // Core safety settings
   db.exec("PRAGMA journal_mode = WAL");
@@ -63,6 +64,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
   migrateStageAgentSelectionSettings(db);
+  migrateCleanupLeakedTestTasks(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -530,6 +532,77 @@ function migrateAddLogStageAgent(db: DatabaseSync): void {
         agent_id = COALESCE(agent_id, (SELECT assigned_agent_id FROM tasks WHERE tasks.id = task_logs.task_id))
     WHERE stage IS NULL OR agent_id IS NULL;
   `);
+}
+
+function migrateCleanupLeakedTestTasks(db: DatabaseSync): void {
+  const alreadyRun = db.prepare(
+    "SELECT 1 FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'"
+  ).get();
+  if (alreadyRun) return;
+
+  const taskIds = (
+    db.prepare(
+      "SELECT id FROM tasks WHERE title = 'Refinement feedback test task'"
+    ).all() as Array<{ id: string }>
+  ).map((r) => r.id);
+
+  if (taskIds.length === 0) {
+    db.prepare(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
+    ).run("leaked_test_tasks_cleaned_v1", String(Date.now()));
+    return;
+  }
+
+  const ph = taskIds.map(() => "?").join(",");
+
+  db.exec("BEGIN TRANSACTION");
+  try {
+    // Collect orphaned agent IDs before deleting tasks
+    const orphanAgentIds = (
+      db.prepare(
+        `SELECT DISTINCT assigned_agent_id AS aid FROM tasks
+         WHERE title = 'Refinement feedback test task' AND assigned_agent_id IS NOT NULL`
+      ).all() as Array<{ aid: string }>
+    ).map((r) => r.aid);
+
+    // Delete child rows first — messages uses ON DELETE SET NULL, not CASCADE
+    db.prepare(`DELETE FROM messages  WHERE task_id IN (${ph})`).run(...taskIds);
+    db.prepare(`DELETE FROM task_logs WHERE task_id IN (${ph})`).run(...taskIds);
+    db.prepare(`DELETE FROM subtasks  WHERE task_id IN (${ph})`).run(...taskIds);
+    db.prepare(`DELETE FROM tasks     WHERE id      IN (${ph})`).run(...taskIds);
+
+    // Delete agents that were only referenced by the leaked tasks
+    for (const aid of orphanAgentIds) {
+      const stillReferenced = db.prepare(
+        "SELECT 1 FROM tasks WHERE assigned_agent_id = ? LIMIT 1"
+      ).get(aid);
+      if (!stillReferenced) {
+        db.prepare("DELETE FROM agents WHERE id = ?").run(aid);
+      }
+    }
+
+    // Recompact task numbers within the same transaction
+    const rows = db.prepare(
+      "SELECT id, task_number FROM tasks WHERE task_number LIKE '#%' ORDER BY CAST(SUBSTR(task_number, 2) AS INTEGER) ASC"
+    ).all() as Array<{ id: string; task_number: string }>;
+
+    const update = db.prepare("UPDATE tasks SET task_number = ? WHERE id = ?");
+    for (let i = 0; i < rows.length; i++) {
+      const expected = `#${i + 1}`;
+      if (rows[i].task_number !== expected) {
+        update.run(expected, rows[i].id);
+      }
+    }
+
+    db.prepare(
+      "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"
+    ).run("leaked_test_tasks_cleaned_v1", String(Date.now()));
+
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
 }
 
 function backfillTaskNumbers(db: DatabaseSync): void {

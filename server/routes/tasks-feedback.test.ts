@@ -11,7 +11,6 @@ import type { CacheService } from "../cache/cache-service.js";
 import { createTasksRouter } from "./tasks.js";
 
 const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
-process.env.DB_PATH = TEST_DB_PATH;
 
 function createCache(): CacheService {
   return {
@@ -41,7 +40,7 @@ function createWsRecorder() {
 
 async function createDb(): Promise<DatabaseSync> {
   const { initializeDb } = await import("../db/runtime.js");
-  return initializeDb();
+  return initializeDb(TEST_DB_PATH);
 }
 
 async function startServer(
