@@ -388,6 +388,38 @@ describe("groupLogsByStage", () => {
     assert.equal(segments.at(-1)?.entryCount, 0);
   });
 
+  it("normalizes reverse-chronological logs before grouping refinement revise transitions", () => {
+    const logs: TaskLog[] = [
+      createLog(5, { stage: "refinement", message: "revising plan" }),
+      createLog(4, {
+        stage: "refinement",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}inbox→refinement`,
+      }),
+      createLog(3, {
+        stage: "inbox",
+        kind: "system",
+        message: "[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.",
+      }),
+      createLog(2, {
+        stage: "inbox",
+        kind: "system",
+        message: `${STAGE_TRANSITION_PREFIX}refinement→inbox`,
+      }),
+      createLog(1, { stage: "refinement", message: "initial plan" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.deepEqual(segments.map((segment) => `${segment.fromStage ?? ""}->${segment.stage}`), [
+      "->refinement",
+      "refinement->inbox",
+      "inbox->refinement",
+    ]);
+    assert.match(segments[0]?.text ?? "", /initial plan/);
+    assert.match(segments[1]?.text ?? "", /Refinement plan revision requested/);
+    assert.match(segments[2]?.text ?? "", /revising plan/);
+  });
+
   it("preserves the agent id on the first log of each segment", () => {
     const logs: TaskLog[] = [
       createLog(1, { stage: "in_progress", agent_id: "agent-a", message: "a" }),

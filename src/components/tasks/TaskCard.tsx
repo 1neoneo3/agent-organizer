@@ -6,9 +6,8 @@ import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
 import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-time.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
-import { getRefinementRevisionState } from "./task-refinement-state.js";
-import { getRevisionBadge, getPlanBanner } from "./task-card-badges.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
+import { getTaskRevisionUi } from "./task-revision-ui.js";
 
 const SIZE_LABEL: Record<string, string> = {
   small: "S",
@@ -132,10 +131,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
   const statusColor = STATUS_COLORS[task.status] ?? "var(--status-inbox)";
   const createdAtLabel = formatRelativeTaskTime(task.created_at);
   const createdAtTooltip = formatTaskTimestamp(task.created_at);
-  const refinementRevisionState = getRefinementRevisionState(task);
   const feedbackUi = getTaskFeedbackUi(task.status);
-  const revisionBadge = getRevisionBadge(task.status, refinementRevisionState);
-  const planBanner = getPlanBanner(task.status, refinementRevisionState, !!task.refinement_plan);
+  const { revisionBadge, planBanner } = getTaskRevisionUi(task);
 
   return (
     <div
