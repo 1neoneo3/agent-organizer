@@ -187,8 +187,8 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
       }}
     >
       {/* Card header: title + status */}
-      <div style={{ padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: "13px", lineHeight: "1.4", color: "var(--text-primary)", fontFamily: "var(--font-sans)" }}>
             {task.task_number && (
               <span style={{ color: "var(--text-secondary)", marginRight: "4px", fontSize: "11px", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{task.task_number}</span>
@@ -231,7 +231,7 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             );
           })()}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", flexWrap: "wrap" }}>
           {hasInteractivePrompt && (
             <span style={{
               padding: "2px 6px",
