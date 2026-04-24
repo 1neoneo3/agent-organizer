@@ -164,26 +164,60 @@ describe("runWorkflowHooks", () => {
     assert.ok(second[0]?.cacheKeyFiles?.includes("codegen.yml"));
   });
 
-  it("successful install records cache and skips on next run", () => {
+  it("successful chained install records cache and skips on next run", () => {
     const cwd = mkdtempSync(join(tmpdir(), "ao-hooks-roundtrip-"));
     const cacheDir = mkdtempSync(join(tmpdir(), "ao-hooks-cachedir-"));
     const marker = join(cwd, "marker.txt");
     writeFileSync(join(cwd, "package.json"), '{"name":"test"}');
     writeFileSync(join(cwd, "pnpm-lock.yaml"), "lockfileVersion: 9");
+    const command = `printf x >> "${marker}" && CI=1 pnpm install --help`;
 
     const first = runWorkflowHooks(
-      [`echo ran > "${marker}" && pnpm install --help`],
+      [command],
       cwd,
       { cacheDir },
     );
 
     assert.equal(first[0]?.skipped, false);
     assert.equal(first[0]?.ok, true);
+    assert.equal(readFileSync(marker, "utf-8"), "x");
 
     const cacheFiles = readdirSync(cacheDir).filter((f) =>
       f.endsWith(".json"),
     );
-    assert.equal(cacheFiles.length, 0);
+    assert.equal(cacheFiles.length, 1);
+
+    const second = runWorkflowHooks(
+      [command],
+      cwd,
+      { cacheDir },
+    );
+    assert.equal(second[0]?.skipped, true);
+    assert.equal(readFileSync(marker, "utf-8"), "x");
+  });
+
+  it("skipping cached chained install hook improves wall time", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ao-hooks-elapsed-"));
+    const cacheDir = mkdtempSync(join(tmpdir(), "ao-hooks-cachedir-"));
+    writeFileSync(join(cwd, "package.json"), '{"name":"test"}');
+    writeFileSync(join(cwd, "pnpm-lock.yaml"), "lockfileVersion: 9");
+
+    const command = "sleep 0.2 && CI=1 pnpm install --help";
+
+    const firstStarted = Date.now();
+    const first = runWorkflowHooks([command], cwd, { cacheDir });
+    const firstElapsed = Date.now() - firstStarted;
+
+    const secondStarted = Date.now();
+    const second = runWorkflowHooks([command], cwd, { cacheDir });
+    const secondElapsed = Date.now() - secondStarted;
+
+    assert.equal(first[0]?.ok, true);
+    assert.equal(first[0]?.skipped, false);
+    assert.equal(second[0]?.ok, true);
+    assert.equal(second[0]?.skipped, true);
+    assert.ok(firstElapsed >= 150, `expected uncached run to take at least 150ms, got ${firstElapsed}ms`);
+    assert.ok(secondElapsed < 100, `expected cached run to skip quickly, got ${secondElapsed}ms`);
   });
 
   it("captures stderr in output", () => {

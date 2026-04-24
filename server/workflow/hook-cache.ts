@@ -21,6 +21,100 @@ export interface HookCachePolicy {
   files: string[];
 }
 
+function splitShellCommandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+
+  const pushCurrent = () => {
+    const trimmed = current.trim();
+    if (trimmed.length > 0) {
+      segments.push(trimmed);
+    }
+    current = "";
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index];
+    const next = command[index + 1];
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\" && quote !== "'") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += char;
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (char === "'" || char === '"') {
+      quote = char;
+      current += char;
+      continue;
+    }
+
+    if ((char === "&" && next === "&") || (char === "|" && next === "|")) {
+      pushCurrent();
+      index += 1;
+      continue;
+    }
+
+    if (char === ";" || char === "\n") {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+  }
+
+  pushCurrent();
+  return segments;
+}
+
+function stripLeadingShellEnv(segment: string): string {
+  let normalized = segment.trimStart();
+
+  if (normalized.startsWith("env ")) {
+    normalized = normalized.slice(4).trimStart();
+  }
+
+  while (true) {
+    const next = normalized.replace(
+      /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)\s+/,
+      "",
+    );
+    if (next === normalized) {
+      return normalized;
+    }
+    normalized = next.trimStart();
+  }
+}
+
+function commandMatchesPolicy(
+  command: string,
+  match: (cmd: string) => boolean,
+): boolean {
+  for (const segment of splitShellCommandSegments(command)) {
+    const normalized = stripLeadingShellEnv(segment);
+    if (normalized.length > 0 && match(normalized)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const CACHE_POLICIES: ReadonlyArray<HookCachePolicy> = [
   {
     id: "pnpm-install",
@@ -82,7 +176,7 @@ export function detectHookCachePolicy(
 ): HookCachePolicy | null {
   const trimmed = command.trim();
   for (const policy of CACHE_POLICIES) {
-    if (policy.match(trimmed)) {
+    if (commandMatchesPolicy(trimmed, policy.match)) {
       return {
         id: policy.id,
         match: policy.match,

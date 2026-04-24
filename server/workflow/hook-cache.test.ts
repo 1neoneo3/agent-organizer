@@ -79,6 +79,15 @@ describe("detectDependencyFiles", () => {
     assert.ok(files.includes("pnpm-lock.yaml"));
   });
 
+  it("detects install hooks inside chained shell commands", () => {
+    const files = detectDependencyFiles(
+      "cd packages/api && CI=1 pnpm install --frozen-lockfile",
+    );
+    assert.ok(files);
+    assert.ok(files.includes("pnpm-lock.yaml"));
+    assert.ok(files.includes("package.json"));
+  });
+
   it("detects short alias: pnpm i", () => {
     const files = detectDependencyFiles("pnpm i");
     assert.ok(files);
@@ -204,6 +213,20 @@ describe("computeFingerprint", () => {
     const fp2 = computeFingerprint("pnpm install", dir);
 
     assert.notEqual(fp1, fp2);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("computes fingerprints for chained install commands", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
+    writeFileSync(join(dir, "package.json"), '{"name":"test"}');
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: 9");
+
+    const fp = computeFingerprint(
+      "cd . && CI=1 pnpm install --frozen-lockfile",
+      dir,
+    );
+    assert.ok(fp);
 
     rmSync(dir, { recursive: true });
   });
@@ -346,6 +369,20 @@ describe("shouldSkipHook / recordHookSuccess", () => {
 
     writeFileSync(join(cwd, "schema.graphql"), "type Query { hello: String, world: String }");
     assert.equal(shouldSkipHook("pnpm run codegen", cwd, cacheDir), false);
+  });
+
+  it("skips cached chained install commands until dependencies change", () => {
+    recordHookSuccess("cd . && CI=1 pnpm install --frozen-lockfile", cwd, cacheDir);
+    assert.equal(
+      shouldSkipHook("cd . && CI=1 pnpm install --frozen-lockfile", cwd, cacheDir),
+      true,
+    );
+
+    writeFileSync(join(cwd, "pnpm-lock.yaml"), "lockfileVersion: 9\nnew-dep: 3.0");
+    assert.equal(
+      shouldSkipHook("cd . && CI=1 pnpm install --frozen-lockfile", cwd, cacheDir),
+      false,
+    );
   });
 });
 
