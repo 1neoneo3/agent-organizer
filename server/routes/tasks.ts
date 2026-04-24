@@ -1207,31 +1207,47 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
       }
 
-      // --- TX2: idle-agent status updates ---
-      if (previousStatus === "refinement") {
-        if (!refinementTransitionDone) {
-          db.exec("BEGIN IMMEDIATE");
-          try {
+      // --- TX2: idle-agent status updates with a fresh status guard ---
+      let freshTask: Task | undefined;
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const current = fetchTaskById(db, task.id);
+        if (!current) {
+          db.exec("ROLLBACK");
+          return res.status(404).json({ error: "not_found" });
+        }
+        if (current.status !== task.status) {
+          db.exec("ROLLBACK");
+          return res.status(409).json({ error: "status_changed", expected_status: task.status, current_status: current.status });
+        }
+
+        if (previousStatus === "refinement") {
+          if (!refinementTransitionDone) {
             db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
             db.prepare(
               "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
             ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
             db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
-            db.exec("COMMIT");
-          } catch (txErr) {
-            try { db.exec("ROLLBACK"); } catch { /* double-fault guard */ }
-            throw txErr;
           }
+        } else {
+          db.prepare(
+            "UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?"
+          ).run(now, task.id);
         }
-      } else {
-        db.prepare("UPDATE tasks SET status = 'in_progress', completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?").run(now, task.id);
-        ws.broadcast("task_update", { id: task.id, status: "in_progress" });
+
+        freshTask = fetchTaskById(db, task.id);
+        db.exec("COMMIT");
+      } catch (txErr) {
+        try { db.exec("ROLLBACK"); } catch { /* double-fault guard */ }
+        throw txErr;
       }
       // --- End TX2 ---
 
-      const freshTask = fetchTaskById(db, task.id) as Task;
-      if (previousStatus === "refinement") {
+      if (freshTask) {
         ws.broadcast("task_update", freshTask);
+      }
+      if (!freshTask) {
+        return res.status(404).json({ error: "not_found" });
       }
       taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
         const handled = handleSpawnFailure(db, ws, task.id, err, {

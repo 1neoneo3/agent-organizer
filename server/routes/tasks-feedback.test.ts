@@ -27,12 +27,13 @@ function createCache(): CacheService {
   };
 }
 
-function createWsRecorder() {
+function createWsRecorder(onBroadcast?: (type: string, payload: unknown, options?: unknown) => void) {
   const events: Array<{ type: string; payload: unknown; options?: unknown }> = [];
   return {
     ws: {
       broadcast(type: string, payload: unknown, options?: unknown) {
         events.push({ type, payload, options });
+        onBroadcast?.(type, payload, options);
       },
     },
     events,
@@ -47,8 +48,9 @@ async function createDb(): Promise<DatabaseSync> {
 async function startServer(
   db: DatabaseSync,
   deps: Parameters<typeof createTasksRouter>[1],
+  options?: { onBroadcast?: (type: string, payload: unknown, options?: unknown) => void },
 ): Promise<{ server: Server; baseUrl: string; events: Array<{ type: string; payload: unknown; options?: unknown }> }> {
-  const { ws, events } = createWsRecorder();
+  const { ws, events } = createWsRecorder(options?.onBroadcast);
   const app = express();
   app.use(express.json());
   app.use(createTasksRouter({ db, ws: ws as never, cache: createCache() }, deps));
@@ -813,6 +815,57 @@ describe("POST /tasks/:id/feedback — done/cancelled task rework", () => {
       assert.equal(task.completed_at, null, "completed_at should be cleared for rework");
 
       assert.equal(spawnedTaskStatus, "in_progress");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("returns 409 when task status changes after feedback is committed but before idle-agent rework", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertTask(db, taskId, agentId, "done", { completed_at: Date.now() });
+
+    let spawnCalls = 0;
+    const { server, baseUrl } = await startServer(
+      db,
+      {
+        queueFeedbackAndRestart: () => false,
+        spawnAgent: async () => {
+          spawnCalls += 1;
+          return { pid: 9999 } as never;
+        },
+      },
+      {
+        onBroadcast: (type) => {
+          if (type === "message_new") {
+            db.prepare("UPDATE tasks SET status = 'cancelled', updated_at = ? WHERE id = ?").run(Date.now(), taskId);
+          }
+        },
+      },
+    );
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Rework this completed task." }),
+      });
+      assert.equal(response.status, 409);
+
+      const body = await response.json() as { error: string; expected_status: string; current_status: string };
+      assert.equal(body.error, "status_changed");
+      assert.equal(body.expected_status, "done");
+      assert.equal(body.current_status, "cancelled");
+      assert.equal(spawnCalls, 0);
+
+      const task = db.prepare("SELECT status, completed_at FROM tasks WHERE id = ?").get(taskId) as { status: string; completed_at: number | null };
+      assert.equal(task.status, "cancelled");
+      assert.ok(task.completed_at, "completed_at should remain intact when rework is aborted");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
