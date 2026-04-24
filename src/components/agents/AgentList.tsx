@@ -8,7 +8,7 @@ import { formatModelName } from "../../formatModelName.js";
 
 const ACTIVE_TASK_STATUSES = new Set([
   "refinement", "in_progress", "self_review", "test_generation",
-  "qa_testing", "pr_review", "human_review", "ci_check",
+  "qa_testing", "pr_review", "human_review",
 ]);
 
 interface AgentListProps {

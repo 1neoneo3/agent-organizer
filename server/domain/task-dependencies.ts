@@ -123,7 +123,6 @@ const ACTIVE_EDITING_STAGES: readonly string[] = [
   "in_progress",
   "self_review",
   "test_generation",
-  "ci_check",
   "qa_testing",
   "pr_review",
   "human_review",

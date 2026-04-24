@@ -467,36 +467,6 @@ describe("determineCompletionStatus", () => {
     assert.equal(status, "in_progress");
   });
 
-  it("returns done when ci_check run outputs [CI_CHECK:PASS]", () => {
-    const db = createDb();
-    const task = insertTask(db, { status: "ci_check", review_count: 0, started_at: 10_000 });
-
-    insertAssistantLog(db, task.id, "全チェック通過しました\n[CI_CHECK:PASS]", 12_000);
-
-    const status = determineCompletionStatus(db, task, false);
-    assert.equal(status, "done");
-  });
-
-  it("returns in_progress when ci_check run outputs [CI_CHECK:FAIL]", () => {
-    const db = createDb();
-    const task = insertTask(db, { status: "ci_check", review_count: 0, started_at: 10_000 });
-
-    insertAssistantLog(db, task.id, "[CI_CHECK:FAIL:no CI workflow found]", 12_000);
-
-    const status = determineCompletionStatus(db, task, false, true);
-    assert.equal(status, "in_progress");
-  });
-
-  it("returns in_progress when ci_check run has no verdict tag (no implicit pass)", () => {
-    const db = createDb();
-    const task = insertTask(db, { status: "ci_check", review_count: 0, started_at: 10_000 });
-
-    insertAssistantLog(db, task.id, "CI確認を実施しましたが判定タグ未出力", 12_000);
-
-    const status = determineCompletionStatus(db, task, false, true);
-    assert.equal(status, "in_progress");
-  });
-
   it("ignores old self-review logs from previous runs", () => {
     const db = createDb();
     const task = insertTask(db, { review_count: 0, started_at: 10_000, task_size: "small" });

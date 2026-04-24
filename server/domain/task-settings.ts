@@ -111,7 +111,6 @@ export const TASK_OVERRIDABLE_KEYS: readonly string[] = [
   "default_enable_refinement",
   "refinement_auto_approve",
   "refinement_as_pr",
-  "default_enable_ci_check",
   "default_enable_human_review",
   "explore_phase",
   "check_types_cmd",

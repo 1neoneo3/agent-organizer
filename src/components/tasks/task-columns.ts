@@ -6,7 +6,6 @@ export const TASK_BOARD_COLUMNS = [
   { key: "in_progress", label: "IN PROGRESS", town: "In Progress", accentColor: "var(--status-progress)" },
   { key: "self_review", label: "SELF REVIEW", town: "Self Review", accentColor: "var(--status-review)" },
   { key: "test_generation", label: "TEST GEN", town: "Test Generation", accentColor: "var(--status-test-gen)" },
-  { key: "ci_check", label: "CI CHECK", town: "CI Check", accentColor: "var(--status-ci-check)" },
   { key: "qa_testing", label: "QA TESTING", town: "QA Testing", accentColor: "var(--status-qa)" },
   { key: "pr_review", label: "PR REVIEW", town: "PR Review", accentColor: "var(--status-review)" },
   { key: "human_review", label: "HUMAN REVIEW", town: "Human Review", accentColor: "var(--status-human-review)" },
@@ -44,7 +43,6 @@ export function createEmptyTaskColumns(): TaskColumns {
     qa_testing: [],
     pr_review: [],
     human_review: [],
-    ci_check: [],
     done: [],
     cancelled: [],
   };
@@ -88,7 +86,6 @@ export function summarizeTaskColumns(columns: TaskColumns): TaskColumnSummaries 
     qa_testing: summarizeTaskColumn(columns.qa_testing),
     pr_review: summarizeTaskColumn(columns.pr_review),
     human_review: summarizeTaskColumn(columns.human_review),
-    ci_check: summarizeTaskColumn(columns.ci_check),
     done: summarizeTaskColumn(columns.done),
     cancelled: summarizeTaskColumn(columns.cancelled),
   };

@@ -37,10 +37,6 @@ describe("isAutoStage", () => {
     assert.equal(isAutoStage("test_generation"), true);
   });
 
-  it("is true for ci_check", () => {
-    assert.equal(isAutoStage("ci_check"), true);
-  });
-
   it("is false for human_review (terminal for auto flow)", () => {
     assert.equal(isAutoStage("human_review"), false);
   });
@@ -63,7 +59,4 @@ describe("shouldStampCompletedAt", () => {
     assert.equal(shouldStampCompletedAt("human_review"), false);
   });
 
-  it("does not stamp for ci_check", () => {
-    assert.equal(shouldStampCompletedAt("ci_check"), false);
-  });
 });

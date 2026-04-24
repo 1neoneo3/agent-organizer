@@ -203,7 +203,7 @@ function rebuildChildTable(db: DatabaseSync, tableName: string, schemaSql: strin
 }
 
 function migrateAddWorkflowStages(db: DatabaseSync): void {
-  // Add test_generation, human_review, ci_check to the status CHECK constraint.
+  // Add workflow stages to the status CHECK constraint.
   // SQLite doesn't support ALTER CHECK, so we rebuild the table.
   const checkInfo = db.prepare(
     "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"

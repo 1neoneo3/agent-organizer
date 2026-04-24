@@ -93,7 +93,7 @@ describe("recoverInProgressOrphans", () => {
     // Previously orphan recovery sent in_progress tasks back to inbox so
     // auto-dispatcher would restart the whole workflow (refinement →
     // implementation → review…). That silently undid any pr_review /
-    // qa_testing / ci_check rework loop. The fixture agent is created
+    // qa_testing rework loop. The fixture agent is created
     // with status='working' (see createInMemoryDb), so spawnAgent is NOT
     // triggered here — instead the task stays parked at in_progress and
     // the assigned agent is released to idle for the next tick.
@@ -320,12 +320,11 @@ describe("recoverStuckAutoStages", () => {
     assert.ok(ws.events.some((e) => e.type === "task_update"));
   });
 
-  it("promotes stuck qa_testing / test_generation / ci_check tasks", () => {
+  it("promotes stuck qa_testing / test_generation tasks", () => {
     const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
     for (const [id, status] of [
       ["qa", "qa_testing"],
       ["tg", "test_generation"],
-      ["pd", "ci_check"],
     ] as const) {
       insertTask(db, { id, status, assigned_agent_id: "agent-1", last_heartbeat_at: elevenMinutesAgo });
     }
@@ -333,7 +332,7 @@ describe("recoverStuckAutoStages", () => {
 
     recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START);
 
-    const rows = db.prepare("SELECT id, status FROM tasks WHERE id IN ('qa','tg','pd')").all() as Array<{
+    const rows = db.prepare("SELECT id, status FROM tasks WHERE id IN ('qa','tg')").all() as Array<{
       id: string;
       status: string;
     }>;

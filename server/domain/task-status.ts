@@ -25,7 +25,6 @@ export const TASK_STATUSES = [
   "qa_testing",
   "pr_review",
   "human_review",
-  "ci_check",
   "done",
   "cancelled",
 ] as const;
@@ -43,14 +42,13 @@ export type TerminalStatus = (typeof TERMINAL_STATUSES)[number];
 
 /**
  * Auto-stages: statuses driven by background processes (auto-reviewer,
- * auto-qa, auto-test-gen, auto-ci-check). Tasks in these statuses are
+ * auto-qa, auto-test-gen). Tasks in these statuses are
  * watched by the orphan recovery job and must emit heartbeats.
  */
 export const AUTO_STAGES = [
   "pr_review",
   "qa_testing",
   "test_generation",
-  "ci_check",
 ] as const satisfies readonly TaskStatus[];
 
 export type AutoStage = (typeof AUTO_STAGES)[number];
@@ -67,7 +65,6 @@ export const WORKFLOW_STAGES = [
   "refinement",
   "in_progress",
   "test_generation",
-  "ci_check",
   "qa_testing",
   "pr_review",
   "human_review",

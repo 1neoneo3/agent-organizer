@@ -26,7 +26,6 @@ const TASK_STATUS_COLORS: Record<string, { color: string; bg: string }> = {
   qa_testing: { color: "var(--status-qa)", bg: "var(--bg-tertiary)" },
   pr_review: { color: "var(--status-review)", bg: "var(--bg-tertiary)" },
   human_review: { color: "var(--status-human-review)", bg: "var(--bg-tertiary)" },
-  ci_check: { color: "var(--status-ci-check)", bg: "var(--bg-tertiary)" },
   done: { color: "var(--status-done)", bg: "var(--bg-tertiary)" },
   cancelled: { color: "var(--status-cancelled)", bg: "var(--bg-tertiary)" },
 };

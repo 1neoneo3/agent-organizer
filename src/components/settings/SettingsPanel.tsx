@@ -34,11 +34,6 @@ const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
     label: "Test Generation Stage",
     description: "Preferred tester for the test_generation stage. Falls back to tester role, then any idle worker.",
   },
-  {
-    key: "ci_check_agent_id",
-    label: "CI Check Stage",
-    description: "Preferred agent for the ci_check stage. Falls back to devops role, then any idle worker.",
-  },
 ];
 
 const inputStyle = {
@@ -316,20 +311,6 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
               </p>
             </label>
 
-            <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>CI Check Stage</span>
-              <select
-                style={inputStyle}
-                value={local.default_enable_ci_check ?? "false"}
-                onChange={(e) => update("default_enable_ci_check", e.target.value)}
-              >
-                <option value="false">Disabled</option>
-                <option value="true">Enabled</option>
-              </select>
-              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                Verify CI/CD infrastructure (workflows, scripts, passing runs) after implementation, before QA.
-              </p>
-            </label>
           </div>
         </section>
 

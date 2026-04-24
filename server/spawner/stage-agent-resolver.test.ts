@@ -136,6 +136,5 @@ describe("resolveStageAgentOverride", () => {
     assert.equal(resolveStageAgentOverride(db, "qa_agent_id")?.id, "qa");
     assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
     assert.equal(resolveStageAgentOverride(db, "test_generation_agent_id"), undefined);
-    assert.equal(resolveStageAgentOverride(db, "ci_check_agent_id"), undefined);
   });
 });

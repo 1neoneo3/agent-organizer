@@ -8,7 +8,6 @@ import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, g
 import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
-import { triggerAutoCiCheck } from "../spawner/auto-ci-check.js";
 import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
 import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransition } from "../workflow/stage-pipeline.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
@@ -265,7 +264,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
-      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'refinement', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review', 'ci_check') LIMIT 1"
+      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'refinement', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review') LIMIT 1"
     ).get(title) as { id: string; task_number: string; status: string } | undefined;
     if (duplicate) {
       return res.status(409).json({
@@ -460,7 +459,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (!task) return res.status(404).json({ error: "not_found" });
     // Kill any active agent process regardless of task.status. Previously
     // we only killed on in_progress, but refinement / pr_review /
-    // qa_testing / ci_check / test_generation all run child processes
+    // qa_testing / test_generation all run child processes
     // too. Leaving them alive after DELETE caused FOREIGN KEY violations
     // when the child's next stdout chunk tried to insert a task_log
     // referencing the now-deleted task id, crashing the server.
@@ -775,26 +774,6 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", updatedTask);
 
-    // Trigger next stage's auto-agent if applicable.
-    // Wrap deferred spawns in try/catch so synchronous throws from git/spawn
-    // operations cannot escape the setTimeout callback and kill the process.
-    if (next === "ci_check") {
-      setTimeout(() => {
-        try {
-          triggerAutoCiCheck(db, ws, updatedTask, cache);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[tasks.approve] triggerAutoCiCheck failed for task ${updatedTask.id}:`, err);
-          try {
-            db.prepare(
-              "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-            ).run(updatedTask.id, `triggerAutoCiCheck failed: ${message}`);
-          } catch {
-            // swallow logging failure — we must not re-throw inside setTimeout
-          }
-        }
-      }, 500);
-    }
     // After refinement approval → auto-dispatch to in_progress if agent is idle
     if (isRefinement && next === "in_progress" && updatedTask.assigned_agent_id) {
       const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(updatedTask.assigned_agent_id) as Agent | undefined;

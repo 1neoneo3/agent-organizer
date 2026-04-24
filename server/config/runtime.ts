@@ -163,7 +163,6 @@ export const SETTINGS_DEFAULTS = {
   // the out-of-the-box behavior. WORKFLOW.md can still turn them on via
   // the Settings UI (SSOT); operators who previously relied on
   // WORKFLOW.md-only toggles should move those flags to Settings.
-  default_enable_ci_check: "false" as const, // "true" | "false" — run CI verification stage
   default_enable_human_review: "false" as const, // "true" | "false" — require human approval before done
   // Re-spawn recovery for refinement runs that never produced a plan.
   // When enabled, spawnAgent will re-enter refinement mode even if the
@@ -192,7 +191,6 @@ export const SETTINGS_DEFAULTS = {
   review_agent_id: "" as const,
   qa_agent_id: "" as const,
   test_generation_agent_id: "" as const,
-  ci_check_agent_id: "" as const,
   // Default workspace mode when WORKFLOW.md does not explicitly set
   // `workspace_mode`. "git-worktree" isolates each in_progress task in
   // `.ao-worktrees/<taskId>` on its own branch so concurrent tasks on

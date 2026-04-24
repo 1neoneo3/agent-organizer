@@ -89,8 +89,8 @@ or set `REDIS_ENABLED=false` in `.env`.
 Tasks flow through a configurable series of stages. Each optional stage can be toggled on/off via Settings or per-project `WORKFLOW.md`.
 
 ```
-inbox → [refinement] → in_progress → [test_generation] → [ci_check] → [qa_testing] → [pr_review] → [human_review] → done
-                                                                                                                 ↘ cancelled
+inbox → [refinement] → in_progress → [test_generation] → [qa_testing] → [pr_review] → [human_review] → done
+                                                                                                    ↘ cancelled
 ```
 
 ### Stage Reference
@@ -101,7 +101,6 @@ inbox → [refinement] → in_progress → [test_generation] → [ci_check] → 
 | **refinement** | Agent analyzes codebase (read-only) and produces a structured plan: business requirements, technical requirements, acceptance criteria, files to modify, implementation steps, risks | `default_enable_refinement` | Requirements definition before coding starts. Human approval gate optional (`refinement_auto_approve`) |
 | **in_progress** | Agent implements the task. Optional explore phase runs first (read-only investigation) | Always on | — |
 | **test_generation** | Dedicated tester agent writes unit/integration tests for the implementation. Skipped for small tasks | `default_enable_test_generation` | Test coverage — a separate agent writes tests, not the implementer |
-| **ci_check** | Agent verifies CI/CD infrastructure: workflows exist, type check passes, linter passes, tests pass | `default_enable_ci_check` | Build correctness — `[CI_CHECK:PASS]` marker required to advance |
 | **qa_testing** | QA agent runs the application, tests user flows, and verifies acceptance criteria | `qa_mode` | Functional testing — `[QA:FAIL]` sends task back to implementation |
 | **pr_review** | Code review agent(s) check quality, security, correctness. Auto-checks (tsc/lint/test/e2e) run in parallel | `review_mode` | Code quality — multi-role review panel (code + security). Auto-checks gate: any failing check blocks advancement regardless of reviewer verdict |
 | **human_review** | Human approves or rejects via UI before task completes | `default_enable_human_review` | Human approval gate — Approve/Reject with feedback |
@@ -122,7 +121,6 @@ inbox → [refinement] → in_progress → [test_generation] → [ci_check] → 
 
 **Testing**
 - Test generation stage ensures a separate agent writes tests (not the implementer who knows the shortcuts)
-- CI check stage verifies type checking (`tsc`), linting, unit tests, and E2E all pass
 - QA testing stage runs functional acceptance testing against the running application
 - Auto-checks at PR review run `tsc`, lint, test, and e2e commands in parallel — a single failure blocks the task
 
@@ -145,7 +143,6 @@ All pipeline behavior is controlled through the Settings UI (`/settings`).
 | `default_enable_refinement` | true/false | Enable refinement (planning) stage before implementation |
 | `refinement_auto_approve` | true/false | Skip human approval of refinement plan |
 | `default_enable_test_generation` | true/false | Enable dedicated test generation stage (skipped for small tasks) |
-| `default_enable_ci_check` | true/false | Enable CI/CD verification stage |
 | `qa_mode` | enabled/disabled | Enable QA testing stage |
 | `review_mode` | none/pr_only/meeting | PR review stage control |
 | `default_enable_human_review` | true/false | Enable human approval gate |
@@ -162,7 +159,6 @@ All pipeline behavior is controlled through the Settings UI (`/settings`).
 | `review_agent_id` | agent id / empty | Preferred agent for PR review |
 | `qa_agent_id` | agent id / empty | Preferred agent for QA testing |
 | `test_generation_agent_id` | agent id / empty | Preferred agent for test generation |
-| `ci_check_agent_id` | agent id / empty | Preferred agent for CI check |
 
 Settings are the single source of truth (SSOT). Per-project `WORKFLOW.md` frontmatter serves as a fallback only when the setting is absent.
 
@@ -170,7 +166,7 @@ Settings are the single source of truth (SSOT). Per-project `WORKFLOW.md` frontm
 
 A background job (`server/lifecycle/jobs.ts`) detects tasks marked `in_progress` / `refinement` whose agent process has died. Each orphan is auto-respawned up to `ORPHAN_AUTO_RESPAWN_MAX` times (default **3**, env-overridable). After the budget is exhausted the task is parked with an explanatory log entry — press Run, send feedback, or use the Resume button to continue. The counter resets on any forward stage transition, manual Run, or feedback-rework.
 
-Stuck auto-stage tasks (`pr_review`, `qa_testing`, `test_generation`, `ci_check`) with a stale `last_heartbeat_at` (> 10 min) are promoted to `human_review` instead of being silently retried.
+Stuck auto-stage tasks (`pr_review`, `qa_testing`, `test_generation`) with a stale `last_heartbeat_at` (> 10 min) are promoted to `human_review` instead of being silently retried.
 
 ## Tech Stack
 

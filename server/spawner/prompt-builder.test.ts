@@ -48,7 +48,6 @@ describe("buildTaskPrompt", () => {
           enableRefinement: null,
           enableTestGeneration: false,
           enableHumanReview: false,
-          enableCiCheck: false,
           projectType: "generic" as const,
           checkTypesCmd: null,
           checkLintCmd: null,

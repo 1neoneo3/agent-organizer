@@ -29,7 +29,6 @@ const STATUS_EMOJI: Record<string, string> = {
   qa_testing: "\u{1F9EA}",
   pr_review: "\u{1F50D}",
   human_review: "\u{1F9D1}",
-  ci_check: "\u{1F680}",
   done: "\u2705",
   cancelled: "\u274C",
 };
@@ -39,7 +38,6 @@ const STATUS_LABEL: Record<string, string> = {
   qa_testing: "QA Testing",
   pr_review: "PR Review",
   human_review: "Human Review",
-  ci_check: "Pre Deploy",
   done: "Complete",
   cancelled: "Cancelled",
 };

@@ -57,12 +57,11 @@ const baseWorkflow: ProjectWorkflow = {
   enableRefinement: null,
   enableTestGeneration: false,
   enableHumanReview: false,
-  enableCiCheck: false,
-          projectType: "generic" as const,
-          checkTypesCmd: null,
-          checkLintCmd: null,
-          checkTestsCmd: null,
-          checkE2eCmd: null,
+  projectType: "generic" as const,
+  checkTypesCmd: null,
+  checkLintCmd: null,
+  checkTestsCmd: null,
+  checkE2eCmd: null,
 };
 
 describe("resolveActiveStages", () => {
@@ -89,15 +88,13 @@ describe("resolveActiveStages", () => {
     const workflow = {
       ...baseWorkflow,
       enableRefinement: null,
-  enableTestGeneration: true,
+      enableTestGeneration: true,
       enableHumanReview: true,
-      enableCiCheck: true,
     };
     const stages = resolveActiveStages(db, workflow);
     assert.deepStrictEqual(stages, [
       "in_progress",
       "test_generation",
-      "ci_check",
       "qa_testing",
       "pr_review",
       "human_review",
@@ -110,14 +107,13 @@ describe("resolveActiveStages", () => {
     const workflow = {
       ...baseWorkflow,
       enableRefinement: null,
-  enableTestGeneration: false,
+      enableTestGeneration: false,
       enableHumanReview: true,
-      enableCiCheck: false,
-          projectType: "generic" as const,
-          checkTypesCmd: null,
-          checkLintCmd: null,
-          checkTestsCmd: null,
-          checkE2eCmd: null,
+      projectType: "generic" as const,
+      checkTypesCmd: null,
+      checkLintCmd: null,
+      checkTestsCmd: null,
+      checkE2eCmd: null,
     };
     const stages = resolveActiveStages(db, workflow);
     assert.deepStrictEqual(stages, [
@@ -164,16 +160,6 @@ describe("resolveActiveStages", () => {
     });
     const stages = resolveActiveStages(db, null);
     assert.deepStrictEqual(stages, ["in_progress", "human_review", "done"]);
-  });
-
-  it("falls back to default_enable_ci_check setting when workflow is null", () => {
-    const db = createMockDb({
-      qa_mode: "disabled",
-      review_mode: "none",
-      default_enable_ci_check: "true",
-    });
-    const stages = resolveActiveStages(db, null);
-    assert.deepStrictEqual(stages, ["in_progress", "ci_check", "done"]);
   });
 
   it("workflow null flag falls back to settings default", () => {
