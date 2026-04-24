@@ -84,7 +84,7 @@ export function createWsHub(): WsHub {
     // Only count an actual broadcast if at least one client received it,
     // so idle-but-connected-less intervals don't bloat the counter.
     if (delivered > 0) {
-      recordWsBroadcast(byteLength * delivered);
+      recordWsBroadcast(byteLength * delivered, type);
     }
   }
 

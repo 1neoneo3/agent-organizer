@@ -2,7 +2,9 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { z } from "zod";
+import { recordReadApi } from "../perf/metrics.js";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
@@ -214,17 +216,24 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
   }
 
   router.get("/tasks", async (req, res) => {
+    const t0 = performance.now();
     const status = req.query.status as string | undefined;
     const cacheKey = status ? `tasks:status:${status}` : "tasks:all";
 
     const cached = await cache.get(cacheKey);
-    if (cached) return res.json(cached);
+    if (cached) {
+      const body = JSON.stringify(cached);
+      recordReadApi("tasks", performance.now() - t0, Buffer.byteLength(body));
+      return res.json(cached);
+    }
 
     const tasks = status
       ? db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC").all(status)
       : db.prepare("SELECT * FROM tasks ORDER BY priority DESC, created_at DESC").all();
 
     await cache.set(cacheKey, tasks, 10);
+    const body = JSON.stringify(tasks);
+    recordReadApi("tasks", performance.now() - t0, Buffer.byteLength(body));
     res.json(tasks);
   });
 
@@ -240,8 +249,11 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
   });
 
   router.get("/tasks/:id", (req, res) => {
+    const t0 = performance.now();
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
     if (!task) return res.status(404).json({ error: "not_found" });
+    const body = JSON.stringify(task);
+    recordReadApi("task", performance.now() - t0, Buffer.byteLength(body));
     res.json(task);
   });
 
@@ -970,6 +982,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
   // Get task logs
   router.get("/tasks/:id/logs", (req, res) => {
+    const t0 = performance.now();
     const limit = Math.min(Number(req.query.limit ?? 200), 1000);
     const offset = Number(req.query.offset ?? 0);
     const logs = db.prepare(
@@ -1010,11 +1023,14 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       }
       return row;
     });
+    const body = JSON.stringify(truncated);
+    recordReadApi("logs", performance.now() - t0, Buffer.byteLength(body));
     res.json(truncated);
   });
 
   // Terminal view: pretty-printed log file + DB logs
   router.get("/tasks/:id/terminal", (req, res) => {
+    const t0 = performance.now();
     const maxLines = Math.min(Number(req.query.lines ?? 2000), 10000);
     const pretty = req.query.pretty === "1";
 
@@ -1051,7 +1067,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       "ORDER BY created_at ASC"
     ).all(req.params.id) as Array<{ stage: string; agent_id: string | null; message: string; created_at: number }>;
 
-    res.json({
+    const result = {
       ok: true,
       exists: fileExists,
       text,
@@ -1067,7 +1083,10 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
           created_at: row.created_at,
         };
       }),
-    });
+    };
+    const body = JSON.stringify(result);
+    recordReadApi("terminal", performance.now() - t0, Buffer.byteLength(body));
+    res.json(result);
   });
 
   // CEO Feedback: send directive to a task (in_progress or finished)

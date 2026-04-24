@@ -18,6 +18,20 @@
 
 const SLOW_DB_INSERT_MS = 10;
 const SLOW_STDOUT_CHUNK_MS = 5;
+const SLOW_READ_API_MS = 50;
+
+interface ReadApiStats {
+  count: number;
+  totalMs: number;
+  maxMs: number;
+  slow: number;
+  totalBytes: number;
+}
+
+interface WsEventTypeStats {
+  count: number;
+  bytes: number;
+}
 
 interface Metrics {
   wsBroadcasts: number;
@@ -34,6 +48,13 @@ interface Metrics {
   stdoutChunkMaxMs: number;
 
   heartbeatWrites: number;
+
+  readApi: Record<string, ReadApiStats>;
+  wsEventTypes: Record<string, WsEventTypeStats>;
+}
+
+function emptyReadApiStats(): ReadApiStats {
+  return { count: 0, totalMs: 0, maxMs: 0, slow: 0, totalBytes: 0 };
 }
 
 function emptyMetrics(): Metrics {
@@ -49,6 +70,8 @@ function emptyMetrics(): Metrics {
     stdoutChunkSlow: 0,
     stdoutChunkMaxMs: 0,
     heartbeatWrites: 0,
+    readApi: {},
+    wsEventTypes: {},
   };
 }
 
@@ -57,13 +80,27 @@ export const metrics: Metrics = emptyMetrics();
 function resetMetrics(): void {
   const fresh = emptyMetrics();
   for (const key of Object.keys(fresh) as Array<keyof Metrics>) {
-    metrics[key] = fresh[key];
+    (metrics as unknown as Record<string, unknown>)[key] = fresh[key];
   }
 }
 
-export function recordWsBroadcast(byteLength: number): void {
+export function recordWsBroadcast(byteLength: number, eventType?: string): void {
   metrics.wsBroadcasts += 1;
   metrics.wsBroadcastBytes += byteLength;
+  if (eventType) {
+    const entry = metrics.wsEventTypes[eventType] ??= { count: 0, bytes: 0 };
+    entry.count += 1;
+    entry.bytes += byteLength;
+  }
+}
+
+export function recordReadApi(route: string, ms: number, payloadBytes: number): void {
+  const entry = metrics.readApi[route] ??= emptyReadApiStats();
+  entry.count += 1;
+  entry.totalMs += ms;
+  if (ms > entry.maxMs) entry.maxMs = ms;
+  if (ms > SLOW_READ_API_MS) entry.slow += 1;
+  entry.totalBytes += payloadBytes;
 }
 
 export function recordDbLogInsertMs(ms: number): void {
@@ -92,6 +129,26 @@ export function isPerfLogEnabled(): boolean {
   return process.env.AO_PERF_LOG === "1";
 }
 
+function formatReadApiLine(): string {
+  const entries = Object.entries(metrics.readApi);
+  if (entries.length === 0) return "";
+  const parts = entries.map(([route, s]) => {
+    const avgMs = s.count > 0 ? (s.totalMs / s.count).toFixed(1) : "0";
+    const kb = (s.totalBytes / 1024).toFixed(1);
+    return `${route}=${s.count}x avg${avgMs}ms max${s.maxMs.toFixed(1)}ms ${kb}KB${s.slow > 0 ? ` slow${s.slow}` : ""}`;
+  });
+  return ` read=[${parts.join(", ")}]`;
+}
+
+function formatWsEventTypeLine(): string {
+  const entries = Object.entries(metrics.wsEventTypes);
+  if (entries.length === 0) return "";
+  const parts = entries
+    .sort((a, b) => b[1].bytes - a[1].bytes)
+    .map(([type, s]) => `${type}=${s.count}/${(s.bytes / 1024).toFixed(1)}KB`);
+  return ` wsTypes=[${parts.join(", ")}]`;
+}
+
 /**
  * Start a periodic reporter that prints one aggregate line per interval
  * and then resets the counters. Returns a disposer.
@@ -110,7 +167,9 @@ export function startPerfReporter(intervalMs = 5_000): () => void {
       `[perf] ws=${metrics.wsBroadcasts}/${bytesKb}KB` +
       ` dbIns=${metrics.dbLogInserts} (avg ${dbAvgMs}ms max ${metrics.dbLogInsertMaxMs.toFixed(1)}ms slow ${metrics.dbLogInsertSlow})` +
       ` stdoutChunks=${metrics.stdoutChunks} (avg ${stdoutAvgMs}ms max ${metrics.stdoutChunkMaxMs.toFixed(1)}ms slow ${metrics.stdoutChunkSlow})` +
-      ` hb=${metrics.heartbeatWrites}`
+      ` hb=${metrics.heartbeatWrites}` +
+      formatReadApiLine() +
+      formatWsEventTypeLine()
     );
 
     resetMetrics();
