@@ -526,6 +526,65 @@ describe("POST /tasks/:id/feedback edge cases", () => {
       });
     }
   });
+
+  it("completed refinement with a busy assigned agent does not synthesize transitions and does not respawn", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertCompletedRefinementTask(db, taskId, agentId);
+
+    let spawnCalls = 0;
+    const beforeFeedback = Date.now();
+    const { server, baseUrl, events } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        return { pid: 1234 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise the completed plan once the busy agent frees up." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { sent: boolean; restarted: boolean };
+      assert.equal(body.sent, true);
+      assert.equal(body.restarted, false);
+      assert.equal(spawnCalls, 0, "spawnAgent should not run while the assigned agent is busy");
+      assert.deepEqual(getTransitions(db, taskId), [], "completed refinement should not record a synthetic round-trip");
+
+      const row = db.prepare(
+        "SELECT status, refinement_revision_requested_at, refinement_revision_completed_at FROM tasks WHERE id = ?",
+      ).get(taskId) as {
+        status: string;
+        refinement_revision_requested_at: number | null;
+        refinement_revision_completed_at: number | null;
+      };
+      assert.equal(row.status, "refinement");
+      assert.ok(
+        row.refinement_revision_requested_at && row.refinement_revision_requested_at >= beforeFeedback,
+        "refinement_revision_requested_at should still be stamped",
+      );
+      assert.equal(row.refinement_revision_completed_at, null);
+
+      const refinementUpdate = events.find(
+        (event) => event.type === "task_update"
+          && (event.payload as { id?: string; status?: string }).id === taskId
+          && (event.payload as { id?: string; status?: string }).status === "refinement",
+      );
+      assert.ok(refinementUpdate, "should broadcast the refinement task state even when no respawn happens");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
 
 describe("POST /tasks/:id/feedback additional coverage", () => {
