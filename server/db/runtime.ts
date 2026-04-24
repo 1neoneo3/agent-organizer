@@ -40,6 +40,7 @@ export function initializeDb(): DatabaseSync {
   db.exec("PRAGMA mmap_size = 67108864");
 
   db.exec(SCHEMA_SQL);
+  migrateAddTaskLogHotQueryIndexes(db);
   migrateAddRoleColumn(db);
   migrateAddAgentType(db);
   migrateAddDirectiveId(db);
@@ -66,6 +67,15 @@ export function initializeDb(): DatabaseSync {
   seedDefaults(db);
   backfillCliModels(db);
   return db;
+}
+
+function migrateAddTaskLogHotQueryIndexes(db: DatabaseSync): void {
+  // Promote the hot-query helper index for `WHERE task_id = ? ORDER BY id`
+  // to a stable schema index. Older databases may still carry the temporary
+  // `idx_tmp_task_logs_task_only(task_id)` helper; replace it so reads keep
+  // the benefit without paying duplicate write amplification forever.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id, id DESC)");
+  db.exec("DROP INDEX IF EXISTS idx_tmp_task_logs_task_only");
 }
 
 function migrateAddRoleColumn(db: DatabaseSync): void {
