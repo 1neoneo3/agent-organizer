@@ -2,16 +2,48 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { before, after, afterEach, describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import express from "express";
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
+import { SCHEMA_SQL } from "../db/schema.js";
 import { createTasksRouter } from "./tasks.js";
 
-const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
-process.env.DB_PATH = TEST_DB_PATH;
+function createDb(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(SCHEMA_SQL);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS task_logs_fill_metadata
+    AFTER INSERT ON task_logs
+    FOR EACH ROW
+    WHEN NEW.stage IS NULL OR NEW.agent_id IS NULL
+    BEGIN
+      UPDATE task_logs
+      SET stage = COALESCE(NEW.stage, (SELECT status FROM tasks WHERE id = NEW.task_id)),
+          agent_id = COALESCE(NEW.agent_id, (SELECT assigned_agent_id FROM tasks WHERE id = NEW.task_id))
+      WHERE id = NEW.id;
+    END;
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS tasks_log_stage_transition
+    AFTER UPDATE OF status ON tasks
+    FOR EACH ROW
+    WHEN NEW.status IS NOT OLD.status
+    BEGIN
+      INSERT INTO task_logs (task_id, kind, message, stage, agent_id)
+      VALUES (
+        NEW.id,
+        'system',
+        '__STAGE_TRANSITION__:' || COALESCE(OLD.status, 'null') || '→' || NEW.status,
+        NEW.status,
+        NEW.assigned_agent_id
+      );
+    END;
+  `);
+  return db;
+}
 
 function createCache(): CacheService {
   return {
@@ -37,11 +69,6 @@ function createWsRecorder() {
     },
     events,
   };
-}
-
-async function createDb(): Promise<DatabaseSync> {
-  const { initializeDb } = await import("../db/runtime.js");
-  return initializeDb();
 }
 
 async function startServer(
@@ -92,21 +119,19 @@ function getTransitions(db: DatabaseSync, taskId: string): string[] {
 }
 
 describe("POST /tasks/:id/feedback refinement regressions", () => {
-  before(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
+  let db: DatabaseSync;
+  let server: Server;
 
-  after(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
-
-  afterEach(() => {
+  afterEach(async () => {
     rmSync(join("data", "feedback"), { recursive: true, force: true });
-    rmSync(TEST_DB_PATH, { force: true });
+    db.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
   });
 
   it("records one refinement round-trip when an active child process is restarted", async () => {
-    const db = await createDb();
+    db = createDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "working");
@@ -114,7 +139,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
 
     let queueCalls = 0;
     let spawnCalls = 0;
-    const { server, baseUrl } = await startServer(db, {
+    const started = await startServer(db, {
       queueFeedbackAndRestart: () => {
         queueCalls += 1;
         return true;
@@ -124,33 +149,27 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         throw new Error("spawnAgent should not run when feedback restart stays in-process");
       },
     });
+    server = started.server;
 
-    try {
-      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content: "Revise the plan." }),
-      });
-      assert.equal(response.status, 200);
+    const response = await fetch(`${started.baseUrl}/tasks/${taskId}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "Revise the plan." }),
+    });
+    assert.equal(response.status, 200);
 
-      const body = await response.json() as { restarted: boolean };
-      assert.equal(body.restarted, true);
-      assert.equal(queueCalls, 1);
-      assert.equal(spawnCalls, 0);
-      assert.deepEqual(getTransitions(db, taskId), [
-        "__STAGE_TRANSITION__:refinement→inbox",
-        "__STAGE_TRANSITION__:inbox→refinement",
-      ]);
-    } finally {
-      db.close();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+    const body = await response.json() as { restarted: boolean };
+    assert.equal(body.restarted, true);
+    assert.equal(queueCalls, 1);
+    assert.equal(spawnCalls, 0);
+    assert.deepEqual(getTransitions(db, taskId), [
+      "__STAGE_TRANSITION__:refinement→inbox",
+      "__STAGE_TRANSITION__:inbox→refinement",
+    ]);
   });
 
   it("does not duplicate transitions when feedback falls through to idle-agent respawn", async () => {
-    const db = await createDb();
+    db = createDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "idle");
@@ -160,7 +179,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
     let spawnedTaskStatus: string | undefined;
     let spawnedPreviousStatus: string | undefined;
     let spawnedPrompt: string | undefined;
-    const { server, baseUrl, events } = await startServer(db, {
+    const started = await startServer(db, {
       queueFeedbackAndRestart: () => false,
       spawnAgent: async (_db, _ws, _agent, task, options) => {
         spawnCalls += 1;
@@ -170,34 +189,28 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         return { pid: 1234 } as never;
       },
     });
+    server = started.server;
 
-    try {
-      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content: "Tighten the acceptance criteria." }),
-      });
-      assert.equal(response.status, 200);
+    const response = await fetch(`${started.baseUrl}/tasks/${taskId}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "Tighten the acceptance criteria." }),
+    });
+    assert.equal(response.status, 200);
 
-      const body = await response.json() as { restarted: boolean };
-      assert.equal(body.restarted, true);
-      assert.equal(spawnCalls, 1);
-      assert.equal(spawnedTaskStatus, "refinement");
-      assert.equal(spawnedPreviousStatus, "refinement");
-      assert.equal(spawnedPrompt, "Tighten the acceptance criteria.");
-      assert.deepEqual(getTransitions(db, taskId), [
-        "__STAGE_TRANSITION__:refinement→inbox",
-        "__STAGE_TRANSITION__:inbox→refinement",
-      ]);
-      assert.ok(
-        events.some((event) => event.type === "task_update"),
-        "expected a task_update broadcast for the respawned refinement task",
-      );
-    } finally {
-      db.close();
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+    const body = await response.json() as { restarted: boolean };
+    assert.equal(body.restarted, true);
+    assert.equal(spawnCalls, 1);
+    assert.equal(spawnedTaskStatus, "refinement");
+    assert.equal(spawnedPreviousStatus, "refinement");
+    assert.equal(spawnedPrompt, "Tighten the acceptance criteria.");
+    assert.deepEqual(getTransitions(db, taskId), [
+      "__STAGE_TRANSITION__:refinement→inbox",
+      "__STAGE_TRANSITION__:inbox→refinement",
+    ]);
+    assert.ok(
+      started.events.some((event) => event.type === "task_update"),
+      "expected a task_update broadcast for the respawned refinement task",
+    );
   });
 });
