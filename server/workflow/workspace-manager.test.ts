@@ -290,6 +290,91 @@ describe("prepareTaskWorkspace", () => {
     assert.match(workspace.branchName ?? "", /^refactor\/t46-improve-dashboard-polish$/);
   });
 
+  it("trims a trailing hyphen when the slug is cut at the length limit", () => {
+    const repo = initRepo();
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-trailing-hyphen",
+        title: "Amazon transfers postgres incremental sync high-priority",
+        task_number: "#460",
+        project_path: repo,
+      } as never,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write" as const,
+        codexApprovalPolicy: "on-request" as const,
+        e2eExecution: "host" as const,
+        e2eCommand: null,
+        gitWorkflow: "default" as const,
+        workspaceMode: "git-worktree" as const,
+        branchPrefix: "issue",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        enableCiCheck: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+    );
+
+    assert.equal(workspace.branchName, "feat/t460-amazon-transfers-postgres-incremental-sync-high");
+    assert.doesNotMatch(workspace.branchName ?? "", /-$/);
+  });
+
+  it("reuses an existing worktree even when the old branch name ended with a trailing hyphen", () => {
+    const repo = initRepo();
+    const task = {
+      id: "task-existing-truncated-branch",
+      title: "Amazon transfers postgres incremental sync high-priority",
+      task_number: "#460",
+      project_path: repo,
+    } as never;
+    const workflow = {
+      body: "",
+      codexSandboxMode: "workspace-write" as const,
+      codexApprovalPolicy: "on-request" as const,
+      e2eExecution: "host" as const,
+      e2eCommand: null,
+      gitWorkflow: "default" as const,
+      workspaceMode: "git-worktree" as const,
+      branchPrefix: "issue",
+      beforeRun: [],
+      afterRun: [],
+      includeTask: true,
+      includeReview: true,
+      includeDecompose: true,
+      enableRefinement: null,
+      enableTestGeneration: false,
+      enableHumanReview: false,
+      enableCiCheck: false,
+      projectType: "generic" as const,
+      checkTypesCmd: null,
+      checkLintCmd: null,
+      checkTestsCmd: null,
+      checkE2eCmd: null,
+    };
+    const worktreePath = join(repo, ".ao-worktrees", "task-existing-truncated-branch");
+    const brokenBranch = "feat/t460-amazon-transfers-postgres-incremental-sync-high-";
+    const fixedBranch = "feat/t460-amazon-transfers-postgres-incremental-sync-high";
+
+    git(repo, "worktree", "add", "-b", brokenBranch, worktreePath, "main");
+
+    const workspace = prepareTaskWorkspace(task, workflow);
+
+    assert.equal(workspace.cwd, worktreePath);
+    assert.equal(workspace.branchName, fixedBranch);
+    assert.equal(git(workspace.cwd, "rev-parse", "--abbrev-ref", "HEAD"), fixedBranch);
+    assert.equal(git(repo, "show-ref", "--verify", "--quiet", `refs/heads/${fixedBranch}`), "");
+  });
+
   it("infers docs/fix/chore/ci branch prefixes from task text", () => {
     const repo = initRepo();
     const docsWorkspace = prepareTaskWorkspace(

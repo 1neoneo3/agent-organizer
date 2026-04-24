@@ -13,11 +13,13 @@ export interface TaskWorkspace {
 }
 
 function sanitizeSegment(value: string): string {
-  return value
+  const sanitized = value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 48) || "task";
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+  return sanitized || "task";
 }
 
 function runGit(cwd: string, args: string[]): string {
@@ -222,7 +224,14 @@ function ensureWorktreeOnBranch(worktreePath: string, branchName: string, taskId
     worktreePath,
     `AO worktree handoff: ${taskId} before checkout ${branchName}`,
   );
-  runGit(worktreePath, ["checkout", branchName]);
+  if (branchExists(worktreePath, branchName)) {
+    runGit(worktreePath, ["checkout", branchName]);
+  } else {
+    const checkoutArgs = existingBranch
+      ? ["checkout", "-B", branchName, existingBranch]
+      : ["checkout", "-B", branchName];
+    runGit(worktreePath, checkoutArgs);
+  }
   if (worktreeStash) {
     applyAndDropStash(worktreePath, worktreeStash);
   }
