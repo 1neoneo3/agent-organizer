@@ -6,7 +6,7 @@ import { performance } from "node:perf_hooks";
 import { z } from "zod";
 import { recordReadApi } from "../perf/metrics.js";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
-import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
+import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt, tryStartPendingSpawn, clearPendingSpawn } from "../spawner/process-manager.js";
 import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
@@ -1229,16 +1229,28 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     if (previousStatus === "refinement") {
       ws.broadcast("task_update", freshTask);
     }
-    taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
-      const handled = handleSpawnFailure(db, ws, task.id, err, {
-        cache,
-        source: "Feedback resume",
+
+    // Guard against concurrent feedback spawns: spawnAgent with
+    // continuePrompt (isContinue=true) bypasses the internal
+    // pendingSpawns check, so the route must acquire the slot itself.
+    if (!tryStartPendingSpawn(task.id)) {
+      return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
+    }
+
+    taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache })
+      .catch((err) => {
+        const handled = handleSpawnFailure(db, ws, task.id, err, {
+          cache,
+          source: "Feedback resume",
+        });
+        if (handled.handled) {
+          return;
+        }
+        console.error(`[tasks.feedback] spawnAgent failed for task ${task.id}:`, err);
+      })
+      .finally(() => {
+        clearPendingSpawn(task.id);
       });
-      if (handled.handled) {
-        return;
-      }
-      console.error(`[tasks.feedback] spawnAgent failed for task ${task.id}:`, err);
-    });
 
     res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
   });

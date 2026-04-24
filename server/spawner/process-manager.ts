@@ -1645,8 +1645,22 @@ export async function spawnAgent(
           previousStatus: feedback.previousStatus,
           cache,
         }).catch((err) => {
-          console.error(`[process-manager] feedback respawn failed for task ${task.id}:`, err);
+          const result = handleSpawnFailure(db, ws, task.id, err, {
+            cache,
+            source: "Feedback respawn (close handler)",
+          });
+          if (!result.handled) {
+            console.error(`[process-manager] feedback respawn failed for task ${task.id}:`, err);
+          }
         });
+      } else {
+        insertLogStmt.run(
+          task.id,
+          "system",
+          `Feedback respawn skipped: ${!freshTask ? "task deleted" : "agent deleted"}`,
+          spawnStage,
+          agent.id,
+        );
       }
       return;
     }
