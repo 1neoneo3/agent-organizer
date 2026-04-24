@@ -54,8 +54,10 @@ describe("metrics", () => {
 
       assert.equal(metrics.wsEventTypes["log"].count, 2);
       assert.equal(metrics.wsEventTypes["log"].bytes, 800);
+      assert.equal(metrics.wsEventTypes["log"].maxBytes, 500);
       assert.equal(metrics.wsEventTypes["status"].count, 1);
       assert.equal(metrics.wsEventTypes["status"].bytes, 100);
+      assert.equal(metrics.wsEventTypes["status"].maxBytes, 100);
     });
 
     it("does not create event type entry when eventType is omitted", () => {
@@ -77,6 +79,7 @@ describe("metrics", () => {
       assert.equal(stats.totalMs, 10);
       assert.equal(stats.maxMs, 10);
       assert.equal(stats.totalBytes, 2048);
+      assert.equal(stats.maxBytes, 2048);
       assert.equal(stats.slow, 0);
     });
 
@@ -89,6 +92,7 @@ describe("metrics", () => {
       assert.equal(stats.totalMs, 60);
       assert.equal(stats.maxMs, 30);
       assert.equal(stats.totalBytes, 6000);
+      assert.equal(stats.maxBytes, 3000);
     });
 
     it("tracks multiple routes independently", () => {
@@ -121,6 +125,15 @@ describe("metrics", () => {
       assert.equal(metrics.readApi["tasks"].maxMs, 30);
       recordReadApi("tasks", 50, 100);
       assert.equal(metrics.readApi["tasks"].maxMs, 50);
+    });
+
+    it("updates maxBytes only when a larger payload arrives", () => {
+      recordReadApi("tasks", 30, 200);
+      assert.equal(metrics.readApi["tasks"].maxBytes, 200);
+      recordReadApi("tasks", 10, 100);
+      assert.equal(metrics.readApi["tasks"].maxBytes, 200);
+      recordReadApi("tasks", 20, 500);
+      assert.equal(metrics.readApi["tasks"].maxBytes, 500);
     });
   });
 
@@ -266,8 +279,10 @@ describe("metrics", () => {
       assert.ok(output.includes("hb=1"), "should contain heartbeat count");
       assert.ok(output.includes("read=["), "should contain read API section");
       assert.ok(output.includes("tasks="), "should contain tasks route");
+      assert.ok(output.includes("payload("), "should contain payload summary");
       assert.ok(output.includes("wsTypes=["), "should contain ws event types section");
       assert.ok(output.includes("cli_output="), "should contain cli_output event type");
+      assert.ok(output.includes("total2.0KB"), "should contain ws total bytes");
 
       dispose();
       logMock.mock.restore();
@@ -378,6 +393,53 @@ describe("metrics", () => {
       dispose();
       logMock.mock.restore();
     });
+
+    it("reports avg, max, and total payload sizes", (t) => {
+      t.mock.timers.enable({ apis: ["setInterval"] });
+
+      recordReadApi("tasks", 20, 1024);
+      recordReadApi("tasks", 40, 3072);
+
+      const logMock = t.mock.method(console, "log");
+      const dispose = startPerfReporter(5_000);
+
+      t.mock.timers.tick(5_000);
+
+      const output = logMock.mock.calls[0].arguments[0] as string;
+      assert.ok(output.includes("tasks=2x"), "should include route count");
+      assert.ok(output.includes("avg30.0ms"), "should include avg latency");
+      assert.ok(output.includes("max40.0ms"), "should include max latency");
+      assert.ok(output.includes("payload(avg2.0KB"), "should include avg payload");
+      assert.ok(output.includes("max3.0KB"), "should include max payload");
+      assert.ok(output.includes("total4.0KB"), "should include total payload");
+
+      dispose();
+      logMock.mock.restore();
+    });
+  });
+
+  describe("WS event type formatting", () => {
+    it("reports avg, max, and total bytes per event type", (t) => {
+      t.mock.timers.enable({ apis: ["setInterval"] });
+
+      recordWsBroadcast(1024, "task_update");
+      recordWsBroadcast(3072, "task_update");
+
+      const logMock = t.mock.method(console, "log");
+      const dispose = startPerfReporter(5_000);
+
+      t.mock.timers.tick(5_000);
+
+      const output = logMock.mock.calls[0].arguments[0] as string;
+      assert.ok(output.includes("wsTypes=["), "should include ws event breakdown");
+      assert.ok(output.includes("task_update=2x"), "should include count");
+      assert.ok(output.includes("avg2.0KB"), "should include avg payload");
+      assert.ok(output.includes("max3.0KB"), "should include max payload");
+      assert.ok(output.includes("total4.0KB"), "should include total payload");
+
+      dispose();
+      logMock.mock.restore();
+    });
   });
 
   describe("edge cases", () => {
@@ -393,6 +455,7 @@ describe("metrics", () => {
       assert.equal(metrics.readApi["tasks"].count, 1);
       assert.equal(metrics.readApi["tasks"].totalMs, 0);
       assert.equal(metrics.readApi["tasks"].maxMs, 0);
+      assert.equal(metrics.readApi["tasks"].maxBytes, 0);
     });
 
     it("handles high-volume recording without error", () => {

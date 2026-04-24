@@ -26,11 +26,13 @@ interface ReadApiStats {
   maxMs: number;
   slow: number;
   totalBytes: number;
+  maxBytes: number;
 }
 
 interface WsEventTypeStats {
   count: number;
   bytes: number;
+  maxBytes: number;
 }
 
 interface Metrics {
@@ -54,7 +56,11 @@ interface Metrics {
 }
 
 function emptyReadApiStats(): ReadApiStats {
-  return { count: 0, totalMs: 0, maxMs: 0, slow: 0, totalBytes: 0 };
+  return { count: 0, totalMs: 0, maxMs: 0, slow: 0, totalBytes: 0, maxBytes: 0 };
+}
+
+function emptyWsEventTypeStats(): WsEventTypeStats {
+  return { count: 0, bytes: 0, maxBytes: 0 };
 }
 
 function emptyMetrics(): Metrics {
@@ -88,9 +94,10 @@ export function recordWsBroadcast(byteLength: number, eventType?: string): void 
   metrics.wsBroadcasts += 1;
   metrics.wsBroadcastBytes += byteLength;
   if (eventType) {
-    const entry = metrics.wsEventTypes[eventType] ??= { count: 0, bytes: 0 };
+    const entry = metrics.wsEventTypes[eventType] ??= emptyWsEventTypeStats();
     entry.count += 1;
     entry.bytes += byteLength;
+    if (byteLength > entry.maxBytes) entry.maxBytes = byteLength;
   }
 }
 
@@ -101,6 +108,7 @@ export function recordReadApi(route: string, ms: number, payloadBytes: number): 
   if (ms > entry.maxMs) entry.maxMs = ms;
   if (ms > SLOW_READ_API_MS) entry.slow += 1;
   entry.totalBytes += payloadBytes;
+  if (payloadBytes > entry.maxBytes) entry.maxBytes = payloadBytes;
 }
 
 export function recordDbLogInsertMs(ms: number): void {
@@ -132,11 +140,19 @@ export function isPerfLogEnabled(): boolean {
 function formatReadApiLine(): string {
   const entries = Object.entries(metrics.readApi);
   if (entries.length === 0) return "";
-  const parts = entries.map(([route, s]) => {
+  const parts = entries
+    .sort((a, b) => {
+      const totalMsDiff = b[1].totalMs - a[1].totalMs;
+      if (totalMsDiff !== 0) return totalMsDiff;
+      return b[1].totalBytes - a[1].totalBytes;
+    })
+    .map(([route, s]) => {
     const avgMs = s.count > 0 ? (s.totalMs / s.count).toFixed(1) : "0";
-    const kb = (s.totalBytes / 1024).toFixed(1);
-    return `${route}=${s.count}x avg${avgMs}ms max${s.maxMs.toFixed(1)}ms ${kb}KB${s.slow > 0 ? ` slow${s.slow}` : ""}`;
-  });
+      const avgKb = s.count > 0 ? (s.totalBytes / s.count / 1024).toFixed(1) : "0.0";
+      const maxKb = (s.maxBytes / 1024).toFixed(1);
+      const totalKb = (s.totalBytes / 1024).toFixed(1);
+      return `${route}=${s.count}x avg${avgMs}ms max${s.maxMs.toFixed(1)}ms payload(avg${avgKb}KB max${maxKb}KB total${totalKb}KB)${s.slow > 0 ? ` slow${s.slow}` : ""}`;
+    });
   return ` read=[${parts.join(", ")}]`;
 }
 
@@ -145,7 +161,12 @@ function formatWsEventTypeLine(): string {
   if (entries.length === 0) return "";
   const parts = entries
     .sort((a, b) => b[1].bytes - a[1].bytes)
-    .map(([type, s]) => `${type}=${s.count}/${(s.bytes / 1024).toFixed(1)}KB`);
+    .map(([type, s]) => {
+      const avgKb = s.count > 0 ? (s.bytes / s.count / 1024).toFixed(1) : "0.0";
+      const maxKb = (s.maxBytes / 1024).toFixed(1);
+      const totalKb = (s.bytes / 1024).toFixed(1);
+      return `${type}=${s.count}x payload(avg${avgKb}KB max${maxKb}KB total${totalKb}KB)`;
+    });
   return ` wsTypes=[${parts.join(", ")}]`;
 }
 

@@ -223,7 +223,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const cached = await cache.get(cacheKey);
     if (cached) {
       const body = JSON.stringify(cached);
-      recordReadApi("tasks", performance.now() - t0, Buffer.byteLength(body));
+      recordReadApi("/tasks", performance.now() - t0, Buffer.byteLength(body));
       return res.json(cached);
     }
 
@@ -233,7 +233,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     await cache.set(cacheKey, tasks, 10);
     const body = JSON.stringify(tasks);
-    recordReadApi("tasks", performance.now() - t0, Buffer.byteLength(body));
+    recordReadApi("/tasks", performance.now() - t0, Buffer.byteLength(body));
     res.json(tasks);
   });
 
@@ -253,7 +253,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
     if (!task) return res.status(404).json({ error: "not_found" });
     const body = JSON.stringify(task);
-    recordReadApi("task", performance.now() - t0, Buffer.byteLength(body));
+    recordReadApi("/tasks/:id", performance.now() - t0, Buffer.byteLength(body));
     res.json(task);
   });
 
@@ -1024,7 +1024,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       return row;
     });
     const body = JSON.stringify(truncated);
-    recordReadApi("logs", performance.now() - t0, Buffer.byteLength(body));
+    recordReadApi("/tasks/:id/logs", performance.now() - t0, Buffer.byteLength(body));
     res.json(truncated);
   });
 
@@ -1085,7 +1085,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       }),
     };
     const body = JSON.stringify(result);
-    recordReadApi("terminal", performance.now() - t0, Buffer.byteLength(body));
+    recordReadApi("/tasks/:id/terminal", performance.now() - t0, Buffer.byteLength(body));
     res.json(result);
   });
 
