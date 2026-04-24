@@ -61,6 +61,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddPlannedFiles(db);
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
+  migrateStageAgentSelectionSettings(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -323,6 +324,67 @@ function migrateAddSettingsOverrides(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === "settings_overrides")) return;
   db.exec("ALTER TABLE tasks ADD COLUMN settings_overrides TEXT");
+}
+
+function migrateStageAgentSelectionSettings(db: DatabaseSync): void {
+  const legacyToNext = [
+    {
+      legacyKey: "refinement_agent_id",
+      roleKey: "refinement_agent_role",
+      modelKey: "refinement_agent_model",
+    },
+    {
+      legacyKey: "review_agent_id",
+      roleKey: "review_agent_role",
+      modelKey: "review_agent_model",
+    },
+    {
+      legacyKey: "qa_agent_id",
+      roleKey: "qa_agent_role",
+      modelKey: "qa_agent_model",
+    },
+    {
+      legacyKey: "test_generation_agent_id",
+      roleKey: "test_generation_agent_role",
+      modelKey: "test_generation_agent_model",
+    },
+  ] as const;
+
+  for (const mapping of legacyToNext) {
+    const legacyRow = db
+      .prepare("SELECT value FROM settings WHERE key = ?")
+      .get(mapping.legacyKey) as { value: string } | undefined;
+    const hasRole = Boolean(
+      db.prepare("SELECT 1 FROM settings WHERE key = ? LIMIT 1").get(mapping.roleKey),
+    );
+    const hasModel = Boolean(
+      db.prepare("SELECT 1 FROM settings WHERE key = ? LIMIT 1").get(mapping.modelKey),
+    );
+
+    if (legacyRow?.value?.trim() && !hasRole && !hasModel) {
+      const agent = db
+        .prepare("SELECT role, cli_model FROM agents WHERE id = ? LIMIT 1")
+        .get(legacyRow.value.trim()) as { role: string | null; cli_model: string | null } | undefined;
+
+      if (agent) {
+        const now = Date.now();
+        if (agent.role) {
+          db.prepare(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+          ).run(mapping.roleKey, agent.role, now);
+        }
+        if (agent.cli_model) {
+          db.prepare(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+          ).run(mapping.modelKey, agent.cli_model, now);
+        }
+      }
+    }
+
+    db.prepare("DELETE FROM settings WHERE key = ?").run(mapping.legacyKey);
+  }
+
+  db.prepare("DELETE FROM settings WHERE key = ?").run("ci_check_agent_id");
 }
 
 function migrateAddMergedPrUrls(db: DatabaseSync): void {

@@ -68,7 +68,12 @@ function findTestGenAgent(
   db: DatabaseSync,
   implementerAgentId: string | null,
 ): Agent | undefined {
-  const override = resolveStageAgentOverride(db, "test_generation_agent_id", [implementerAgentId]);
+  const override = resolveStageAgentOverride(
+    db,
+    "test_generation_agent_role",
+    "test_generation_agent_model",
+    [implementerAgentId],
+  );
   if (override) return override;
 
   const testerByRole = db.prepare(

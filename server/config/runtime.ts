@@ -179,17 +179,23 @@ export const SETTINGS_DEFAULTS = {
   // ---END REFINEMENT--- etc.) remain stable across languages so that
   // downstream parsers keep working.
   output_language: "ja" as const, // "ja" | "en"
-  // Stage-specific default agent overrides. Empty string means "no
-  // override" — the existing role-based resolver is used. When set, the
-  // value is an agent id; the auto-* spawn paths prefer that agent when
-  // it is idle and not the task's implementer. `assigned_agent_id` on
-  // the task continues to represent the implementer (in_progress) and
-  // is unaffected by these settings. human_review has no auto-spawn
-  // path today, so no setting is exposed for it.
-  refinement_agent_id: "" as const,
-  review_agent_id: "" as const,
-  qa_agent_id: "" as const,
-  test_generation_agent_id: "" as const,
+  // Stage-specific worker selection filters. Empty string means "no
+  // filter" — the existing role-based resolver is used. When a role
+  // and/or model is configured, the stage-specific resolver picks a
+  // random idle worker that matches the configured filters. If no idle
+  // worker matches, the system falls back to the legacy role-based
+  // stage resolver. `assigned_agent_id` on the task continues to
+  // represent the implementer (in_progress) and is unaffected by these
+  // settings. human_review has no auto-spawn path today, so no setting
+  // is exposed for it.
+  refinement_agent_role: "" as const,
+  refinement_agent_model: "" as const,
+  review_agent_role: "" as const,
+  review_agent_model: "" as const,
+  qa_agent_role: "" as const,
+  qa_agent_model: "" as const,
+  test_generation_agent_role: "" as const,
+  test_generation_agent_model: "" as const,
   // Default workspace mode when WORKFLOW.md does not explicitly set
   // `workspace_mode`. "git-worktree" isolates each in_progress task in
   // `.ao-worktrees/<taskId>` on its own branch so concurrent tasks on

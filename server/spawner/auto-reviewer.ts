@@ -188,12 +188,18 @@ export function findReviewAgents(
   const excludeId = implementerAgentId ?? "";
   const assignments: ReviewerAssignment[] = [];
 
-  // 0. Settings override: when `review_agent_id` is configured and the
-  // referenced worker is idle, use it as the primary code reviewer. The
+  // 0. Settings override: when `review_agent_role` and/or
+  // `review_agent_model` is configured and at least one idle worker
+  // matches, use a random matching worker as the primary code reviewer. The
   // role-based code_reviewer slot is skipped so we do not end up with a
   // panel of two code reviewers; the security_reviewer secondary slot
   // still applies.
-  const overrideReviewer = resolveStageAgentOverride(db, "review_agent_id", [excludeId]);
+  const overrideReviewer = resolveStageAgentOverride(
+    db,
+    "review_agent_role",
+    "review_agent_model",
+    [excludeId],
+  );
   if (overrideReviewer) {
     assignments.push({ agent: overrideReviewer, role: "code" });
   }

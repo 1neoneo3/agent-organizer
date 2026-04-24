@@ -89,9 +89,14 @@ function findQaAgent(
   db: DatabaseSync,
   implementerAgentId: string | null,
 ): Agent | undefined {
-  // Settings override: explicit qa_agent_id wins when the referenced
-  // agent is idle and not the implementer.
-  const override = resolveStageAgentOverride(db, "qa_agent_id", [implementerAgentId]);
+  // Settings override: explicit QA role/model filter wins when at least
+  // one idle worker matches and is not the implementer.
+  const override = resolveStageAgentOverride(
+    db,
+    "qa_agent_role",
+    "qa_agent_model",
+    [implementerAgentId],
+  );
   if (override) return override;
 
   // Try tester role first

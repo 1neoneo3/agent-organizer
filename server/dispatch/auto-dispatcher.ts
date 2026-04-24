@@ -162,7 +162,11 @@ function resolveRefinementAgentForInbox(
   task: Task,
   availableAgents: Map<string, Agent>,
 ): Agent | undefined {
-  const override = resolveStageAgentOverride(db, "refinement_agent_id");
+  const override = resolveStageAgentOverride(
+    db,
+    "refinement_agent_role",
+    "refinement_agent_model",
+  );
   if (!override) return undefined;
   if (!availableAgents.has(override.id)) return undefined;
 
@@ -333,7 +337,7 @@ export function dispatchAutoStartableTasks(
     }
 
     // Stage-specific default: when the task's first active stage is
-    // `refinement`, honour the `refinement_agent_id` setting override
+    // `refinement`, honour the stage-specific role/model selection
     // before falling back to role-based scoring. The override only
     // applies if the agent is currently idle (i.e. present in
     // `availableAgents`); otherwise we defer to `chooseBestAgent` so

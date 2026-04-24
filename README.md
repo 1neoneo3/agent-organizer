@@ -148,10 +148,14 @@ All pipeline behavior is controlled through the Settings UI (`/settings`).
 | `qa_count` | number | Max QA iterations before escalation |
 | `output_language` | ja/en | Natural-language output of agent-generated titles, descriptions, refinement plans, review/QA text, and PR bodies. Control tokens (`[REVIEW:...]`, `---REFINEMENT PLAN---` etc.) remain stable across languages |
 | `default_workspace_mode` | shared/git-worktree | Default workspace isolation strategy. `git-worktree` spins up `.ao-worktrees/<taskId>` on its own branch per `in_progress` task; `shared` uses the main checkout |
-| `refinement_agent_id` | agent id / empty | Preferred agent for the refinement (planning) stage. Empty = role-based resolver |
-| `review_agent_id` | agent id / empty | Preferred agent for PR review |
-| `qa_agent_id` | agent id / empty | Preferred agent for QA testing |
-| `test_generation_agent_id` | agent id / empty | Preferred agent for test generation |
+| `refinement_agent_role` | role id / empty | Role filter for the refinement (planning) stage |
+| `refinement_agent_model` | model / empty | Model filter paired with `refinement_agent_role` |
+| `review_agent_role` | role id / empty | Role filter for the primary PR reviewer |
+| `review_agent_model` | model / empty | Model filter paired with `review_agent_role` |
+| `qa_agent_role` | role id / empty | Role filter for QA testing |
+| `qa_agent_model` | model / empty | Model filter paired with `qa_agent_role` |
+| `test_generation_agent_role` | role id / empty | Role filter for test generation |
+| `test_generation_agent_model` | model / empty | Model filter paired with `test_generation_agent_role` |
 
 Settings are the single source of truth (SSOT). Per-project `WORKFLOW.md` frontmatter serves as a fallback only when the setting is absent.
 

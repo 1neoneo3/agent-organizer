@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { fetchAgents, updateSettings } from "../../api/endpoints.js";
 import type { Agent, Settings } from "../../types/index.js";
+import { AGENT_ROLES, getRoleLabel } from "../agents/roles.js";
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -8,31 +9,36 @@ interface SettingsPanelProps {
 }
 
 interface StageAgentOption {
-  key: string;
+  roleKey: string;
+  modelKey: string;
   label: string;
   description: string;
 }
 
 const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
   {
-    key: "refinement_agent_id",
+    roleKey: "refinement_agent_role",
+    modelKey: "refinement_agent_model",
     label: "Plan Stage",
-    description: "Preferred agent when a task enters the plan stage. Falls back to role-based scoring if unset or busy.",
+    description: "Filter plan-stage workers by role and/or model. A random idle match is selected before falling back to the normal resolver.",
   },
   {
-    key: "review_agent_id",
+    roleKey: "review_agent_role",
+    modelKey: "review_agent_model",
     label: "PR Review Stage",
-    description: "Primary reviewer when a task enters pr_review. The security_reviewer secondary slot still applies.",
+    description: "Filter the primary PR reviewer by role and/or model. The security_reviewer secondary slot still applies.",
   },
   {
-    key: "qa_agent_id",
+    roleKey: "qa_agent_role",
+    modelKey: "qa_agent_model",
     label: "QA Testing Stage",
-    description: "Preferred tester when a task enters qa_testing. Falls back to tester role, then any idle worker.",
+    description: "Filter QA workers by role and/or model. A random idle match is selected before falling back to the default tester selection.",
   },
   {
-    key: "test_generation_agent_id",
+    roleKey: "test_generation_agent_role",
+    modelKey: "test_generation_agent_model",
     label: "Test Generation Stage",
-    description: "Preferred tester for the test_generation stage. Falls back to tester role, then any idle worker.",
+    description: "Filter test-generation workers by role and/or model. A random idle match is selected before falling back to the default tester selection.",
   },
 ];
 
@@ -72,6 +78,11 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   }, []);
 
   const workerAgents = agents.filter((a) => a.agent_type === "worker");
+  const modelOptions = [...new Set(
+    workerAgents
+      .map((agent) => agent.cli_model?.trim() ?? "")
+      .filter((model) => model.length > 0),
+  )].sort((left, right) => left.localeCompare(right));
 
   const handleSave = async () => {
     setSaving(true);
@@ -322,25 +333,41 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         <section>
           <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Stage-Specific Agent Assignments</h3>
           <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
-            Override the default role-based agent selection for each workflow stage. When the selected agent is busy or unavailable at dispatch time, the system falls back to the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.
+            Override the default role-based agent selection for each workflow stage. When a stage has a role and/or model filter, the system chooses a random idle worker that matches the configured combination. If no worker matches at dispatch time, it falls back to the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             {STAGE_AGENT_OPTIONS.map((option) => (
-              <label key={option.key} style={{ display: "block" }}>
+              <label key={option.roleKey} style={{ display: "block" }}>
                 <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>{option.label}</span>
-                <select
-                  style={inputStyle}
-                  value={local[option.key] ?? ""}
-                  onChange={(e) => update(option.key, e.target.value)}
-                >
-                  <option value="">None (auto-select by role)</option>
-                  {workerAgents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.name}
-                      {agent.role ? ` — ${agent.role}` : ""}
-                    </option>
-                  ))}
-                </select>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginTop: "4px" }}>
+                  <select
+                    style={{ ...inputStyle, marginTop: 0 }}
+                    value={local[option.roleKey] ?? ""}
+                    onChange={(e) => update(option.roleKey, e.target.value)}
+                  >
+                    <option value="">Any role (use default resolver)</option>
+                    {AGENT_ROLES.map((role) => (
+                      <option key={role.id} value={role.id}>
+                        {role.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    style={{ ...inputStyle, marginTop: 0 }}
+                    value={local[option.modelKey] ?? ""}
+                    onChange={(e) => update(option.modelKey, e.target.value)}
+                  >
+                    <option value="">Any model</option>
+                    {modelOptions.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                  Current selection: {(local[option.roleKey] ? getRoleLabel(local[option.roleKey]) ?? local[option.roleKey] : "any role")} × {(local[option.modelKey] || "any model")}
+                </p>
                 <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>{option.description}</p>
               </label>
             ))}

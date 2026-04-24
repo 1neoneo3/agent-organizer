@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { resolveStageAgentOverride, type StageSettingKey } from "./stage-agent-resolver.js";
+import {
+  resolveStageAgentOverride,
+  type StageModelSettingKey,
+  type StageSettingKey,
+} from "./stage-agent-resolver.js";
 
 /**
  * In-memory SQLite fixture with the minimal `agents` + `settings`
@@ -17,7 +21,8 @@ function createFixture() {
       name TEXT NOT NULL,
       agent_type TEXT NOT NULL DEFAULT 'worker',
       status TEXT NOT NULL DEFAULT 'idle',
-      role TEXT
+      role TEXT,
+      cli_model TEXT
     );
     CREATE TABLE settings (
       key TEXT PRIMARY KEY,
@@ -35,20 +40,29 @@ function insertAgent(
     agent_type?: "worker" | "ceo";
     status?: "idle" | "working" | "offline";
     role?: string | null;
+    cli_model?: string | null;
   },
 ): void {
   db.prepare(
-    "INSERT INTO agents (id, name, agent_type, status, role) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO agents (id, name, agent_type, status, role, cli_model) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(
     agent.id,
     agent.name ?? `agent-${agent.id}`,
     agent.agent_type ?? "worker",
     agent.status ?? "idle",
     agent.role ?? null,
+    agent.cli_model ?? null,
   );
 }
 
 function setSetting(db: DatabaseSync, key: StageSettingKey, value: string): void {
+  db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) " +
+      "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(key, value);
+}
+
+function setModelSetting(db: DatabaseSync, key: StageModelSettingKey, value: string): void {
   db.prepare(
     "INSERT INTO settings (key, value) VALUES (?, ?) " +
       "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -64,77 +78,100 @@ describe("resolveStageAgentOverride", () => {
 
   it("returns undefined when the setting is missing", () => {
     insertAgent(db, { id: "a1" });
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });
 
-  it("returns undefined when the setting is an empty string", () => {
-    setSetting(db, "review_agent_id", "");
+  it("returns undefined when both filters are empty strings", () => {
+    setSetting(db, "review_agent_role", "");
+    setModelSetting(db, "review_agent_model", "");
     insertAgent(db, { id: "a1" });
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });
 
-  it("returns undefined when the setting is whitespace", () => {
-    setSetting(db, "review_agent_id", "   ");
-    insertAgent(db, { id: "a1" });
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
-  });
-
-  it("returns the agent when it is idle, worker, and not excluded", () => {
-    insertAgent(db, { id: "reviewer-1", role: "code_reviewer" });
-    setSetting(db, "review_agent_id", "reviewer-1");
-    const result = resolveStageAgentOverride(db, "review_agent_id", ["implementer-1"]);
+  it("returns the agent when role matches and it is idle, worker, and not excluded", () => {
+    insertAgent(db, { id: "reviewer-1", role: "code_reviewer", cli_model: "gpt-5.4" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentOverride(db, "review_agent_role", "review_agent_model", ["implementer-1"]);
     assert.ok(result);
     assert.equal(result?.id, "reviewer-1");
   });
 
+  it("returns the agent when only the model filter matches", () => {
+    insertAgent(db, { id: "reviewer-1", role: "code_reviewer", cli_model: "gpt-5.4" });
+    setModelSetting(db, "review_agent_model", "gpt-5.4");
+    const result = resolveStageAgentOverride(db, "review_agent_role", "review_agent_model");
+    assert.equal(result?.id, "reviewer-1");
+  });
+
+  it("requires both role and model when both filters are set", () => {
+    insertAgent(db, { id: "reviewer-1", role: "code_reviewer", cli_model: "gpt-5.4" });
+    insertAgent(db, { id: "reviewer-2", role: "code_reviewer", cli_model: "claude-opus-4-6" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setModelSetting(db, "review_agent_model", "claude-opus-4-6");
+    const result = resolveStageAgentOverride(db, "review_agent_role", "review_agent_model");
+    assert.equal(result?.id, "reviewer-2");
+  });
+
+  it("returns undefined when only whitespace filters are present", () => {
+    setSetting(db, "review_agent_role", "   ");
+    setModelSetting(db, "review_agent_model", "   ");
+    insertAgent(db, { id: "a1" });
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
+  });
+
   it("returns undefined when the agent is busy (status=working)", () => {
-    insertAgent(db, { id: "busy-reviewer", status: "working" });
-    setSetting(db, "review_agent_id", "busy-reviewer");
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
+    insertAgent(db, { id: "busy-reviewer", status: "working", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });
 
   it("returns undefined when the agent is offline", () => {
-    insertAgent(db, { id: "offline-reviewer", status: "offline" });
-    setSetting(db, "review_agent_id", "offline-reviewer");
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
+    insertAgent(db, { id: "offline-reviewer", status: "offline", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });
 
-  it("returns undefined when the agent_id is in the exclude list (implementer)", () => {
-    insertAgent(db, { id: "shared-agent" });
-    setSetting(db, "review_agent_id", "shared-agent");
+  it("returns undefined when every matching agent is in the exclude list", () => {
+    insertAgent(db, { id: "shared-agent", role: "code_reviewer", cli_model: "gpt-5.4" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setModelSetting(db, "review_agent_model", "gpt-5.4");
     assert.equal(
-      resolveStageAgentOverride(db, "review_agent_id", ["shared-agent"]),
+      resolveStageAgentOverride(db, "review_agent_role", "review_agent_model", ["shared-agent"]),
       undefined,
     );
   });
 
   it("skips null/undefined entries in the exclude list without throwing", () => {
-    insertAgent(db, { id: "reviewer-1" });
-    setSetting(db, "review_agent_id", "reviewer-1");
-    const result = resolveStageAgentOverride(db, "review_agent_id", [null, undefined, ""]);
+    insertAgent(db, { id: "reviewer-1", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentOverride(db, "review_agent_role", "review_agent_model", [null, undefined, ""]);
     assert.equal(result?.id, "reviewer-1");
   });
 
-  it("returns undefined when the referenced agent does not exist", () => {
-    setSetting(db, "review_agent_id", "ghost-agent");
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
+  it("returns undefined when no idle worker matches the configured role/model", () => {
+    insertAgent(db, { id: "reviewer-1", role: "code_reviewer", cli_model: "gpt-5.4" });
+    setSetting(db, "review_agent_role", "tester");
+    setModelSetting(db, "review_agent_model", "claude-opus-4-6");
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });
 
   it("returns undefined for non-worker agents (e.g. ceo)", () => {
-    insertAgent(db, { id: "ceo-1", agent_type: "ceo" });
-    setSetting(db, "review_agent_id", "ceo-1");
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
+    insertAgent(db, { id: "ceo-1", agent_type: "ceo", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });
 
   it("honours each stage setting key independently", () => {
-    insertAgent(db, { id: "refiner", role: "code_reviewer" });
-    insertAgent(db, { id: "qa", role: "tester" });
-    setSetting(db, "refinement_agent_id", "refiner");
-    setSetting(db, "qa_agent_id", "qa");
+    insertAgent(db, { id: "refiner", role: "planner", cli_model: "claude-opus-4-6" });
+    insertAgent(db, { id: "qa", role: "tester", cli_model: "gpt-5.4" });
+    setSetting(db, "refinement_agent_role", "planner");
+    setModelSetting(db, "refinement_agent_model", "claude-opus-4-6");
+    setSetting(db, "qa_agent_role", "tester");
+    setModelSetting(db, "qa_agent_model", "gpt-5.4");
 
-    assert.equal(resolveStageAgentOverride(db, "refinement_agent_id")?.id, "refiner");
-    assert.equal(resolveStageAgentOverride(db, "qa_agent_id")?.id, "qa");
-    assert.equal(resolveStageAgentOverride(db, "review_agent_id"), undefined);
-    assert.equal(resolveStageAgentOverride(db, "test_generation_agent_id"), undefined);
+    assert.equal(resolveStageAgentOverride(db, "refinement_agent_role", "refinement_agent_model")?.id, "refiner");
+    assert.equal(resolveStageAgentOverride(db, "qa_agent_role", "qa_agent_model")?.id, "qa");
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
+    assert.equal(resolveStageAgentOverride(db, "test_generation_agent_role", "test_generation_agent_model"), undefined);
   });
 });
