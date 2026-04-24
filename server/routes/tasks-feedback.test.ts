@@ -631,6 +631,83 @@ describe("POST /tasks/:id/feedback — completed refinement task", () => {
       });
     }
   });
+
+  it("stamps revision state and broadcasts task_update when a completed refinement task has no assigned agent", async () => {
+    const db = await createDb();
+    const taskId = randomUUID();
+    insertTask(db, taskId, null, "refinement");
+    db.prepare("UPDATE tasks SET completed_at = ? WHERE id = ?").run(Date.now() - 1000, taskId);
+
+    const { server, baseUrl, events } = await startServer(db, noopDeps);
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise again without an assignee." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, false);
+      assert.deepEqual(getTransitions(db, taskId), []);
+
+      const ts = getRevisionTimestamps(db, taskId);
+      assert.ok(ts.refinement_revision_requested_at !== null, "should stamp revision requested_at");
+      assert.equal(ts.refinement_revision_completed_at, null, "should clear completed_at");
+
+      const taskUpdates = events.filter(
+        (e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId,
+      );
+      assert.ok(taskUpdates.length > 0, "should broadcast task_update for completed refinement without agent");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("stamps revision state and broadcasts task_update when a completed refinement task's agent is busy", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertTask(db, taskId, agentId, "refinement");
+    db.prepare("UPDATE tasks SET completed_at = ? WHERE id = ?").run(Date.now() - 1000, taskId);
+
+    const { server, baseUrl, events } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => { throw new Error("should not spawn"); },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise again while the agent is busy." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, false);
+      assert.deepEqual(getTransitions(db, taskId), []);
+
+      const ts = getRevisionTimestamps(db, taskId);
+      assert.ok(ts.refinement_revision_requested_at !== null, "should stamp revision requested_at");
+      assert.equal(ts.refinement_revision_completed_at, null, "should clear completed_at");
+
+      const taskUpdates = events.filter(
+        (e) => e.type === "task_update" && (e.payload as Record<string, unknown>).id === taskId,
+      );
+      assert.ok(taskUpdates.length > 0, "should broadcast task_update for completed refinement with busy agent");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
 
 describe("POST /tasks/:id/feedback — done task idle-agent respawn", () => {
@@ -672,6 +749,38 @@ describe("POST /tasks/:id/feedback — done task idle-agent respawn", () => {
         events.some((e) => e.type === "task_update" && (e.payload as Record<string, unknown>).status === "in_progress"),
         "should broadcast task_update with in_progress status",
       );
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("persists feedback without reopening when a done task has no assigned agent", async () => {
+    const db = await createDb();
+    const taskId = randomUUID();
+    insertTask(db, taskId, null, "done");
+
+    const { server, baseUrl } = await startServer(db, noopDeps);
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Leave this done task parked." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, false);
+      assert.equal(getTaskStatus(db, taskId), "done");
+      assert.equal(getAutoRespawnCount(db, taskId), 0);
+      assert.deepEqual(getTransitions(db, taskId), []);
+
+      const messages = getDirectiveMessages(db, taskId);
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0]?.content, "Leave this done task parked.");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {

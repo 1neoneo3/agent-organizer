@@ -74,6 +74,23 @@ describe("mergeTaskUpdate", () => {
     assert.equal(result.next[0]?.status, "done");
   });
 
+  it("merges refinement revision timestamps from task_update payloads without dropping existing fields", () => {
+    const result = mergeTaskUpdate(
+      [createTask()],
+      {
+        id: "task-1",
+        refinement_revision_requested_at: 2_000,
+        refinement_revision_completed_at: null,
+      },
+    );
+
+    assert.equal(result.found, true);
+    assert.equal(result.next[0]?.status, "inbox");
+    assert.equal(result.next[0]?.title, "Task 1");
+    assert.equal(result.next[0]?.refinement_revision_requested_at, 2_000);
+    assert.equal(result.next[0]?.refinement_revision_completed_at, null);
+  });
+
   it("reports when the task is missing", () => {
     const result = mergeTaskUpdate([createTask()], { id: "missing", status: "done" });
 
