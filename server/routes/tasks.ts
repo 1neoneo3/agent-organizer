@@ -21,7 +21,7 @@ import {
   countAcceptanceCriteria,
   setAcceptanceCriterionChecked,
 } from "../domain/acceptance-criteria.js";
-import { TASK_STATUSES } from "../domain/task-status.js";
+import { TASK_STATUSES, TERMINAL_STATUSES, type TaskStatus } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import {
@@ -1108,6 +1108,14 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const schema = z.object({ content: z.string().min(1) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const taskStatus = task.status as TaskStatus;
+    if (taskStatus === "inbox" || (TERMINAL_STATUSES as readonly string[]).includes(taskStatus)) {
+      return res.status(409).json({
+        error: "invalid_status",
+        message: `Cannot send feedback to a task in "${taskStatus}" status.`,
+      });
+    }
 
     const { content } = parsed.data;
     const now = Date.now();
