@@ -147,7 +147,7 @@ function formatReadApiLine(): string {
       return b[1].totalBytes - a[1].totalBytes;
     })
     .map(([route, s]) => {
-    const avgMs = s.count > 0 ? (s.totalMs / s.count).toFixed(1) : "0";
+      const avgMs = s.count > 0 ? (s.totalMs / s.count).toFixed(1) : "0";
       const avgKb = s.count > 0 ? (s.totalBytes / s.count / 1024).toFixed(1) : "0.0";
       const maxKb = (s.maxBytes / 1024).toFixed(1);
       const totalKb = (s.totalBytes / 1024).toFixed(1);
