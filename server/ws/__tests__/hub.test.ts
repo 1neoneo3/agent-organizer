@@ -63,6 +63,22 @@ describe("createWsHub", () => {
     assert.equal(ws2.sent.length, 0);
   });
 
+  it("broadcasts scoped subtask_update only to subscribed clients", () => {
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws1 = new FakeWebSocket();
+    const ws2 = new FakeWebSocket();
+
+    hub.addClient(ws1 as never);
+    hub.addClient(ws2 as never);
+    hub.subscribeClientToTask(ws1 as never, "task-1");
+
+    hub.broadcast("subtask_update", { id: "subtask-1", task_id: "task-1", status: "in_progress" }, { taskId: "task-1" });
+
+    assert.equal(ws1.sent.length, 1);
+    assert.equal(ws2.sent.length, 0);
+  });
+
   it("stops sending scoped events after unsubscribe", () => {
     const hub = createWsHub();
     hubs.push(hub);

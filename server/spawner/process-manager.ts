@@ -54,6 +54,7 @@ import {
 } from "./spawn-failures.js";
 import { getTaskSetting } from "../domain/task-settings.js";
 import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
+import { pickTaskUpdate } from "../ws/update-payloads.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
@@ -919,8 +920,19 @@ export async function spawnAgent(
     }
 
     invalidateCaches(cache);
-    const startedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
-    ws.broadcast("task_update", startedTask ?? { id: task.id, status: shouldTransitionFromInbox ? (isRefinementRun ? "refinement" : "in_progress") : currentStatus, started_at: now });
+    ws.broadcast(
+      "task_update",
+      pickTaskUpdate(
+        {
+          id: task.id,
+          status: shouldTransitionFromInbox ? (isRefinementRun ? "refinement" : "in_progress") : currentStatus,
+          assigned_agent_id: agent.id,
+          started_at: now,
+          updated_at: now,
+        },
+        ["status", "assigned_agent_id", "started_at", "updated_at"],
+      ),
+    );
     ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
 
     // AO Phase 3: if parallel impl/test mode is enabled and this is an
@@ -1062,14 +1074,19 @@ export async function spawnAgent(
     );
 
     invalidateCaches(cache);
-    const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
     ws.broadcast(
       "task_update",
-      updatedTask ?? {
-        id: task.id,
-        status: liveTask.status,
-        auto_respawn_count: nextCount,
-      },
+      pickTaskUpdate(
+        {
+          id: task.id,
+          status: liveTask.status,
+          started_at: null,
+          completed_at: null,
+          auto_respawn_count: nextCount,
+          updated_at: finishTime,
+        },
+        ["status", "started_at", "completed_at", "auto_respawn_count", "updated_at"],
+      ),
     );
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
@@ -1385,8 +1402,13 @@ export async function spawnAgent(
     insertLogStmt.run(task.id, "system", `Process spawn failed: ${message}`, spawnStage, agent.id);
 
     invalidateCaches(cache);
-    const failedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
-    ws.broadcast("task_update", failedTask ?? { id: task.id, status: "cancelled", completed_at: finishTime });
+    ws.broadcast(
+      "task_update",
+      pickTaskUpdate(
+        { id: task.id, status: "cancelled", completed_at: finishTime, updated_at: finishTime },
+        ["status", "completed_at", "updated_at"],
+      ),
+    );
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
   });
 
@@ -1507,8 +1529,13 @@ export async function spawnAgent(
         ).run(finishTime, agent.id);
 
         invalidateCaches(cache);
-        const cancelledTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
-        ws.broadcast("task_update", cancelledTask ?? { id: task.id, status: "cancelled", completed_at: finishTime });
+        ws.broadcast(
+          "task_update",
+          pickTaskUpdate(
+            { id: task.id, status: "cancelled", completed_at: finishTime, updated_at: finishTime },
+            ["status", "completed_at", "updated_at"],
+          ),
+        );
         ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
         notifyTaskStatus(task.title, "cancelled", {
@@ -1544,8 +1571,13 @@ export async function spawnAgent(
       ).run(finishTime, agent.id);
 
       invalidateCaches(cache);
-      const resetTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
-      ws.broadcast("task_update", resetTask ?? { id: task.id, status: "inbox" });
+      ws.broadcast(
+        "task_update",
+        pickTaskUpdate(
+          { id: task.id, status: "inbox", started_at: null, completed_at: null, updated_at: finishTime },
+          ["status", "started_at", "completed_at", "updated_at"],
+        ),
+      );
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -1587,7 +1619,7 @@ export async function spawnAgent(
     // (unless finalizeOnComplete is set, e.g. after interactive prompt response)
     if (isContinue && !finalizeOnComplete) {
       const finishTime = Date.now();
-      const restoreStatus = options?.previousStatus ?? "in_progress";
+      const restoreStatus = (options?.previousStatus ?? "in_progress") as Task["status"];
 
       if (isRefinementRun && code === 0) {
         persistRefinementPlanFromCurrentRun();
@@ -1606,8 +1638,13 @@ export async function spawnAgent(
       insertLogStmt.run(task.id, "system", `Feedback response complete. Restored status: ${restoreStatus}`, spawnStage, agent.id);
 
       invalidateCaches(cache);
-      const restoredTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
-      ws.broadcast("task_update", restoredTask ?? { id: task.id, status: restoreStatus });
+      ws.broadcast(
+        "task_update",
+        pickTaskUpdate(
+          { id: task.id, status: restoreStatus, updated_at: finishTime },
+          ["status", "updated_at"],
+        ),
+      );
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -2163,13 +2200,13 @@ function handleSubtaskEvent(
       "INSERT INTO subtasks (id, task_id, title, status, cli_tool_use_id) VALUES (?, ?, ?, 'in_progress', ?)"
     ).run(id, taskId, event.title, event.toolUseId ?? null);
     if (event.toolUseId) subtaskMap.set(event.toolUseId, id);
-    ws.broadcast("subtask_update", { id, task_id: taskId, title: event.title, status: "in_progress" });
+    ws.broadcast("subtask_update", { id, task_id: taskId, title: event.title, status: "in_progress" }, { taskId });
   } else if (event.kind === "completed" && event.toolUseId) {
     const subtaskId = subtaskMap.get(event.toolUseId);
     if (subtaskId) {
       const now = Date.now();
       db.prepare("UPDATE subtasks SET status = 'done', completed_at = ? WHERE id = ?").run(now, subtaskId);
-      ws.broadcast("subtask_update", { id: subtaskId, task_id: taskId, status: "done" });
+      ws.broadcast("subtask_update", { id: subtaskId, task_id: taskId, status: "done" }, { taskId });
     }
   }
 }

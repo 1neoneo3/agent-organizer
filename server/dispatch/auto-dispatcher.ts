@@ -202,7 +202,7 @@ function chooseBestAgent(task: Task, agents: Agent[]): Agent | undefined {
   })[0];
 }
 
-function writeDispatchLog(db: DatabaseSync, ws: WsHub, task: Task, message: string, cache?: CacheService): void {
+function writeDispatchLog(db: DatabaseSync, task: Task, message: string, cache?: CacheService): void {
   const fullMessage = `${AUTO_DISPATCH_LOG_PREFIX} ${message}`;
   const lastLog = db.prepare(
     "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC LIMIT 1"
@@ -217,8 +217,6 @@ function writeDispatchLog(db: DatabaseSync, ws: WsHub, task: Task, message: stri
     .run(task.id, fullMessage);
   db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, task.id);
   invalidateCaches(cache);
-  const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id);
-  ws.broadcast("task_update", updatedTask ?? { id: task.id, updated_at: now });
 }
 
 function assignTaskToAgent(db: DatabaseSync, task: Task, agent: Agent): Task {
@@ -293,14 +291,14 @@ export function dispatchAutoStartableTasks(
     const blockers = collectAllBlockers(db, task);
     if (isBlocked(blockers)) {
       summary.skipped += 1;
-      writeDispatchLog(db, ws, task, `blocked (${formatAllBlockers(blockers)})`, options?.cache);
+      writeDispatchLog(db, task, `blocked (${formatAllBlockers(blockers)})`, options?.cache);
       continue;
     }
 
     const skipReason = getEligibilitySkipReason(task, mode);
     if (skipReason) {
       summary.skipped += 1;
-      writeDispatchLog(db, ws, task, skipReason, options?.cache);
+      writeDispatchLog(db, task, skipReason, options?.cache);
       continue;
     }
 
@@ -308,19 +306,18 @@ export function dispatchAutoStartableTasks(
       const assignedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
       if (!assignedAgent) {
         summary.skipped += 1;
-        writeDispatchLog(db, ws, task, `skipped: assigned agent "${task.assigned_agent_id}" was not found`, options?.cache);
+        writeDispatchLog(db, task, `skipped: assigned agent "${task.assigned_agent_id}" was not found`, options?.cache);
         continue;
       }
       if (assignedAgent.status !== "idle") {
         summary.skipped += 1;
-        writeDispatchLog(db, ws, task, `skipped: assigned agent is not idle (${assignedAgent.name})`, options?.cache);
+        writeDispatchLog(db, task, `skipped: assigned agent is not idle (${assignedAgent.name})`, options?.cache);
         continue;
       }
 
       try {
         writeDispatchLog(
           db,
-          ws,
           task,
           `starting with assigned agent "${assignedAgent.name}"${assignedAgent.role ? ` [${assignedAgent.role}]` : ""}`,
           options?.cache,
@@ -331,7 +328,7 @@ export function dispatchAutoStartableTasks(
       } catch (error) {
         summary.skipped += 1;
         const message = error instanceof Error ? error.message : String(error);
-        writeDispatchLog(db, ws, task, `failed to start with assigned agent "${assignedAgent.name}": ${message}`, options?.cache);
+        writeDispatchLog(db, task, `failed to start with assigned agent "${assignedAgent.name}": ${message}`, options?.cache);
       }
       continue;
     }
@@ -346,7 +343,7 @@ export function dispatchAutoStartableTasks(
     const selectedAgent = refinementOverride ?? chooseBestAgent(task, [...availableAgents.values()]);
     if (!selectedAgent) {
       summary.skipped += 1;
-      writeDispatchLog(db, ws, task, "skipped: no idle worker agent is available", options?.cache);
+      writeDispatchLog(db, task, "skipped: no idle worker agent is available", options?.cache);
       continue;
     }
 
@@ -356,7 +353,6 @@ export function dispatchAutoStartableTasks(
     try {
       writeDispatchLog(
         db,
-        ws,
         assignedTask,
         `assigned "${selectedAgent.name}"${selectedAgent.role ? ` [${selectedAgent.role}]` : ""} and starting task`,
         options?.cache,
@@ -368,7 +364,7 @@ export function dispatchAutoStartableTasks(
     } catch (error) {
       summary.skipped += 1;
       const message = error instanceof Error ? error.message : String(error);
-      writeDispatchLog(db, ws, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`, options?.cache);
+      writeDispatchLog(db, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`, options?.cache);
     }
   }
 

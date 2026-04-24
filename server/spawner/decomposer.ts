@@ -7,6 +7,7 @@ import type { RuntimeContext, Directive } from "../types/runtime.js";
 import { buildDecomposePrompt } from "./prompt-builder.js";
 import { withCliPathFallback } from "./cli-tools.js";
 import { isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
+import { pickTaskUpdate } from "../ws/update-payloads.js";
 
 const PLAN_SEPARATOR = "---PLAN---";
 const MAX_LOG_LINES = 500;
@@ -110,8 +111,25 @@ export async function decomposeDirective(
       const ts = Date.now();
       const depsJson = t.depends_on.length > 0 ? JSON.stringify(t.depends_on) : null;
       insertStmt.run(id, t.title, t.description || null, directive.project_path ?? null, t.priority, t.task_size, directive.id, t.task_id, depsJson, ts, ts);
-      const row = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-      ws.broadcast("task_update", row);
+      ws.broadcast(
+        "task_update",
+        pickTaskUpdate(
+          {
+            id,
+            title: t.title,
+            project_path: directive.project_path ?? null,
+            status: "inbox",
+            priority: t.priority,
+            task_size: t.task_size,
+            task_number: t.task_id,
+            depends_on: depsJson,
+            directive_id: directive.id,
+            created_at: ts,
+            updated_at: ts,
+          },
+          ["title", "project_path", "status", "priority", "task_size", "task_number", "depends_on", "directive_id", "created_at", "updated_at"],
+        ),
+      );
     }
 
     // Write Plan document if available

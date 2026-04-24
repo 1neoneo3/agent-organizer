@@ -155,14 +155,23 @@ describe("autoDispatchTask", () => {
       spawnAgent: () => Promise.resolve({ pid: 123 }),
     });
 
-    const row = db.prepare("SELECT assigned_agent_id, status FROM tasks WHERE id = ?").get("task-1") as {
+    const row = db.prepare("SELECT assigned_agent_id, status, updated_at FROM tasks WHERE id = ?").get("task-1") as {
       assigned_agent_id: string | null;
       status: string;
+      updated_at: number;
     };
 
     assert.equal(row.assigned_agent_id, "agent-1");
     assert.equal(row.status, "inbox");
     assert.equal(ws.sent.filter((event) => event.type === "task_update").length, 1);
+    assert.deepEqual(ws.sent[0], {
+      type: "task_update",
+      payload: {
+        id: "task-1",
+        assigned_agent_id: "agent-1",
+        updated_at: row.updated_at,
+      },
+    });
   });
 
   it("starts the assigned task when auto run is enabled and the agent is idle", () => {

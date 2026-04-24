@@ -4,6 +4,7 @@ import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { CacheService } from "../cache/cache-service.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
+import { pickTaskUpdate } from "../ws/update-payloads.js";
 import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
 
 interface AutoDispatchOptions {
@@ -48,7 +49,7 @@ export function autoDispatchTask(
       db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(idleAgent.id, assignTs, task.id);
       task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
       if (task) {
-        ws.broadcast("task_update", task);
+        ws.broadcast("task_update", pickTaskUpdate(task, ["assigned_agent_id", "updated_at"]));
       }
     }
   }
