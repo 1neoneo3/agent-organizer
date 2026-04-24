@@ -150,6 +150,57 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
     }
   });
 
+  it("returns 404 when task does not exist", async () => {
+    const db = await createDb();
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 0 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${randomUUID()}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Hello" }),
+      });
+      assert.equal(response.status, 404);
+      const body = await response.json() as { error: string };
+      assert.equal(body.error, "not_found");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("returns 400 when content field is missing", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      assert.equal(response.status, 400);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("rejects feedback content exceeding FEEDBACK_MAX_LENGTH", async () => {
     const db = await createDb();
     const agentId = randomUUID();
@@ -283,5 +334,16 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
     }
+  });
+});
+
+describe("FEEDBACK_MAX_LENGTH constant", () => {
+  it("equals 10_000", () => {
+    assert.equal(FEEDBACK_MAX_LENGTH, 10_000);
+  });
+
+  it("is a positive integer", () => {
+    assert.ok(Number.isInteger(FEEDBACK_MAX_LENGTH));
+    assert.ok(FEEDBACK_MAX_LENGTH > 0);
   });
 });
