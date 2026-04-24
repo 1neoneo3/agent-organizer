@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
 import { createTasksRouter } from "./tasks.js";
+import { clearPendingSpawn } from "../spawner/process-manager.js";
 
 const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
 process.env.DB_PATH = TEST_DB_PATH;
@@ -196,6 +197,101 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "expected a task_update broadcast for the respawned refinement task",
       );
     } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("prevents concurrent feedback spawns for the same task", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    let spawnCalls = 0;
+    let resolveSpawn!: () => void;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        await new Promise<void>((r) => { resolveSpawn = r; });
+        return { pid: 5678 } as never;
+      },
+    });
+
+    try {
+      const response1 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "First revision." }),
+      });
+      assert.equal(response1.status, 200);
+      const body1 = await response1.json() as { restarted: boolean };
+      assert.equal(body1.restarted, true);
+      assert.equal(spawnCalls, 1);
+
+      const response2 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Second revision while first in flight." }),
+      });
+      assert.equal(response2.status, 200);
+      const body2 = await response2.json() as { restarted: boolean };
+      assert.equal(body2.restarted, false, "second spawn should be blocked by pending-spawn guard");
+      assert.equal(spawnCalls, 1, "spawnAgent should only be called once");
+    } finally {
+      resolveSpawn();
+      await new Promise((r) => setTimeout(r, 10));
+      clearPendingSpawn(taskId);
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("clears pending-spawn slot after spawn failure so retries are not blocked", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    let spawnCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        throw new Error("simulated spawn failure");
+      },
+    });
+
+    try {
+      const response1 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "First attempt." }),
+      });
+      assert.equal(response1.status, 200);
+      assert.equal(spawnCalls, 1);
+
+      await new Promise((r) => setTimeout(r, 20));
+
+      const response2 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Retry after failure." }),
+      });
+      assert.equal(response2.status, 200);
+      const body2 = await response2.json() as { restarted: boolean };
+      assert.equal(body2.restarted, true, "retry should succeed after failed spawn clears the slot");
+      assert.equal(spawnCalls, 2, "spawnAgent should be called again after failure");
+    } finally {
+      await new Promise((r) => setTimeout(r, 10));
+      clearPendingSpawn(taskId);
       db.close();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
