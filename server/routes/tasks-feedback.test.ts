@@ -92,12 +92,33 @@ function insertTask(db: DatabaseSync, taskId: string, agentId: string, status: s
   ).run(taskId, `Task ${taskId}`, "Feedback test", agentId, status, `#${taskId.slice(0, 6)}`, now, now, opts?.auto_respawn_count ?? 0);
 }
 
+function forceAssignedAgentId(db: DatabaseSync, taskId: string, agentId: string): void {
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.prepare("UPDATE tasks SET assigned_agent_id = ? WHERE id = ?").run(agentId, taskId);
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
 function getTransitions(db: DatabaseSync, taskId: string): string[] {
   return (
     db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id ASC",
     ).all(taskId) as Array<{ message: string }>
   ).map((row) => row.message);
+}
+
+function getRefinementRevisionRow(db: DatabaseSync, taskId: string): {
+  refinement_revision_requested_at: number | null;
+  refinement_revision_completed_at: number | null;
+} {
+  return db.prepare(
+    "SELECT refinement_revision_requested_at, refinement_revision_completed_at FROM tasks WHERE id = ?",
+  ).get(taskId) as {
+    refinement_revision_requested_at: number | null;
+    refinement_revision_completed_at: number | null;
+  };
 }
 
 describe("POST /tasks/:id/feedback refinement regressions", () => {
@@ -341,11 +362,56 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         events.some((e) => e.type === "task_update"),
         "expected task_update broadcast even without agent (revision timestamps updated)",
       );
+      assert.deepEqual(getTransitions(db, taskId), [], "no-agent no-op path must not log stage transitions");
 
-      const row = db.prepare(
-        "SELECT refinement_revision_requested_at FROM tasks WHERE id = ?",
-      ).get(taskId) as { refinement_revision_requested_at: number | null };
+      const row = getRefinementRevisionRow(db, taskId);
       assert.ok(row.refinement_revision_requested_at !== null, "revision_requested_at must be stamped");
+      assert.equal(row.refinement_revision_completed_at, null, "revision_completed_at must stay cleared while awaiting revision");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("broadcasts task_update with revision timestamps when assigned agent row is missing", async () => {
+    const db = await createDb();
+    const existingAgentId = randomUUID();
+    const missingAgentId = randomUUID();
+    const taskId = randomUUID();
+    const completedAt = Date.now() - 60_000;
+    insertAgent(db, existingAgentId, "idle");
+    insertRefinementTask(db, taskId, existingAgentId, { completed_at: completedAt });
+    forceAssignedAgentId(db, taskId, missingAgentId);
+
+    const { server, baseUrl, events } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        throw new Error("spawnAgent must not be called when assigned agent row is missing");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Update the rollout plan." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, false, "cannot restart when assigned agent row is missing");
+
+      assert.ok(
+        events.some((e) => e.type === "task_update"),
+        "expected task_update broadcast even when assigned agent row is missing",
+      );
+      assert.deepEqual(getTransitions(db, taskId), [], "missing-agent no-op path must not log stage transitions");
+
+      const row = getRefinementRevisionRow(db, taskId);
+      assert.ok(row.refinement_revision_requested_at !== null, "revision_requested_at must be stamped");
+      assert.equal(row.refinement_revision_completed_at, null, "revision_completed_at must stay cleared while awaiting revision");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -577,11 +643,11 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         events.some((e) => e.type === "task_update"),
         "expected task_update broadcast even when agent is busy (revision timestamps updated)",
       );
+      assert.deepEqual(getTransitions(db, taskId), [], "busy-agent no-op path must not log stage transitions");
 
-      const row = db.prepare(
-        "SELECT refinement_revision_requested_at FROM tasks WHERE id = ?",
-      ).get(taskId) as { refinement_revision_requested_at: number | null };
+      const row = getRefinementRevisionRow(db, taskId);
       assert.ok(row.refinement_revision_requested_at !== null, "revision_requested_at must be stamped");
+      assert.equal(row.refinement_revision_completed_at, null, "revision_completed_at must stay cleared while awaiting revision");
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
