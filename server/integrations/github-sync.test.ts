@@ -100,7 +100,7 @@ describe("syncGithubIssues", () => {
       autoRun: true,
       spawnAgent: (_db, _ws, agent, task) => {
         started.push({ agentId: agent.id, taskId: task.id });
-        return { pid: 123 };
+        return Promise.resolve({ pid: 123 });
       },
     });
     const row = db.prepare(

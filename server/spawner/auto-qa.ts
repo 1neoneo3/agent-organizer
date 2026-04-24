@@ -55,7 +55,9 @@ export async function triggerAutoQa(
 
   // Lazy import to break circular dependency (auto-qa <-> process-manager)
   const { spawnAgent } = await import("./process-manager.js");
-  spawnAgent(db, ws, tester, currentTask, { cache });
+  spawnAgent(db, ws, tester, currentTask, { cache }).catch((err) => {
+    console.error(`[auto-qa] spawnAgent failed for task ${currentTask.id}:`, err);
+  });
 }
 
 /**

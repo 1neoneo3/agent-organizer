@@ -145,6 +145,8 @@ export async function triggerAutoReview(
   spawnAgent(db, ws, primary.agent, freshTask, {
     cache,
     reviewerRole: primary.role,
+  }).catch((err) => {
+    console.error(`[auto-reviewer] primary spawn failed for task ${freshTask.id}:`, err);
   });
   for (const secondary of secondaries) {
     spawnSecondaryReviewer(db, ws, secondary.agent, freshTask, secondary.role, cache);

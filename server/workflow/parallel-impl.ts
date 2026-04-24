@@ -103,7 +103,7 @@ export type SpawnAgentFn = (
   agent: Agent,
   task: Task,
   options?: { cache?: CacheService; parallelTester?: boolean },
-) => { pid: number };
+) => Promise<{ pid: number }>;
 
 export interface TriggerParallelTesterOptions {
   cache?: CacheService;
@@ -175,6 +175,8 @@ export async function triggerParallelTester(
   spawnAgent(db, ws, tester, task, {
     cache: options.cache,
     parallelTester: true,
+  }).catch((err) => {
+    console.error(`[parallel-impl] tester spawn failed for task ${task.id}:`, err);
   });
 
   return { started: true, reason: "spawned" };

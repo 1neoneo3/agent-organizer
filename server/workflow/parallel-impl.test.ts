@@ -348,7 +348,7 @@ describe("triggerParallelTester", () => {
           taskId: t.id,
           parallelTester: opts?.parallelTester,
         });
-        return { pid: 1234 };
+        return Promise.resolve({ pid: 1234 });
       },
     });
 
@@ -390,7 +390,7 @@ describe("triggerParallelTester", () => {
     const result = await triggerParallelTester(db as any, ws as any, task, {
       spawnAgent: (_db: any, _ws: any, agent: any) => {
         spawnCalls.push(agent.id);
-        return { pid: 1 };
+        return Promise.resolve({ pid: 1 });
       },
     });
 

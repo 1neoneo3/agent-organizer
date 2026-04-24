@@ -61,6 +61,14 @@ export function autoDispatchTask(
     return task;
   }
 
-  spawnAgent(db, ws, agent, task, { cache: options.cache });
+  // Fire-and-forget: spawnAgent is async (awaits the Explore Phase) but
+  // autoDispatchTask returns synchronously so callers can read the updated
+  // task row immediately.
+  const spawnResult = spawnAgent(db, ws, agent, task, { cache: options.cache });
+  if (spawnResult && typeof (spawnResult as Promise<unknown>).catch === "function") {
+    (spawnResult as Promise<unknown>).catch((err) => {
+      console.error(`[auto-dispatch] spawnAgent failed for task ${task.id}:`, err);
+    });
+  }
   return db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
 }

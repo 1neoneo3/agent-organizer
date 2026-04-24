@@ -507,7 +507,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
   });
 
   // Run a task (spawn agent)
-  router.post("/tasks/:id/run", (req, res) => {
+  router.post("/tasks/:id/run", async (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     if (task.status === "in_progress") return res.status(409).json({ error: "already_running" });
@@ -545,7 +545,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     // auto-respawn history so the task gets a fresh budget from zero.
     db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
 
-    const result = spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
+    const result = await spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
     res.json({ started: true, pid: result.pid });
   });
 
@@ -602,7 +602,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
-    const result = spawnAgent(db, ws, agent, freshTask, { cache });
+    const result = await spawnAgent(db, ws, agent, freshTask, { cache });
 
     await invalidateTaskCaches();
     res.json({ resumed: true, pid: result.pid });
@@ -697,9 +697,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(updatedTask.assigned_agent_id) as Agent | undefined;
       if (agent && agent.status === "idle") {
         setTimeout(() => {
-          try {
-            spawnAgent(db, ws, agent, updatedTask, { cache });
-          } catch (err) {
+          spawnAgent(db, ws, agent, updatedTask, { cache }).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
             console.error(`[tasks.approve] spawnAgent failed for task ${updatedTask.id}:`, err);
             try {
@@ -709,7 +707,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
             } catch {
               // swallow logging failure — we must not re-throw inside setTimeout
             }
-          }
+          });
         }, 500);
       }
     }
@@ -1070,7 +1068,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     }
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache });
+    spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
+      console.error(`[tasks.feedback] spawnAgent failed for task ${task.id}:`, err);
+    });
 
     res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
   });
@@ -1138,7 +1138,9 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true });
+    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true }).catch((err) => {
+      console.error(`[tasks.interactive-response] spawnAgent failed for task ${task.id}:`, err);
+    });
 
     res.json({ sent: true, restarted: true });
   });

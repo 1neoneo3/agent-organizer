@@ -152,7 +152,7 @@ describe("autoDispatchTask", () => {
     autoDispatchTask(db, ws as never, "task-1", {
       autoAssign: true,
       autoRun: false,
-      spawnAgent: () => ({ pid: 123 }),
+      spawnAgent: () => Promise.resolve({ pid: 123 }),
     });
 
     const row = db.prepare("SELECT assigned_agent_id, status FROM tasks WHERE id = ?").get("task-1") as {
@@ -177,7 +177,7 @@ describe("autoDispatchTask", () => {
       autoRun: true,
       spawnAgent: (_db, _ws, agent, task) => {
         started.push({ agentId: agent.id, taskId: task.id });
-        return { pid: 123 };
+        return Promise.resolve({ pid: 123 });
       },
     });
 
@@ -196,7 +196,7 @@ describe("autoDispatchTask", () => {
       autoRun: true,
       spawnAgent: () => {
         spawnCalls += 1;
-        return { pid: 123 };
+        return Promise.resolve({ pid: 123 });
       },
     });
 
@@ -216,7 +216,7 @@ describe("autoDispatchTask", () => {
       autoRun: true,
       spawnAgent: () => {
         spawnCalls += 1;
-        return { pid: 123 };
+        return Promise.resolve({ pid: 123 });
       },
     });
 
@@ -235,7 +235,7 @@ describe("autoDispatchTask", () => {
       autoRun: true,
       spawnAgent: () => {
         spawnCalls += 1;
-        return { pid: 123 };
+        return Promise.resolve({ pid: 123 });
       },
     });
 

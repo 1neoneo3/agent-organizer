@@ -608,7 +608,7 @@ export function isReviewRunTask(
   return task.status === "pr_review" || previousStatus === "pr_review";
 }
 
-export function spawnAgent(
+export async function spawnAgent(
   db: DatabaseSync,
   ws: WsHub,
   agent: Agent,
@@ -635,7 +635,7 @@ export function spawnAgent(
      */
     parallelTester?: boolean;
   }
-): { pid: number } {
+): Promise<{ pid: number }> {
   const cache = options?.cache;
   const isContinue = !!options?.continuePrompt;
   const isParallelTester = options?.parallelTester === true;
@@ -784,7 +784,7 @@ export function spawnAgent(
       exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" +
         existingExplore.message.replace("[EXPLORE] ", "");
     } else {
-      const exploreResult = runExplorePhase(db, ws, agent, task, spawnStage);
+      const exploreResult = await runExplorePhase(db, ws, agent, task, spawnStage);
       if (exploreResult) {
         exploreContext = "\n\n## Explore Phase Result (read-only investigation)\n" + exploreResult;
       }
@@ -1334,6 +1334,8 @@ export function spawnAgent(
           continuePrompt: feedback.message,
           previousStatus: feedback.previousStatus,
           cache,
+        }).catch((err) => {
+          console.error(`[process-manager] feedback respawn failed for task ${task.id}:`, err);
         });
       }
       return;

@@ -161,7 +161,7 @@ describe("dispatchInboxTasks", () => {
           .run(agent.id, now, now, task.id);
         innerDb.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
           .run(task.id, now, agent.id);
-        return { pid: 123 };
+        return Promise.resolve({ pid: 123 });
       },
     });
 

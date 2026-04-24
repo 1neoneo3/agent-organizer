@@ -233,7 +233,9 @@ function createDefaultTaskStarter(
   cache?: CacheService,
 ): (task: Task, agent: Agent) => void {
   return (task, agent) => {
-    spawnAgent(db, ws, agent, task, { cache });
+    spawnAgent(db, ws, agent, task, { cache }).catch((err) => {
+      console.error(`[auto-dispatcher] spawnAgent failed for task ${task.id}:`, err);
+    });
   };
 }
 
