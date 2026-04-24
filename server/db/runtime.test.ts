@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -576,6 +576,216 @@ describe("initializeDb", () => {
     assert.ok(
       child.refinement_completed_at !== null,
       "child task must carry refinement_completed_at so spawnAgent skips refinement",
+    );
+  });
+});
+
+describe("migrateCleanupLeakedTestTasks", () => {
+  const cleanupPaths: string[] = [];
+
+  function freshDbPath(): string {
+    const p = join(mkdtempSync(join(tmpdir(), "ao-cleanup-")), "test.db");
+    cleanupPaths.push(p);
+    return p;
+  }
+
+  afterEach(() => {
+    for (const p of cleanupPaths) {
+      rmSync(p, { force: true });
+      rmSync(`${p}-wal`, { force: true });
+      rmSync(`${p}-shm`, { force: true });
+    }
+    cleanupPaths.length = 0;
+  });
+
+  it("sets the cleanup flag on a fresh DB with no leaked tasks", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb(freshDbPath());
+
+    const flag = db.prepare(
+      "SELECT value FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'",
+    ).get() as { value: string } | undefined;
+
+    assert.ok(flag, "cleanup flag should be set even when no leaked tasks exist");
+  });
+
+  it("deletes leaked 'Refinement feedback test task' rows and all child data", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const dbPath = freshDbPath();
+    const db = initializeDb(dbPath);
+
+    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
+    ).run("agent-leaked", "Leaked Agent", now, now);
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES (?, 'Refinement feedback test task', 'inbox', 'agent-leaked', 'small', '#10', ?, ?)`,
+    ).run("leaked-task-1", now, now);
+
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES ('leaked-task-1', 'system', 'leaked log')",
+    ).run();
+    db.prepare(
+      "INSERT INTO messages (id, sender_type, content, task_id, created_at) VALUES ('msg-leaked', 'user', 'leaked msg', 'leaked-task-1', ?)",
+    ).run(now);
+    db.prepare(
+      "INSERT INTO subtasks (id, task_id, title, status, created_at) VALUES ('sub-leaked', 'leaked-task-1', 'leaked sub', 'pending', ?)",
+    ).run(now);
+
+    const db2 = initializeDb(dbPath);
+
+    assert.equal(
+      db2.prepare("SELECT id FROM tasks WHERE id = 'leaked-task-1'").get(),
+      undefined,
+      "leaked task should be deleted",
+    );
+    assert.equal(
+      (db2.prepare("SELECT * FROM task_logs WHERE task_id = 'leaked-task-1'").all()).length,
+      0,
+      "task_logs for leaked task should be deleted",
+    );
+    assert.equal(
+      (db2.prepare("SELECT * FROM messages WHERE task_id = 'leaked-task-1'").all()).length,
+      0,
+      "messages for leaked task should be deleted",
+    );
+    assert.equal(
+      (db2.prepare("SELECT * FROM subtasks WHERE task_id = 'leaked-task-1'").all()).length,
+      0,
+      "subtasks for leaked task should be deleted",
+    );
+  });
+
+  it("preserves tasks with different titles", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const dbPath = freshDbPath();
+    const db = initializeDb(dbPath);
+
+    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
+    ).run("agent-mix", "Mix Agent", now, now);
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('keep-task', 'Normal task', 'inbox', 'agent-mix', 'small', '#1', ?, ?)`,
+    ).run(now, now);
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('leak-task', 'Refinement feedback test task', 'inbox', 'agent-mix', 'small', '#2', ?, ?)`,
+    ).run(now + 1, now + 1);
+
+    const db2 = initializeDb(dbPath);
+
+    assert.ok(
+      db2.prepare("SELECT id FROM tasks WHERE id = 'keep-task'").get(),
+      "normal task should be preserved",
+    );
+    assert.equal(
+      db2.prepare("SELECT id FROM tasks WHERE id = 'leak-task'").get(),
+      undefined,
+      "leaked task should be deleted",
+    );
+  });
+
+  it("deletes orphaned agents but preserves agents referenced by other tasks", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const dbPath = freshDbPath();
+    const db = initializeDb(dbPath);
+
+    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
+    ).run("agent-shared", "Shared Agent", now, now);
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, 'claude', 'idle', ?, ?)",
+    ).run("agent-orphan", "Orphan Agent", now, now);
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('normal-task', 'Normal task', 'inbox', 'agent-shared', 'small', '#1', ?, ?)`,
+    ).run(now, now);
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('leak-shared', 'Refinement feedback test task', 'inbox', 'agent-shared', 'small', '#2', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('leak-orphan', 'Refinement feedback test task', 'inbox', 'agent-orphan', 'small', '#3', ?, ?)`,
+    ).run(now + 2, now + 2);
+
+    const db2 = initializeDb(dbPath);
+
+    assert.ok(
+      db2.prepare("SELECT id FROM agents WHERE id = 'agent-shared'").get(),
+      "shared agent should be preserved",
+    );
+    assert.equal(
+      db2.prepare("SELECT id FROM agents WHERE id = 'agent-orphan'").get(),
+      undefined,
+      "orphaned agent should be deleted",
+    );
+  });
+
+  it("recompacts task numbers to fill gaps left by deleted tasks", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const dbPath = freshDbPath();
+    const db = initializeDb(dbPath);
+
+    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES ('task-a', 'First task', 'inbox', 'small', '#1', ?, ?)`,
+    ).run(now, now);
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES ('task-b', 'Refinement feedback test task', 'inbox', 'small', '#2', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES ('task-c', 'Third task', 'inbox', 'small', '#3', ?, ?)`,
+    ).run(now + 2, now + 2);
+
+    const db2 = initializeDb(dbPath);
+
+    const tasks = db2.prepare(
+      "SELECT id, task_number FROM tasks ORDER BY CAST(SUBSTR(task_number, 2) AS INTEGER) ASC",
+    ).all() as Array<{ id: string; task_number: string }>;
+
+    assert.equal(tasks.length, 2);
+    assert.equal(tasks[0].id, "task-a");
+    assert.equal(tasks[0].task_number, "#1");
+    assert.equal(tasks[1].id, "task-c");
+    assert.equal(tasks[1].task_number, "#2");
+  });
+
+  it("is idempotent — second initializeDb does not re-run the migration", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const dbPath = freshDbPath();
+    const db = initializeDb(dbPath);
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES ('late-task', 'Refinement feedback test task', 'inbox', 'small', '#99', ?, ?)`,
+    ).run(now, now);
+
+    const db2 = initializeDb(dbPath);
+
+    assert.ok(
+      db2.prepare("SELECT id FROM tasks WHERE id = 'late-task'").get(),
+      "task inserted after flag was set should not be deleted on re-init",
     );
   });
 });
