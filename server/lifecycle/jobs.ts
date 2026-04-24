@@ -3,23 +3,13 @@ import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clea
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
 import type { Agent, Task } from "../types/runtime.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 const pendingOrphanRespawns = new Set<string>();
-
-// Agent roles that must never be auto-respawned as implementers.
-// When orphan recovery picks up an in_progress task whose assigned_agent_id
-// still points at a reviewer/QA agent (legacy data or race condition), the
-// respawn is skipped so the task parks and waits for manual or dispatcher
-// intervention instead of running implementation work on the wrong agent.
-const NON_IMPLEMENTER_ROLES: ReadonlySet<string> = new Set([
-  "code_reviewer",
-  "security_reviewer",
-  "tester",
-]);
 
 // Orphan recovery thresholds for stages where an auto-agent should always be
 // running (auto-reviewer, auto-qa, auto-test-gen). Tasks
@@ -382,8 +372,12 @@ function evaluateAutoRespawn(
   // was overwritten by a reviewer spawn before the fix in spawnAgent,
   // or through a race condition. Skip so the task parks and waits for
   // dispatcher / manual intervention.
-  if (task.status === "in_progress" && agent.role && NON_IMPLEMENTER_ROLES.has(agent.role)) {
-    return { kind: "wrong_role", agentRole: agent.role };
+  if (task.status === "in_progress" && isNonImplementerRole(agent.role)) {
+    const replacementAgent = pickIdleImplementerAgent(db, [agent.id]);
+    if (replacementAgent) {
+      return { kind: "respawn", agent: replacementAgent };
+    }
+    return { kind: "wrong_role", agentRole: agent.role! };
   }
   return { kind: "respawn", agent };
 }

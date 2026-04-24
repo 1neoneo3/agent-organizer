@@ -328,6 +328,29 @@ describe("recoverInProgressOrphans", () => {
     assert.equal(spawnCalls, 0, "must not respawn a security_reviewer as implementer");
   });
 
+  it("reassigns orphan recovery to an idle implementer when assigned agent is a reviewer", () => {
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("reviewer-1", "Reviewer", "claude", "code_reviewer", "idle", now, now);
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("impl-1", "Implementer", "codex", "lead_engineer", "idle", now, now);
+    insertTask(db, { id: "t-reassign", status: "in_progress", assigned_agent_id: "reviewer-1" });
+    const ws = createFakeWs();
+
+    const spawnCalls: Array<{ agentId: string }> = [];
+    const fakeSpawn = ((_db: DatabaseSync, _ws: unknown, agent: { id: string }) => {
+      spawnCalls.push({ agentId: agent.id });
+      return Promise.resolve({ pid: 1 });
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls.length, 1, "must auto-respawn with a replacement implementer");
+    assert.equal(spawnCalls[0].agentId, "impl-1");
+  });
+
   it("allows auto-respawn when assigned agent has an implementer role (lead_engineer)", () => {
     const now = Date.now();
     db.prepare(
