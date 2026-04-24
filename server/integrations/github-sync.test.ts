@@ -88,6 +88,33 @@ describe("syncGithubIssues", () => {
     assert.equal(row.status, "cancelled");
   });
 
+  it("assigns correct task_number when hex fragments exist in DB (regression: UUID poisoning)", () => {
+    const db = createDb();
+    const ws = createWs();
+    const now = Date.now();
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES (?, ?, 'done', 'small', ?, ?, ?)`,
+    ).run("pre-valid", "Previous task", "#5", now - 2000, now);
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES (?, ?, 'done', 'small', ?, ?, ?)`,
+    ).run("pre-hex", "Hex poison", "#40b0c5", now - 1000, now);
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES (?, ?, 'done', 'small', ?, ?, ?)`,
+    ).run("pre-hex2", "Leading zero poison", "#082098", now - 500, now);
+
+    syncGithubIssues(db, ws as never, [issue(99)], { projectPath: "/tmp/project" });
+
+    const row = db.prepare(
+      "SELECT task_number FROM tasks WHERE external_source = 'github' AND external_id = '99'",
+    ).get() as { task_number: string };
+
+    assert.equal(row.task_number, "#6", "task_number must follow from #5, ignoring hex fragments #40b0c5 and #082098");
+  });
+
   it("auto-dispatches newly mirrored tasks when enabled", () => {
     const db = createDb();
     const ws = createWs();

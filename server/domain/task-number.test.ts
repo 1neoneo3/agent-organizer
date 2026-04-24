@@ -52,10 +52,44 @@ describe("isValidSequentialTaskNumber", () => {
   });
 });
 
+describe("isValidSequentialTaskNumber — detection logic edge cases", () => {
+  it("rejects pure hex #abcdef", () => {
+    assert.equal(isValidSequentialTaskNumber("#abcdef"), false);
+  });
+
+  it("rejects mixed hex+decimal #9f0012", () => {
+    assert.equal(isValidSequentialTaskNumber("#9f0012"), false);
+  });
+
+  it("accepts large valid number #99999", () => {
+    assert.equal(isValidSequentialTaskNumber("#99999"), true);
+  });
+
+  it("rejects null-ish values gracefully", () => {
+    assert.equal(isValidSequentialTaskNumber("#"), false);
+    assert.equal(isValidSequentialTaskNumber(""), false);
+  });
+
+  it("rejects whitespace after #", () => {
+    assert.equal(isValidSequentialTaskNumber("# 5"), false);
+  });
+
+  it("rejects decimal with trailing letters #123abc", () => {
+    assert.equal(isValidSequentialTaskNumber("#123abc"), false);
+  });
+});
+
 describe("isUuidLikeTitle", () => {
   it("detects Task <uuid>", () => {
     assert.equal(
       isUuidLikeTitle("Task 40b0c57e-1234-5678-9abc-def012345678"),
+      true,
+    );
+  });
+
+  it("detects uppercase UUID", () => {
+    assert.equal(
+      isUuidLikeTitle("Task 40B0C57E-1234-5678-9ABC-DEF012345678"),
       true,
     );
   });
@@ -66,6 +100,30 @@ describe("isUuidLikeTitle", () => {
 
   it("allows titles starting with Task", () => {
     assert.equal(isUuidLikeTitle("Task for authentication module"), false);
+  });
+
+  it("rejects partial UUID (too short)", () => {
+    assert.equal(isUuidLikeTitle("Task 40b0c57e-1234"), false);
+  });
+
+  it("rejects Task<no space>uuid", () => {
+    assert.equal(
+      isUuidLikeTitle("Task40b0c57e-1234-5678-9abc-def012345678"),
+      false,
+    );
+  });
+
+  it("rejects title with UUID in the middle", () => {
+    assert.equal(
+      isUuidLikeTitle(
+        "Fix Task 40b0c57e-1234-5678-9abc-def012345678 issue",
+      ),
+      false,
+    );
+  });
+
+  it("rejects empty string", () => {
+    assert.equal(isUuidLikeTitle(""), false);
   });
 });
 
@@ -122,5 +180,49 @@ describe("nextTaskNumber (with DB)", () => {
   it("increments correctly after valid insert", () => {
     db.exec("INSERT INTO tasks (id, task_number) VALUES ('e', '#477')");
     assert.equal(nextTaskNumber(db), "#478");
+  });
+});
+
+describe("nextTaskNumber — regression scenarios", () => {
+  const DB_PATH_REG = join(
+    tmpdir(),
+    `ao-task-number-reg-${process.pid}-${Date.now()}.db`,
+  );
+  let db: DatabaseSync;
+
+  before(() => {
+    db = new DatabaseSync(DB_PATH_REG);
+    db.exec(`
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        task_number TEXT
+      )
+    `);
+  });
+
+  after(() => {
+    db.close();
+    rmSync(DB_PATH_REG, { force: true });
+  });
+
+  it("returns #478 when DB has #477 plus multiple corrupted entries", () => {
+    db.exec("INSERT INTO tasks (id, task_number) VALUES ('r1', '#477')");
+    db.exec("INSERT INTO tasks (id, task_number) VALUES ('r2', '#40b0c5')");
+    db.exec("INSERT INTO tasks (id, task_number) VALUES ('r3', '#082098')");
+    db.exec("INSERT INTO tasks (id, task_number) VALUES ('r4', '#abcdef')");
+    assert.equal(nextTaskNumber(db), "#478");
+  });
+
+  it("returns #1 when only corrupted entries exist", () => {
+    db.exec("DELETE FROM tasks");
+    db.exec("INSERT INTO tasks (id, task_number) VALUES ('c1', '#40b0c5')");
+    db.exec("INSERT INTO tasks (id, task_number) VALUES ('c2', '#082098')");
+    assert.equal(nextTaskNumber(db), "#1");
+  });
+
+  it("returns #1 when only NULL task_numbers exist", () => {
+    db.exec("DELETE FROM tasks");
+    db.exec("INSERT INTO tasks (id, task_number) VALUES ('n1', NULL)");
+    assert.equal(nextTaskNumber(db), "#1");
   });
 });
