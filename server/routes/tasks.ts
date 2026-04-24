@@ -1,8 +1,10 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { z } from "zod";
+import { recordReadApi } from "../perf/metrics.js";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
@@ -177,6 +179,17 @@ export function resolveRequestedAgentId(
   return requestedAgentId ?? taskAssignedAgentId ?? undefined;
 }
 
+function sendMeasuredJson(
+  res: Response,
+  route: string,
+  startedAt: number,
+  payload: unknown,
+): void {
+  const body = JSON.stringify(payload);
+  recordReadApi(route, performance.now() - startedAt, Buffer.byteLength(body));
+  res.type("application/json").send(body);
+}
+
 function nextTaskNumber(db: RuntimeContext["db"]): string {
   const row = db.prepare(
     "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
@@ -214,35 +227,41 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
   }
 
   router.get("/tasks", async (req, res) => {
+    const t0 = performance.now();
     const status = req.query.status as string | undefined;
     const cacheKey = status ? `tasks:status:${status}` : "tasks:all";
 
     const cached = await cache.get(cacheKey);
-    if (cached) return res.json(cached);
+    if (cached) {
+      sendMeasuredJson(res, "/tasks", t0, cached);
+      return;
+    }
 
     const tasks = status
       ? db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC").all(status)
       : db.prepare("SELECT * FROM tasks ORDER BY priority DESC, created_at DESC").all();
 
     await cache.set(cacheKey, tasks, 10);
-    res.json(tasks);
+    sendMeasuredJson(res, "/tasks", t0, tasks);
   });
 
   // GET /tasks/interactive-prompts — return all pending interactive prompts
   // Must be before /tasks/:id to avoid being caught by the param route
   router.get("/tasks/interactive-prompts", (_req, res) => {
+    const t0 = performance.now();
     const all = getAllPendingInteractivePrompts();
     const result: Array<{ task_id: string } & Record<string, unknown>> = [];
     for (const [taskId, entry] of all) {
       result.push({ task_id: taskId, ...entry.data });
     }
-    res.json(result);
+    sendMeasuredJson(res, "/tasks/interactive-prompts", t0, result);
   });
 
   router.get("/tasks/:id", (req, res) => {
+    const t0 = performance.now();
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
     if (!task) return res.status(404).json({ error: "not_found" });
-    res.json(task);
+    sendMeasuredJson(res, "/tasks/:id", t0, task);
   });
 
   router.post("/tasks", async (req, res) => {
@@ -471,12 +490,13 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
   // GET /tasks/:id/settings — return overrides + the allow-list of keys
   router.get("/tasks/:id/settings", (req, res) => {
+    const t0 = performance.now();
     const task = db
       .prepare("SELECT settings_overrides FROM tasks WHERE id = ?")
       .get(req.params.id) as { settings_overrides: string | null } | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     const overrides = safeParseOverrides(task.settings_overrides) ?? {};
-    res.json({
+    sendMeasuredJson(res, "/tasks/:id/settings", t0, {
       task_id: req.params.id,
       overrides,
       allowed_keys: TASK_OVERRIDABLE_KEYS,
@@ -970,6 +990,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
   // Get task logs
   router.get("/tasks/:id/logs", (req, res) => {
+    const t0 = performance.now();
     const limit = Math.min(Number(req.query.limit ?? 200), 1000);
     const offset = Number(req.query.offset ?? 0);
     const logs = db.prepare(
@@ -1010,11 +1031,12 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       }
       return row;
     });
-    res.json(truncated);
+    sendMeasuredJson(res, "/tasks/:id/logs", t0, truncated);
   });
 
   // Terminal view: pretty-printed log file + DB logs
   router.get("/tasks/:id/terminal", (req, res) => {
+    const t0 = performance.now();
     const maxLines = Math.min(Number(req.query.lines ?? 2000), 10000);
     const pretty = req.query.pretty === "1";
 
@@ -1051,7 +1073,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       "ORDER BY created_at ASC"
     ).all(req.params.id) as Array<{ stage: string; agent_id: string | null; message: string; created_at: number }>;
 
-    res.json({
+    const result = {
       ok: true,
       exists: fileExists,
       text,
@@ -1067,7 +1089,8 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
           created_at: row.created_at,
         };
       }),
-    });
+    };
+    sendMeasuredJson(res, "/tasks/:id/terminal", t0, result);
   });
 
   // CEO Feedback: send directive to a task (in_progress or finished)
