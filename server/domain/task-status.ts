@@ -20,7 +20,6 @@ export const TASK_STATUSES = [
   "inbox",
   "refinement",
   "in_progress",
-  "self_review",
   "test_generation",
   "qa_testing",
   "pr_review",
@@ -56,10 +55,6 @@ export type AutoStage = (typeof AUTO_STAGES)[number];
 /**
  * Workflow pipeline stages in the order they must be completed. Does NOT
  * include `inbox` (initial state) or `cancelled` (terminal escape hatch).
- *
- * `self_review` is also excluded: it is a transient marker used by
- * process-manager and not a pipeline stage that `validateStatusTransition`
- * should order.
  */
 export const WORKFLOW_STAGES = [
   "refinement",

@@ -121,7 +121,6 @@ export interface FileConflict {
 const ACTIVE_EDITING_STAGES: readonly string[] = [
   "refinement",
   "in_progress",
-  "self_review",
   "test_generation",
   "qa_testing",
   "pr_review",

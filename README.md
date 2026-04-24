@@ -107,12 +107,6 @@ inbox → [refinement] → in_progress → [test_generation] → [qa_testing] �
 | **done** | Terminal state. `completed_at` stamped, agent released | Always on | — |
 | **cancelled** | Terminal state. Can be resumed to `in_progress` or reopened to inbox | Always on | — |
 
-### Transient Markers (not pipeline stages)
-
-| Marker | What happens |
-|--------|-------------|
-| **self_review** | Agent self-reviews its own work before returning to pipeline. Controlled by `self_review_threshold` setting (none/small/medium/all) |
-
 ### What Each Stage Enforces
 
 **Requirements & Planning**
@@ -146,7 +140,6 @@ All pipeline behavior is controlled through the Settings UI (`/settings`).
 | `qa_mode` | enabled/disabled | Enable QA testing stage |
 | `review_mode` | none/pr_only/meeting | PR review stage control |
 | `default_enable_human_review` | true/false | Enable human approval gate |
-| `self_review_threshold` | none/small/medium/all | Agent self-review by task size |
 | `auto_review` | true/false | Auto-trigger review agent on PR review entry |
 | `auto_qa` | true/false | Auto-trigger QA agent on QA testing entry |
 | `auto_checks_enabled` | true/false | Run tsc/lint/test/e2e in parallel at PR review |

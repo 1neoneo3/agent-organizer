@@ -147,7 +147,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <option value="meeting">Meeting review</option>
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                "None" skips all reviews. "PR only" requires PR review for non-self-reviewed tasks.
+                "None" skips all PR reviews. "PR only" routes completed work through PR review before human approval or done.
               </p>
             </label>
 
@@ -226,22 +226,6 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
               </p>
             </label>
 
-            <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Self-Review Threshold</span>
-              <select
-                style={inputStyle}
-                value={local.self_review_threshold ?? "small"}
-                onChange={(e) => update("self_review_threshold", e.target.value)}
-              >
-                <option value="none">Disabled</option>
-                <option value="small">Small tasks only</option>
-                <option value="medium">Small + Medium tasks</option>
-                <option value="all">All tasks</option>
-              </select>
-              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                Tasks at or below this size will have the agent self-review and auto-approve.
-              </p>
-            </label>
           </div>
         </section>
 

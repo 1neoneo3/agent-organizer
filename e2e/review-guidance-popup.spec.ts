@@ -11,9 +11,9 @@ test.describe("Review guidance popup", () => {
     await cleanupTestData(request);
   });
 
-  test("shows self review guidance on transition and opens the task detail", async ({ page, request }) => {
+  test("shows pr review guidance on transition and opens the task detail", async ({ page, request }) => {
     const taskRes = await apiCall(request, "post", "/tasks", {
-      title: "Self Review Quest",
+      title: "PR Review Open Quest",
       description: "Confirm the popup opens the selected task.",
       task_size: "small",
     });
@@ -23,18 +23,18 @@ test.describe("Review guidance popup", () => {
     await page.waitForSelector("text=TOWN MAP");
 
     await apiCall(request, "put", `/tasks/${task.id}`, {
-      status: "self_review",
+      status: "pr_review",
     });
 
     const popup = page.getByTestId("review-guidance-popup");
     await expect(popup).toBeVisible({ timeout: 10_000 });
-    await expect(popup).toContainText("SELF REVIEW");
-    await expect(popup).toContainText("Check the implementation against the original request");
+    await expect(popup).toContainText("PR Review");
+    await expect(popup).toContainText("PRの差分が要求スコープ内か");
 
     await popup.getByTestId("review-guidance-open-task").click();
 
     await expect(popup).toBeHidden();
-    await expect(page.getByRole("heading", { name: "Self Review Quest" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "PR Review Open Quest" })).toBeVisible();
     await expect(page.locator("text=Confirm the popup opens the selected task.")).toBeVisible();
   });
 
@@ -54,8 +54,8 @@ test.describe("Review guidance popup", () => {
 
     const popup = page.getByTestId("review-guidance-popup");
     await expect(popup).toBeVisible({ timeout: 10_000 });
-    await expect(popup).toContainText("PR REVIEW");
-    await expect(popup).toContainText("Prepare reviewer context with diff, test evidence, and PR notes");
+    await expect(popup).toContainText("PR Review");
+    await expect(popup).toContainText("PRの差分が要求スコープ内か");
 
     await popup.getByTestId("review-guidance-close").click();
     await expect(popup).toBeHidden();

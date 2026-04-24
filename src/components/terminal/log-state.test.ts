@@ -73,8 +73,8 @@ describe("countLogsByTab", () => {
 
 describe("parseStageTransition", () => {
   it("parses a stage transition marker", () => {
-    const parsed = parseStageTransition(`${STAGE_TRANSITION_PREFIX}in_progress→self_review`);
-    assert.deepEqual(parsed, { from: "in_progress", to: "self_review" });
+    const parsed = parseStageTransition(`${STAGE_TRANSITION_PREFIX}in_progress→pr_review`);
+    assert.deepEqual(parsed, { from: "in_progress", to: "pr_review" });
   });
 
   it("returns null for normal messages", () => {
@@ -135,12 +135,12 @@ describe("appendTerminalText", () => {
       {
         task_id: "task-1",
         kind: "system",
-        message: `${STAGE_TRANSITION_PREFIX}in_progress→self_review`,
-        stage: "self_review",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→pr_review`,
+        stage: "pr_review",
       },
     ]);
 
-    assert.match(result.text, /━━━ STAGE: in_progress → self_review ━━━/);
+    assert.match(result.text, /━━━ STAGE: in_progress → pr_review ━━━/);
   });
 
   it("injects a synthetic header when stage changes between consecutive entries", () => {
@@ -153,11 +153,11 @@ describe("appendTerminalText", () => {
 
     // Second batch has a different stage — expect a header line before the new chunk
     const step2 = appendTerminalText(step1.text, [
-      { task_id: "task-1", kind: "assistant", message: "second", stage: "self_review", agent_id: "agent-a" },
+      { task_id: "task-1", kind: "assistant", message: "second", stage: "pr_review", agent_id: "agent-a" },
     ], { lastStage: step1.lastStage, lastAgentId: step1.lastAgentId });
 
-    assert.match(step2.text, /── \[self_review\] agent:agent-a ──/);
-    assert.equal(step2.lastStage, "self_review");
+    assert.match(step2.text, /── \[pr_review\] agent:agent-a ──/);
+    assert.equal(step2.lastStage, "pr_review");
   });
 
   it("does not inject a header before the very first entry", () => {
@@ -245,15 +245,15 @@ describe("groupLogsByStage", () => {
     const logs: TaskLog[] = [
       createLog(1, { stage: "in_progress", message: "working" }),
       createLog(2, {
-        stage: "self_review",
+        stage: "pr_review",
         kind: "system",
-        message: `${STAGE_TRANSITION_PREFIX}in_progress→self_review`,
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→pr_review`,
       }),
-      createLog(3, { stage: "self_review", message: "reviewing" }),
+      createLog(3, { stage: "pr_review", message: "reviewing" }),
       createLog(4, {
         stage: "qa_testing",
         kind: "system",
-        message: `${STAGE_TRANSITION_PREFIX}self_review→qa_testing`,
+        message: `${STAGE_TRANSITION_PREFIX}pr_review→qa_testing`,
       }),
       createLog(5, { stage: "qa_testing", message: "testing" }),
     ];
@@ -263,11 +263,11 @@ describe("groupLogsByStage", () => {
     assert.equal(segments[0]?.stage, "in_progress");
     assert.equal(segments[0]?.fromStage, null);
     assert.match(segments[0]?.text ?? "", /working/);
-    assert.equal(segments[1]?.stage, "self_review");
+    assert.equal(segments[1]?.stage, "pr_review");
     assert.equal(segments[1]?.fromStage, "in_progress");
     assert.match(segments[1]?.text ?? "", /reviewing/);
     assert.equal(segments[2]?.stage, "qa_testing");
-    assert.equal(segments[2]?.fromStage, "self_review");
+    assert.equal(segments[2]?.fromStage, "pr_review");
     assert.match(segments[2]?.text ?? "", /testing/);
   });
 
@@ -335,13 +335,13 @@ describe("groupLogsByStage", () => {
   it("splits segments when stage changes without an explicit marker", () => {
     const logs: TaskLog[] = [
       createLog(1, { stage: "in_progress", message: "line-a" }),
-      createLog(2, { stage: "self_review", message: "line-b" }),
+      createLog(2, { stage: "pr_review", message: "line-b" }),
     ];
 
     const segments = groupLogsByStage(logs);
     assert.equal(segments.length, 2);
     assert.equal(segments[0]?.stage, "in_progress");
-    assert.equal(segments[1]?.stage, "self_review");
+    assert.equal(segments[1]?.stage, "pr_review");
   });
 
   it("does not create an implicit segment from hidden post-transition system logs", () => {
@@ -392,12 +392,12 @@ describe("groupLogsByStage", () => {
     const logs: TaskLog[] = [
       createLog(1, { stage: "in_progress", agent_id: "agent-a", message: "a" }),
       createLog(2, {
-        stage: "self_review",
+        stage: "pr_review",
         kind: "system",
         agent_id: "agent-b",
-        message: `${STAGE_TRANSITION_PREFIX}in_progress→self_review`,
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→pr_review`,
       }),
-      createLog(3, { stage: "self_review", agent_id: "agent-b", message: "b" }),
+      createLog(3, { stage: "pr_review", agent_id: "agent-b", message: "b" }),
     ];
 
     const segments = groupLogsByStage(logs);

@@ -103,7 +103,6 @@ export const TASK_OVERRIDABLE_KEYS: readonly string[] = [
   "review_count",
   "qa_mode",
   "qa_count",
-  "self_review_threshold",
   "auto_review",
   "auto_qa",
   "auto_checks_enabled",

@@ -88,7 +88,7 @@ export function validateStatusTransition(
     return `Status "${newStatus}" is not an active stage in the current workflow pipeline.`;
   }
 
-  // If current status is not in the pipeline (e.g. self_review), allow forward transitions
+  // If current status is not in the pipeline, allow forward transitions
   if (currentIndex === -1) return null;
 
   // Only allow moving to the immediate next stage (no skipping)
@@ -287,7 +287,6 @@ export function nextStage(
  *
  * @param db - Database connection
  * @param task - The task that just completed
- * @param selfReview - Whether the run was a self-review
  * @param reviewRun - Whether the run was a review run
  * @param workflow - The project workflow config (from WORKFLOW.md)
  * @returns The next status for the task
@@ -295,7 +294,6 @@ export function nextStage(
 export function determineNextStage(
   db: DatabaseSync,
   task: Task,
-  selfReview: boolean,
   reviewRun: boolean,
   workflow: ProjectWorkflow | null,
 ): Task["status"] {
@@ -396,21 +394,6 @@ export function determineNextStage(
     }
     clearFailedStage(db, task.id);
     return nextStage("pr_review", activeStages);
-  }
-
-  // Self-review completed
-  if (selfReview) {
-    const logs = db
-      .prepare(
-        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 50",
-      )
-      .all(task.id, runStartedAt) as Array<{ message: string }>;
-
-    const passed = logs.some((l) =>
-      l.message.includes("[SELF_REVIEW:PASS]"),
-    );
-    if (passed) return nextStage("in_progress", activeStages);
-    return "in_progress";
   }
 
   // Implementation completed — check if resuming from a failed stage

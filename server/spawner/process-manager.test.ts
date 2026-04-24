@@ -432,7 +432,7 @@ describe("determineCompletionStatus", () => {
     // Log from the current run decides the verdict.
     insertAssistantLog(db, task.id, "[REVIEW:PASS]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "done");
   });
 
@@ -442,7 +442,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "[REVIEW:NEEDS_CHANGES]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "in_progress");
   });
 
@@ -452,7 +452,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "レビューしましたが判定タグを出力し忘れました", 12_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "in_progress");
   });
 
@@ -462,16 +462,6 @@ describe("determineCompletionStatus", () => {
     const task = insertTask(db, { review_count: 2, started_at: 10_000 });
 
     insertAssistantLog(db, task.id, "レビュー完了（タグなし）", 12_000);
-
-    const status = determineCompletionStatus(db, task, false, true);
-    assert.equal(status, "in_progress");
-  });
-
-  it("ignores old self-review logs from previous runs", () => {
-    const db = createDb();
-    const task = insertTask(db, { review_count: 0, started_at: 10_000, task_size: "small" });
-
-    insertStdoutLog(db, task.id, "[SELF_REVIEW:PASS]", 5_000);
 
     const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "in_progress");
@@ -484,7 +474,7 @@ describe("determineCompletionStatus", () => {
     insertStdoutLog(db, task.id, '{"type":"user","message":{"content":"preview [REVIEW:NEEDS_CHANGES]"}}', 11_000);
     insertAssistantLog(db, task.id, "レビュー結果です\n[REVIEW:PASS]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "done");
   });
 
@@ -494,7 +484,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "実装修正を反映しました。", 12_000);
 
-    const status = determineCompletionStatus(db, task, false, false);
+    const status = determineCompletionStatus(db, task, false);
     assert.equal(status, "pr_review");
   });
 
@@ -504,7 +494,7 @@ describe("determineCompletionStatus", () => {
 
     insertAssistantLog(db, task.id, "[REVIEW:NEEDS_CHANGES]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false);
+    const status = determineCompletionStatus(db, task);
     assert.equal(status, "pr_review");
   });
 
@@ -519,7 +509,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
     insertAssistantLog(db, task.id, "[REVIEW:security:PASS]", 13_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "done");
   });
 
@@ -531,7 +521,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
     insertAssistantLog(db, task.id, "[REVIEW:security:NEEDS_CHANGES:SQL injection in query builder]", 13_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "in_progress");
   });
 
@@ -543,7 +533,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:NEEDS_CHANGES:poor error handling]", 12_000);
     insertAssistantLog(db, task.id, "[REVIEW:security:PASS]", 13_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "in_progress");
   });
 
@@ -555,7 +545,7 @@ describe("determineCompletionStatus", () => {
     insertAssistantLog(db, task.id, "[REVIEW:code:PASS]", 12_000);
     // security verdict never arrives (agent crashed or timed out)
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "in_progress");
   });
 
@@ -566,7 +556,7 @@ describe("determineCompletionStatus", () => {
     // No [REVIEWER_PANEL:...] marker — legacy single-reviewer flow
     insertAssistantLog(db, task.id, "[REVIEW:PASS]", 12_000);
 
-    const status = determineCompletionStatus(db, task, false, true);
+    const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "done");
   });
 });
@@ -575,7 +565,7 @@ describe("resolveCompletionStatusAfterPromotion", () => {
   it("keeps a reviewed task in pr_review when push failed", () => {
     const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
 
-    const resolution = resolveCompletionStatusAfterPromotion(task, "done", false, true, {
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
       branchName: "issue/t1",
       commitSha: "abc123",
       prUrl: null,
@@ -591,7 +581,7 @@ describe("resolveCompletionStatusAfterPromotion", () => {
   it("keeps implementation tasks incomplete when review metadata is missing", () => {
     const task = insertTask(createDb(), { status: "in_progress", review_count: 0 });
 
-    const resolution = resolveCompletionStatusAfterPromotion(task, "pr_review", false, false, {
+    const resolution = resolveCompletionStatusAfterPromotion(task, "pr_review", false, {
       branchName: "issue/t2",
       commitSha: "def456",
       prUrl: null,
@@ -607,7 +597,7 @@ describe("resolveCompletionStatusAfterPromotion", () => {
   it("allows completion when review artifact sync is fully ready", () => {
     const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
 
-    const resolution = resolveCompletionStatusAfterPromotion(task, "done", false, true, {
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
       branchName: "issue/t3",
       commitSha: "ghi789",
       prUrl: "https://github.com/example/repo/pull/3",

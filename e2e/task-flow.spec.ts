@@ -74,12 +74,6 @@ test.describe("Task Flow (Agent + Task integration)", () => {
     expect(task.status).toBe("in_progress");
     expect(task.started_at).toBeTruthy();
 
-    // Move to self_review
-    const reviewRes = await apiCall(request, "put", `/tasks/${task.id}`, {
-      status: "self_review",
-    });
-    expect((await reviewRes.json()).status).toBe("self_review");
-
     // Move to pr_review
     const prRes = await apiCall(request, "put", `/tasks/${task.id}`, {
       status: "pr_review",

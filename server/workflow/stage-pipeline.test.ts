@@ -783,7 +783,6 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
     const result = determineNextStage(
       db as never,
       task,
-      false,
       true,
       baseWorkflow,
     );
@@ -800,7 +799,6 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
     const result = determineNextStage(
       db as never,
       task,
-      false,
       true,
       baseWorkflow,
     );
@@ -820,7 +818,6 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
     const result = determineNextStage(
       db as never,
       task,
-      false,
       true,
       baseWorkflow,
     );
@@ -847,7 +844,6 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
     const result = determineNextStage(
       db as never,
       task,
-      false,
       true,
       baseWorkflow,
     );
@@ -864,7 +860,6 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
     const result = determineNextStage(
       db as never,
       task,
-      false,
       true,
       baseWorkflow,
     );
@@ -880,47 +875,15 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
     // task to that stage, silently clobbering the user's cancel.
     const db = createNextStageMockDb(reviewSettings, []);
     const task = { ...makeReviewTask("t-cancelled"), status: "cancelled" as Task["status"] };
-    const result = determineNextStage(db as never, task, false, false, baseWorkflow);
+    const result = determineNextStage(db as never, task, false, baseWorkflow);
     assert.strictEqual(result, "cancelled");
   });
 
   it("preserves done status so completed tasks are not re-advanced", () => {
     const db = createNextStageMockDb(reviewSettings, []);
     const task = { ...makeReviewTask("t-done"), status: "done" as Task["status"] };
-    const result = determineNextStage(db as never, task, false, false, baseWorkflow);
+    const result = determineNextStage(db as never, task, false, baseWorkflow);
     assert.strictEqual(result, "done");
-  });
-});
-
-describe("determineNextStage — self_review gating", () => {
-  it("advances to the next pipeline stage only when self-review PASSes", () => {
-    const db = createNextStageMockDb(
-      {
-        qa_mode: "enabled",
-        review_mode: "pr_only",
-        default_enable_test_generation: "true",
-        default_enable_human_review: "true",
-      },
-      [{ message: "[SELF_REVIEW:PASS]" }],
-    );
-    const task = { ...makeReviewTask("t-self-pass"), status: "in_progress" as Task["status"] };
-    const result = determineNextStage(db as never, task, true, false, null);
-    assert.strictEqual(result, "test_generation");
-  });
-
-  it("returns to in_progress when self-review FAILs or no PASS verdict exists", () => {
-    const db = createNextStageMockDb(
-      {
-        qa_mode: "enabled",
-        review_mode: "pr_only",
-        default_enable_test_generation: "true",
-        default_enable_human_review: "true",
-      },
-      [{ message: "[SELF_REVIEW:FAIL:missing edge case]" }],
-    );
-    const task = { ...makeReviewTask("t-self-fail"), status: "in_progress" as Task["status"] };
-    const result = determineNextStage(db as never, task, true, false, null);
-    assert.strictEqual(result, "in_progress");
   });
 });
 

@@ -678,13 +678,6 @@ export async function spawnAgent(
   const workflow = loadProjectWorkflow(projectPath);
   const workspaceMode = resolveWorkspaceMode(workflow, db);
   const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
-  // Determine if self-review applies (skip for continue mode)
-  const selfReviewThreshold = getSetting(db, "self_review_threshold", task.id) ?? "small";
-  const selfReview = !isContinue && (
-    selfReviewThreshold === "all" ||
-    (selfReviewThreshold === "medium" && (task.task_size === "small" || task.task_size === "medium")) ||
-    (selfReviewThreshold === "small" && task.task_size === "small")
-  );
 
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
 
@@ -837,7 +830,6 @@ export async function spawnAgent(
                 language: outputLanguage,
               }) + handoffContext
             : buildTaskPrompt(task, {
-                selfReview,
                 workflow,
                 runtimePolicy,
                 parallelScope: parallelImplEnabled ? "implementer" : undefined,
@@ -1681,7 +1673,7 @@ export async function spawnAgent(
     const finishTime = Date.now();
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
-    let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, selfReview, isReviewRun, workflow) : "cancelled";
+    let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewRun, workflow) : "cancelled";
 
     // Extract and store refinement plan when refinement agent completes.
     // The extraction helper scopes by stage and spawn-start timestamp so
@@ -1852,11 +1844,10 @@ export async function spawnAgent(
 export function determineCompletionStatus(
   db: DatabaseSync,
   task: Task,
-  selfReview: boolean,
   reviewRun = false,
   workflow: ProjectWorkflow | null = null,
 ): string {
-  return determineNextStage(db, task, selfReview, reviewRun, workflow);
+  return determineNextStage(db, task, reviewRun, workflow);
 }
 
 function getReviewArtifactCompletionBlockReason(
@@ -1888,7 +1879,6 @@ function getReviewArtifactCompletionBlockReason(
 export function resolveCompletionStatusAfterPromotion(
   task: Pick<Task, "status">,
   candidateStatus: Task["status"],
-  selfReview: boolean,
   reviewRun: boolean,
   promotion: ReviewArtifactPromotionResult | null,
 ): { status: Task["status"]; blockedReason: string | null } {
@@ -1906,7 +1896,7 @@ export function resolveCompletionStatusAfterPromotion(
   }
 
   return {
-    status: selfReview ? "self_review" : "inbox",
+    status: "inbox",
     blockedReason,
   };
 }

@@ -133,7 +133,7 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
               value={taskSize}
               onChange={(e) => setTaskSize(e.target.value as "small" | "medium" | "large")}
             >
-              <option value="small">Small (self-review)</option>
+              <option value="small">Small</option>
               <option value="medium">Medium</option>
               <option value="large">Large</option>
             </select>

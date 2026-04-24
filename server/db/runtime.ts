@@ -210,8 +210,13 @@ function migrateAddWorkflowStages(db: DatabaseSync): void {
   ).get() as { sql: string } | undefined;
   if (!checkInfo) return;
 
-  // Skip if already migrated
-  if (checkInfo.sql.includes("test_generation")) return;
+  const needsWorkflowStages = !checkInfo.sql.includes("test_generation");
+  const hasLegacySelfReview = checkInfo.sql.includes("self_review");
+  if (!needsWorkflowStages && !hasLegacySelfReview) return;
+
+  if (hasLegacySelfReview) {
+    db.prepare("UPDATE tasks SET status = 'in_progress' WHERE status = 'self_review'").run();
+  }
 
   rebuildTasksTable(db);
 }

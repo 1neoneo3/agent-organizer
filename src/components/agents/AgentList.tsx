@@ -7,7 +7,7 @@ import type { Agent, Task } from "../../types/index.js";
 import { formatModelName } from "../../formatModelName.js";
 
 const ACTIVE_TASK_STATUSES = new Set([
-  "refinement", "in_progress", "self_review", "test_generation",
+  "refinement", "in_progress", "test_generation",
   "qa_testing", "pr_review", "human_review",
 ]);
 

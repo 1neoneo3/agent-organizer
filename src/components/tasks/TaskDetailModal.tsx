@@ -28,7 +28,6 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   inbox: { label: "Inbox", color: "var(--status-inbox)" },
   refinement: { label: "Plan", color: "var(--status-refinement)" },
   in_progress: { label: "In Progress", color: "var(--status-progress)" },
-  self_review: { label: "Self Review", color: "var(--status-review)" },
   test_generation: { label: "Test Gen", color: "var(--status-test-gen)" },
   qa_testing: { label: "QA Testing", color: "var(--status-qa)" },
   pr_review: { label: "PR Review", color: "var(--status-review)" },

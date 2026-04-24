@@ -286,7 +286,6 @@ function appendWorkflowContext(
 export function buildTaskPrompt(
   task: Task,
   opts?: {
-    selfReview?: boolean;
     workflow?: ProjectWorkflow | null;
     runtimePolicy?: AgentRuntimePolicy | null;
     /**
@@ -557,21 +556,6 @@ export function buildTaskPrompt(
   // Per-workflow static context (sandbox mode, localhost allowance, e2e
   // policy). Stable across tasks that share a workflow.
   appendWorkflowContext(staticParts, opts?.workflow, opts?.runtimePolicy);
-
-  // Self-review instruction (conditional — shape depends on opts.selfReview).
-  if (opts?.selfReview) {
-    staticParts.push("## Review Instructions");
-    staticParts.push(
-      "After completing the task, perform a self-review of your changes:",
-    );
-    staticParts.push("1. Verify the implementation meets the task requirements");
-    staticParts.push("2. Check for obvious bugs, security issues, or regressions");
-    staticParts.push("3. Confirm tests pass (if applicable)");
-    staticParts.push(
-      '4. Output a final line: `[SELF_REVIEW:PASS]` or `[SELF_REVIEW:FAIL:<reason>]`',
-    );
-    staticParts.push("");
-  }
 
   // PR creation workflow (default for tasks that produce file changes).
   if (workspaceMode === "git-worktree") {

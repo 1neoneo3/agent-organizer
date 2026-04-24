@@ -264,7 +264,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     // Prevent duplicate tasks: reject if a task with similar title is active (inbox/in_progress/qa_testing/pr_review)
     const duplicate = db.prepare(
-      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'refinement', 'in_progress', 'self_review', 'test_generation', 'qa_testing', 'pr_review', 'human_review') LIMIT 1"
+      "SELECT id, task_number, status FROM tasks WHERE title = ? AND status IN ('inbox', 'refinement', 'in_progress', 'test_generation', 'qa_testing', 'pr_review', 'human_review') LIMIT 1"
     ).get(title) as { id: string; task_number: string; status: string } | undefined;
     if (duplicate) {
       return res.status(409).json({

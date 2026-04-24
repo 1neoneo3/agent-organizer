@@ -42,7 +42,6 @@ function mapStatusToKanbanAction(status: string): string | null {
       return "doing";
     case "qa_testing":
     case "pr_review":
-    case "self_review":
       return "review";
     case "done":
       return "done";

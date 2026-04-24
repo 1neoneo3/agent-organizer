@@ -161,7 +161,7 @@ describe("initializeDb", () => {
       "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
     ).run("task-transition", "Test Task 2", "in_progress", "agent-transition", "small", now, now);
 
-    db.prepare("UPDATE tasks SET status = 'self_review' WHERE id = ?").run("task-transition");
+    db.prepare("UPDATE tasks SET status = 'pr_review' WHERE id = ?").run("task-transition");
 
     const marker = db.prepare(
       "SELECT kind, message, stage, agent_id FROM task_logs WHERE task_id = ? AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC LIMIT 1"
@@ -169,8 +169,8 @@ describe("initializeDb", () => {
 
     assert.ok(marker, "stage transition marker should be inserted by trigger");
     assert.equal(marker.kind, "system");
-    assert.equal(marker.message, "__STAGE_TRANSITION__:in_progress→self_review");
-    assert.equal(marker.stage, "self_review");
+    assert.equal(marker.message, "__STAGE_TRANSITION__:in_progress→pr_review");
+    assert.equal(marker.stage, "pr_review");
     assert.equal(marker.agent_id, "agent-transition");
   });
 

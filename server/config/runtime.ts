@@ -141,7 +141,6 @@ export const SETTINGS_DEFAULTS = {
   review_count: 1,
   qa_mode: "enabled" as const, // "enabled" | "disabled"
   qa_count: 2,
-  self_review_threshold: "small" as const, // task size for auto self-review: "small" | "medium" | "all" | "none"
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
   auto_qa: "true" as const, // "true" | "false" — auto-trigger QA agent on qa_testing
   auto_dispatch_mode: "all_inbox" as const, // "disabled" | "github_only" | "all_inbox"

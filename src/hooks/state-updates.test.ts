@@ -101,9 +101,9 @@ describe("mergeDirectiveUpdate", () => {
 });
 
 describe("collectReviewTransitions", () => {
-  it("detects transition into self_review", () => {
+  it("detects transition into pr_review", () => {
     const previous = createTask();
-    const next = { ...previous, status: "self_review" as const };
+    const next = { ...previous, status: "pr_review" as const };
 
     const transitions = collectReviewTransitions([previous], [next]);
 
@@ -111,18 +111,18 @@ describe("collectReviewTransitions", () => {
       taskId: "task-1",
       title: "Task 1",
       from: "inbox",
-      to: "self_review",
+      to: "pr_review",
     }]);
   });
 
-  it("detects transition from self_review to pr_review", () => {
-    const previous = { ...createTask(), status: "self_review" as const };
+  it("detects transition from qa_testing to pr_review", () => {
+    const previous = { ...createTask(), status: "qa_testing" as const };
     const next = { ...previous, status: "pr_review" as const };
 
     const transitions = collectReviewTransitions([previous], [next]);
 
     assert.equal(transitions.length, 1);
-    assert.equal(transitions[0]?.from, "self_review");
+    assert.equal(transitions[0]?.from, "qa_testing");
     assert.equal(transitions[0]?.to, "pr_review");
   });
 

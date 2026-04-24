@@ -111,8 +111,6 @@ function looksLikeCompletionSummary(text: string): boolean {
     // Role-tagged verdicts: [REVIEW:code:PASS], [REVIEW:security:NEEDS_CHANGES:…]
     /\[REVIEW:\w+:PASS\]/.test(text) ||
     /\[REVIEW:\w+:NEEDS_CHANGES/.test(text) ||
-    text.includes("[SELF_REVIEW:PASS]") ||
-    text.includes("[SELF_REVIEW:FAIL:") ||
     (text.includes("レビューサマリー") && text.includes("### 判定")) ||
     // Refinement plan output — not a user prompt
     (text.includes("---REFINEMENT PLAN---") && text.includes("---END REFINEMENT---"))

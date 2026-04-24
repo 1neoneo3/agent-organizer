@@ -16,7 +16,6 @@ import {
 const STAGE_STYLES: Record<string, { bg: string; border: string; text: string; label: string }> = {
   inbox: { bg: "#e0e7ff", border: "#6366f1", text: "#3730a3", label: "inbox" },
   in_progress: { bg: "#dbeafe", border: "#3b82f6", text: "#1e40af", label: "in_progress" },
-  self_review: { bg: "#fef3c7", border: "#f59e0b", text: "#92400e", label: "self_review" },
   test_generation: { bg: "#f3e8ff", border: "#a855f7", text: "#6b21a8", label: "test_gen" },
   qa_testing: { bg: "#fce7f3", border: "#ec4899", text: "#9d174d", label: "qa_testing" },
   pr_review: { bg: "#cffafe", border: "#06b6d4", text: "#155e75", label: "pr_review" },

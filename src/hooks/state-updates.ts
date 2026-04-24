@@ -1,7 +1,7 @@
 import type { Agent, Directive, Task } from "../types/index.js";
 
 type EntityWithId = { id: string };
-type ReviewStatus = Extract<Task["status"], "self_review" | "pr_review">;
+type ReviewStatus = Extract<Task["status"], "pr_review">;
 
 export interface ReviewTransition {
   taskId: string;
@@ -41,7 +41,7 @@ export function mergeDirectiveUpdate(directives: Directive[], update: Partial<Di
 }
 
 function isReviewStatus(status: Task["status"]): status is ReviewStatus {
-  return status === "self_review" || status === "pr_review";
+  return status === "pr_review";
 }
 
 export function collectReviewTransitions(previousTasks: Task[], nextTasks: Task[]): ReviewTransition[] {

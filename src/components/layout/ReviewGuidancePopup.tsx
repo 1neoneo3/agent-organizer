@@ -9,20 +9,7 @@ interface ReviewGuidancePopupProps {
   onNavigateToTask: (taskId: string) => void;
 }
 
-const REVIEW_GUIDE: Record<"self_review" | "pr_review", { title: string; checks: string[]; actions: string[] }> = {
-  self_review: {
-    title: "Self Review",
-    checks: [
-      "実装が依頼内容を満たしているか",
-      "明らかなバグや回帰がないか",
-      "テスト/型チェック結果に失敗がないか",
-    ],
-    actions: [
-      "Task Detail で変更内容と結果を確認",
-      "必要なら LOG から根拠を確認",
-      "問題があれば MSG で修正依頼を返す",
-    ],
-  },
+const REVIEW_GUIDE: Record<"pr_review", { title: string; checks: string[]; actions: string[] }> = {
   pr_review: {
     title: "PR Review",
     checks: [

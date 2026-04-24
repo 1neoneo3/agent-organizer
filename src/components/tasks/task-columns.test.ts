@@ -255,7 +255,7 @@ describe("summarizeTaskColumns", () => {
     const grouped = groupTasksByStatusStable([
       { ...createTask("ip-1", "in_progress", 100), priority: 9 },
       { ...createTask("ip-2", "in_progress", 90), priority: 4 },
-      { ...createTask("sr-1", "self_review", 80), priority: 1 },
+      { ...createTask("pr-1", "pr_review", 80), priority: 1 },
       { ...createTask("qa-1", "qa_testing", 70), priority: 8 },
       { ...createTask("qa-2", "qa_testing", 60), priority: 8 },
     ]);
@@ -265,8 +265,8 @@ describe("summarizeTaskColumns", () => {
     assert.equal(summaries.in_progress.total, 2);
     assert.equal(summaries.in_progress.priorityBreakdown.high, 1);
     assert.equal(summaries.in_progress.priorityBreakdown.medium, 1);
-    assert.equal(summaries.self_review.total, 1);
-    assert.equal(summaries.self_review.priorityBreakdown.low, 1);
+    assert.equal(summaries.pr_review.total, 1);
+    assert.equal(summaries.pr_review.priorityBreakdown.low, 1);
     assert.equal(summaries.qa_testing.total, 2);
     assert.equal(summaries.qa_testing.priorityBreakdown.high, 2);
   });
