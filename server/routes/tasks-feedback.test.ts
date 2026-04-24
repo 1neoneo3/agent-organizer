@@ -354,6 +354,199 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
     }
   });
 
+  it("returns 404 for a non-existent task", async () => {
+    const db = await createDb();
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        throw new Error("spawnAgent must not be called for non-existent task");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/does-not-exist/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Some feedback." }),
+      });
+      assert.equal(response.status, 404);
+      const body = await response.json() as { error: string };
+      assert.equal(body.error, "not_found");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("returns 400 when content is missing or empty", async () => {
+    const db = await createDb();
+    const taskId = randomUUID();
+    insertRefinementTask(db, taskId, null);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        throw new Error("spawnAgent must not be called for invalid body");
+      },
+    });
+
+    try {
+      const noContent = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      assert.equal(noContent.status, 400, "missing content should return 400");
+
+      const emptyContent = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "" }),
+      });
+      assert.equal(emptyContent.status, 400, "empty string content should return 400");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("restarts in_progress (non-refinement) task via running process without transition logs", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertTask(db, taskId, agentId, "in_progress");
+
+    let queueCalls = 0;
+    let spawnCalls = 0;
+    const { server, baseUrl, events } = await startServer(db, {
+      queueFeedbackAndRestart: () => {
+        queueCalls += 1;
+        return true;
+      },
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        throw new Error("spawnAgent should not run when feedback restart stays in-process");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Speed up the implementation." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(queueCalls, 1);
+      assert.equal(spawnCalls, 0);
+      assert.deepEqual(getTransitions(db, taskId), [], "non-refinement tasks must not log stage transitions");
+      assert.ok(
+        !events.some((e) => e.type === "task_update"),
+        "non-refinement running restart must not broadcast task_update",
+      );
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("falls through to idle-agent spawn when in_progress process has already exited", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertTask(db, taskId, agentId, "in_progress");
+
+    let spawnCalls = 0;
+    let spawnedPrompt: string | undefined;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async (_db, _ws, _agent, _task, options) => {
+        spawnCalls += 1;
+        spawnedPrompt = options?.continuePrompt;
+        return { pid: 4001 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Continue where you left off." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnCalls, 1);
+      assert.equal(spawnedPrompt, "Continue where you left off.");
+      assert.deepEqual(getTransitions(db, taskId), [], "non-refinement fall-through must not log stage transitions");
+
+      const row = db.prepare("SELECT status, auto_respawn_count FROM tasks WHERE id = ?").get(taskId) as {
+        status: string;
+        auto_respawn_count: number;
+      };
+      assert.equal(row.status, "in_progress", "in_progress status must be preserved");
+      assert.equal(row.auto_respawn_count, 0, "auto_respawn_count must be reset to 0");
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("skips duplicate transition when refinementTransitionDone is already true from running-process path", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    let spawnCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        return { pid: 5001 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise the plan completely." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnCalls, 1);
+
+      const transitions = getTransitions(db, taskId);
+      assert.equal(transitions.length, 2, "exactly one round-trip (2 transitions), no duplicates");
+      assert.deepEqual(transitions, [
+        "__STAGE_TRANSITION__:refinement→inbox",
+        "__STAGE_TRANSITION__:inbox→refinement",
+      ]);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("broadcasts task_update when refinement task agent is busy", async () => {
     const db = await createDb();
     const agentId = randomUUID();
