@@ -139,5 +139,6 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status_priority_created ON tasks(status, pr
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id);
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_logs_task_kind ON task_logs(task_id, kind);
 CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, created_at);
 `;
