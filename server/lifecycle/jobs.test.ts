@@ -442,6 +442,57 @@ describe("recoverInProgressOrphans", () => {
     const logs = db.prepare("SELECT COUNT(*) AS n FROM task_logs WHERE task_id = 't1'").get() as { n: number };
     assert.equal(logs.n, 0, "no park/budget-exhausted log during preflight");
   });
+
+  it("skips refinement-with-plan tasks in pendingSpawns", () => {
+    insertTask(db, { id: "t1", status: "refinement", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE tasks SET refinement_plan = 'some plan' WHERE id = 't1'").run();
+    const ws = createFakeWs();
+
+    const pending = new Set(["t1"]);
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { pending });
+
+    const row = db.prepare("SELECT status, completed_at FROM tasks WHERE id = 't1'").get() as {
+      status: string;
+      completed_at: number | null;
+    };
+    assert.equal(row.status, "refinement", "must not finalize during preflight");
+    assert.equal(row.completed_at, null, "completed_at must not be stamped during preflight");
+    assert.equal(ws.events.length, 0, "no broadcasts during preflight");
+  });
+
+  it("handles three-way interaction: active + pending + genuine orphan", () => {
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-2", "tester-2", "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-3", "tester-3", "claude", "idle", now, now);
+
+    insertTask(db, { id: "t-active", status: "in_progress", assigned_agent_id: "agent-1" });
+    insertTask(db, { id: "t-pending", status: "in_progress", assigned_agent_id: "agent-2" });
+    insertTask(db, { id: "t-orphan", status: "in_progress", assigned_agent_id: "agent-3" });
+
+    const ws = createFakeWs();
+    const spawnedTasks: string[] = [];
+    const fakeSpawn = ((_db: DatabaseSync, _ws: unknown, _agent: unknown, task: { id: string }) => {
+      spawnedTasks.push(task.id);
+      return Promise.resolve({ pid: 1 });
+    }) as never;
+
+    const active = new Set(["t-active"]);
+    const pending = new Set(["t-pending"]);
+    recoverInProgressOrphans(db, ws as never, undefined, active, {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+      pending,
+    });
+
+    assert.ok(!spawnedTasks.includes("t-active"), "active task must not be respawned");
+    assert.ok(!spawnedTasks.includes("t-pending"), "pending task must not be respawned");
+    assert.ok(spawnedTasks.includes("t-orphan"), "genuine orphan must be respawned");
+    assert.equal(spawnedTasks.length, 1, "exactly one task respawned");
+  });
 });
 
 // ---- recoverStuckAutoStages ----------------------------------------------
@@ -640,5 +691,53 @@ describe("recoverStuckAutoStages", () => {
 
     const genuineRow = db.prepare("SELECT status FROM tasks WHERE id = 'genuine-stuck'").get() as { status: string };
     assert.equal(genuineRow.status, "human_review", "genuine stuck task promoted to human_review");
+  });
+
+  it("does not promote pending auto-stage tasks across multiple ticks", () => {
+    const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
+    insertTask(db, {
+      id: "preflight",
+      status: "pr_review",
+      assigned_agent_id: "agent-1",
+      last_heartbeat_at: elevenMinutesAgo,
+    });
+    const ws = createFakeWs();
+
+    const pending = new Set(["preflight"]);
+    for (let i = 0; i < 5; i++) {
+      recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, pending);
+    }
+
+    const row = db.prepare("SELECT status FROM tasks WHERE id = 'preflight'").get() as { status: string };
+    assert.equal(row.status, "pr_review", "must stay in pr_review across all ticks");
+    assert.equal(ws.events.length, 0, "no broadcasts across any tick");
+    const logs = db.prepare("SELECT COUNT(*) AS n FROM task_logs WHERE task_id = 'preflight'").get() as { n: number };
+    assert.equal(logs.n, 0, "no system logs emitted during preflight");
+  });
+
+  it("promotes auto-stage task after preflight completes (pendingSpawns cleared)", () => {
+    const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
+    insertTask(db, {
+      id: "lifecycle",
+      status: "pr_review",
+      assigned_agent_id: "agent-1",
+      last_heartbeat_at: elevenMinutesAgo,
+    });
+    const ws = createFakeWs();
+
+    const pending = new Set(["lifecycle"]);
+
+    // Tick 1: task in preflight → skipped
+    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, pending);
+    const before = db.prepare("SELECT status FROM tasks WHERE id = 'lifecycle'").get() as { status: string };
+    assert.equal(before.status, "pr_review", "skipped during preflight");
+
+    // Preflight completes
+    pending.delete("lifecycle");
+
+    // Tick 2: task is now genuinely stuck → promoted
+    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, pending);
+    const after = db.prepare("SELECT status FROM tasks WHERE id = 'lifecycle'").get() as { status: string };
+    assert.equal(after.status, "human_review", "promoted after preflight completed");
   });
 });
