@@ -12,9 +12,10 @@ export function getDb(): DatabaseSync {
   return db;
 }
 
-export function initializeDb(): DatabaseSync {
-  mkdirSync(dirname(DB_PATH), { recursive: true });
-  db = new DatabaseSync(DB_PATH);
+export function initializeDb(dbPath?: string): DatabaseSync {
+  const effectivePath = dbPath ?? DB_PATH;
+  mkdirSync(dirname(effectivePath), { recursive: true });
+  db = new DatabaseSync(effectivePath);
 
   // Core safety settings
   db.exec("PRAGMA journal_mode = WAL");
