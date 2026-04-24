@@ -6,6 +6,10 @@ const PING_INTERVAL_MS = 30_000;
 
 const DEDUP_TYPES = new Set(["task_update", "agent_status"]);
 const COALESCE_FLUSH_TYPES = new Set(["task_update", "agent_status"]);
+const DEDUP_IGNORED_KEYS_BY_TYPE: Record<string, ReadonlySet<string>> = {
+  task_update: new Set(["updated_at"]),
+  agent_status: new Set(["updated_at"]),
+};
 
 interface BroadcastOptions {
   taskId?: string;
@@ -21,11 +25,45 @@ export interface WsHub {
   dispose(): void;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function extractEntityId(payload: unknown): string | null {
-  if (payload && typeof payload === "object" && !Array.isArray(payload) && "id" in payload) {
+  if (isPlainObject(payload) && "id" in payload) {
     return String((payload as Record<string, unknown>).id);
   }
   return null;
+}
+
+function normalizePayloadForDedup(type: string, payload: unknown): unknown {
+  if (!isPlainObject(payload)) {
+    return payload;
+  }
+
+  const ignoredKeys = DEDUP_IGNORED_KEYS_BY_TYPE[type];
+  if (!ignoredKeys || ignoredKeys.size === 0) {
+    return payload;
+  }
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (!ignoredKeys.has(key)) {
+      normalized[key] = value;
+    }
+  }
+  return normalized;
+}
+
+function mergeCoalescedPayload(type: string, previous: unknown, next: unknown): unknown {
+  if (!COALESCE_FLUSH_TYPES.has(type) || !isPlainObject(previous) || !isPlainObject(next)) {
+    return next;
+  }
+
+  return {
+    ...previous,
+    ...next,
+  };
 }
 
 export function createWsHub(): WsHub {
@@ -92,7 +130,7 @@ export function createWsHub(): WsHub {
       const entityId = extractEntityId(payload);
       if (entityId) {
         dedupKey = `${type}:${entityId}`;
-        payloadHash = JSON.stringify(payload);
+        payloadHash = JSON.stringify(normalizePayloadForDedup(type, payload));
         if (lastDelivered.get(dedupKey) === payloadHash) {
           return;
         }
@@ -165,7 +203,10 @@ export function createWsHub(): WsHub {
           (item) => extractEntityId(item.payload) === entityId,
         );
         if (idx >= 0) {
-          existing.queue[idx] = { payload, taskId: options?.taskId };
+          existing.queue[idx] = {
+            payload: mergeCoalescedPayload(type, existing.queue[idx]?.payload, payload),
+            taskId: options?.taskId,
+          };
           return;
         }
       }

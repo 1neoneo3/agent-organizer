@@ -234,6 +234,22 @@ describe("createWsHub", () => {
     assert.equal(JSON.parse(ws.sent[1]!).payload.status, "done");
   });
 
+  it("suppresses task_update payloads that only differ by updated_at", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress", updated_at: 100 });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress", updated_at: 200 });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 1);
+  });
+
   it("suppresses duplicate agent_status payloads", async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const hub = createWsHub();
@@ -287,6 +303,30 @@ describe("createWsHub", () => {
     t.mock.timers.tick(50);
     assert.equal(ws.sent.length, 2);
     assert.equal(JSON.parse(ws.sent[1]!).payload.status, "done");
+  });
+
+  it("merges queued task_update payloads for the same entity before flush", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", title: "Initial title", description: "Updated description" });
+    hub.broadcast("task_update", { id: "task-1", status: "done" });
+
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 2);
+    assert.deepEqual(JSON.parse(ws.sent[1]!).payload, {
+      id: "task-1",
+      title: "Initial title",
+      status: "done",
+      description: "Updated description",
+    });
   });
 
   it("flushes task_update as individual messages, not arrays", async (t) => {
@@ -428,6 +468,22 @@ describe("createWsHub", () => {
     t.mock.timers.tick(50);
     assert.equal(ws.sent.length, 2);
     assert.equal(JSON.parse(ws.sent[1]!).payload.status, "busy");
+  });
+
+  it("suppresses agent_status payloads that only differ by updated_at", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("agent_status", { id: "agent-1", status: "idle", updated_at: 100 });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("agent_status", { id: "agent-1", status: "idle", updated_at: 200 });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 1);
   });
 
   it("coalesces different entity ids independently within same batch window", async (t) => {
