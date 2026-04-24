@@ -911,4 +911,70 @@ describe("streaming refinement plan suppresses text-based detection", () => {
     ]);
     assert.strictEqual(result.detected, false);
   });
+
+  // --- #466 realistic bug reproduction ---
+
+  it("scenario 6: full refinement revision output with dense JP patterns (#466)", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n",
+      "## 背景\nagent-organizer の text-based interactive prompt detection が ",
+      "refinement plan 本文を誤検知して停止する不具合を修正する。\n",
+      "## 要件\n- 追加情報が必要な場合のみ Input Required とする\n",
+      "- 対象ファイルを指定してください等のパターンが plan 内にあっても無視\n",
+      "## 変更ファイル\n- `event-classifier.ts` — StructuredBlockTracker 追加\n",
+      "## 実装計画\n1. tracker クラス追加\n2. ガード追加\n3. テスト追加\n",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 7: English prompt patterns inside plan are suppressed", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## Requirements\n",
+      "Please provide the target directory path.\n",
+      "Could you specify the deployment branch?\n",
+      "## Plan\n1. Update config\n2. Add validation\n",
+      "---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 8: two consecutive plan blocks, prompt between is detected", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## First plan\n---END REFINEMENT---",
+      "タスクを進めるには追加情報が必要です",
+      "---REFINEMENT PLAN---\n## Second plan\n---END REFINEMENT---",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 1);
+  });
+
+  it("scenario 9: plan with many small chunks never fires false positive", () => {
+    const chunks = ["---REFINEMENT PLAN---\n"];
+    for (let i = 0; i < 15; i++) {
+      chunks.push(`step ${i}: 対象ファイルを指定してください。追加情報が必要です。\n`);
+    }
+    chunks.push("---END REFINEMENT---");
+
+    const result = simulateStreamingDetection(chunks);
+    assert.strictEqual(result.detected, false);
+  });
+
+  it("scenario 10: no plan markers means JP prompt is detected normally", () => {
+    const result = simulateStreamingDetection([
+      "前の作業が完了しました。",
+      "タスクを進めるには追加情報が必要です。対象ファイルを指定してください。",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 1);
+  });
+
+  it("scenario 11: plan output followed by explicit options prompt after block end", () => {
+    const result = simulateStreamingDetection([
+      "---REFINEMENT PLAN---\n## Plan\n1. Step A\n---END REFINEMENT---",
+      "次のアクションをどうしますか？\n\n1. コミットして push\n2. テスト追加\n3. 停止",
+    ]);
+    assert.strictEqual(result.detected, true);
+    assert.strictEqual(result.detectedAt, 1);
+  });
 });
