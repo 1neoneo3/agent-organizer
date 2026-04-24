@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { SCHEMA_SQL } from "./schema.js";
 import { DB_PATH, SETTINGS_DEFAULTS, DEFAULT_CLI_MODELS } from "../config/runtime.js";
 import { detectRepositoryUrl } from "../workflow/git-utils.js";
+import { VALID_TASK_NUMBER_SQL } from "../domain/task-number.js";
 
 let db: DatabaseSync | null = null;
 
@@ -63,6 +64,7 @@ export function initializeDb(): DatabaseSync {
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
   migrateStageAgentSelectionSettings(db);
+  repairBrokenTaskNumbers(db);
   backfillTaskNumbers(db);
   seedDefaults(db);
   backfillCliModels(db);
@@ -532,6 +534,45 @@ function migrateAddLogStageAgent(db: DatabaseSync): void {
   `);
 }
 
+/**
+ * Detect and repair task_number values that are UUID hex fragments
+ * (e.g. `#40b0c5`, `#082098`) rather than sequential decimals. Such
+ * values poison `nextTaskNumber()` by inflating the MAX and causing
+ * all subsequent task numbers to jump. The repair re-assigns these
+ * rows with the next valid sequential number.
+ *
+ * Detection: any `#`-prefixed task_number where the numeric part does
+ * not survive a round-trip through INTEGER (leading zeros are stripped,
+ * hex letters cause partial parsing).
+ */
+function repairBrokenTaskNumbers(db: DatabaseSync): void {
+  const broken = db
+    .prepare(
+      `SELECT id FROM tasks
+       WHERE task_number LIKE '#%'
+         AND LENGTH(task_number) > 1
+         AND CAST(CAST(SUBSTR(task_number, 2) AS INTEGER) AS TEXT) != SUBSTR(task_number, 2)
+       ORDER BY created_at ASC`,
+    )
+    .all() as Array<{ id: string }>;
+  if (broken.length === 0) return;
+
+  const maxRow = db
+    .prepare(
+      `SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE ${VALID_TASK_NUMBER_SQL}`,
+    )
+    .get() as { max_num: number | null } | undefined;
+  let seq = (maxRow?.max_num ?? 0) + 1;
+
+  const update = db.prepare(
+    "UPDATE tasks SET task_number = ? WHERE id = ?",
+  );
+  for (const row of broken) {
+    update.run(`#${seq}`, row.id);
+    seq++;
+  }
+}
+
 function backfillTaskNumbers(db: DatabaseSync): void {
   const rows = db.prepare(
     "SELECT id FROM tasks WHERE task_number IS NULL ORDER BY created_at ASC"
@@ -539,7 +580,7 @@ function backfillTaskNumbers(db: DatabaseSync): void {
   if (rows.length === 0) return;
 
   const maxRow = db.prepare(
-    "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
+    `SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE ${VALID_TASK_NUMBER_SQL}`
   ).get() as { max_num: number | null } | undefined;
   let seq = (maxRow?.max_num ?? 0) + 1;
 

@@ -74,13 +74,15 @@ function insertAgent(db: DatabaseSync, agentId: string, status: "idle" | "workin
   ).run(agentId, `Agent ${agentId}`, status, now, now);
 }
 
+let testTaskSeq = 9000;
 function insertRefinementTask(db: DatabaseSync, taskId: string, agentId: string): void {
   const now = Date.now();
+  const taskNumber = `#${++testTaskSeq}`;
   db.prepare(
     `INSERT INTO tasks (
       id, title, description, assigned_agent_id, status, task_size, task_number, created_at, updated_at
     ) VALUES (?, ?, ?, ?, 'refinement', 'medium', ?, ?, ?)`,
-  ).run(taskId, `Task ${taskId}`, "Refinement feedback regression", agentId, `#${taskId.slice(0, 6)}`, now, now);
+  ).run(taskId, "Refinement feedback test task", "Refinement feedback regression", agentId, taskNumber, now, now);
 }
 
 function getTransitions(db: DatabaseSync, taskId: string): string[] {
