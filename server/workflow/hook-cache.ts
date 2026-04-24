@@ -7,7 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 interface CacheEntry {
   command: string;
@@ -19,6 +19,11 @@ export interface HookCachePolicy {
   id: string;
   match: (cmd: string) => boolean;
   files: string[];
+}
+
+interface ResolvedPolicyMatch {
+  cwd: string;
+  policy: HookCachePolicy;
 }
 
 function splitShellCommandSegments(command: string): string[] {
@@ -115,6 +120,23 @@ function commandMatchesPolicy(
   return false;
 }
 
+function parseCdTarget(segment: string): string | null {
+  const match = /^cd\s+(.+)$/.exec(segment.trim());
+  if (!match) return null;
+
+  const rawTarget = match[1].trim();
+  if (rawTarget.length === 0) return null;
+
+  if (
+    (rawTarget.startsWith('"') && rawTarget.endsWith('"')) ||
+    (rawTarget.startsWith("'") && rawTarget.endsWith("'"))
+  ) {
+    return rawTarget.slice(1, -1);
+  }
+
+  return rawTarget;
+}
+
 const CACHE_POLICIES: ReadonlyArray<HookCachePolicy> = [
   {
     id: "pnpm-install",
@@ -193,22 +215,63 @@ export function detectDependencyFiles(
   return detectHookCachePolicy(command)?.files ?? null;
 }
 
+function resolvePolicyMatches(
+  command: string,
+  cwd: string,
+): ResolvedPolicyMatch[] {
+  const policy = detectHookCachePolicy(command);
+  if (!policy) return [];
+
+  const matches: ResolvedPolicyMatch[] = [];
+  let currentCwd = cwd;
+
+  // Track `cd <subdir> && ...` so cache keys follow the directory that the hook
+  // actually mutates, rather than always reading dependency files at the root.
+  for (const segment of splitShellCommandSegments(command)) {
+    const normalized = stripLeadingShellEnv(segment);
+    if (normalized.length === 0) continue;
+
+    const cdTarget = parseCdTarget(normalized);
+    if (cdTarget) {
+      currentCwd = resolve(currentCwd, cdTarget);
+      continue;
+    }
+
+    if (policy.match(normalized)) {
+      matches.push({ cwd: currentCwd, policy });
+    }
+  }
+
+  if (matches.length === 0) {
+    matches.push({ cwd, policy });
+  }
+
+  return matches;
+}
+
 export function computeFingerprint(
   command: string,
   cwd: string,
 ): string | null {
-  const depFiles = detectDependencyFiles(command);
-  if (!depFiles) return null;
+  const matches = resolvePolicyMatches(command, cwd);
+  if (matches.length === 0) return null;
 
   const hash = createHash("sha256");
   hash.update(command);
 
-  for (const file of depFiles) {
-    const filePath = join(cwd, file);
-    if (existsSync(filePath)) {
-      hash.update(readFileSync(filePath));
-    } else {
-      hash.update(`MISSING:${file}`);
+  for (const match of matches) {
+    const baseDir = relative(cwd, match.cwd) || ".";
+    hash.update(`CWD:${baseDir}`);
+
+    for (const file of match.policy.files) {
+      const filePath = join(match.cwd, file);
+      const fileKey = `${baseDir}/${file}`;
+      if (existsSync(filePath)) {
+        hash.update(fileKey);
+        hash.update(readFileSync(filePath));
+      } else {
+        hash.update(`MISSING:${fileKey}`);
+      }
     }
   }
 

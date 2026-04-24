@@ -231,6 +231,31 @@ describe("computeFingerprint", () => {
     rmSync(dir, { recursive: true });
   });
 
+  it("changes when subdir install dependencies change", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
+    mkdirSync(join(dir, "packages", "api"), { recursive: true });
+    writeFileSync(join(dir, "package.json"), '{"name":"root"}');
+    writeFileSync(join(dir, "pnpm-lock.yaml"), "root-lockfile");
+    writeFileSync(join(dir, "packages", "api", "package.json"), '{"name":"api"}');
+    writeFileSync(
+      join(dir, "packages", "api", "pnpm-lock.yaml"),
+      "api-lockfile-v1",
+    );
+
+    const command = "cd packages/api && pnpm install --frozen-lockfile";
+    const fp1 = computeFingerprint(command, dir);
+
+    writeFileSync(
+      join(dir, "packages", "api", "pnpm-lock.yaml"),
+      "api-lockfile-v2",
+    );
+    const fp2 = computeFingerprint(command, dir);
+
+    assert.notEqual(fp1, fp2);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("changes when codegen inputs change", () => {
     const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
     writeFileSync(join(dir, "package.json"), '{"name":"test"}');
@@ -245,6 +270,34 @@ describe("computeFingerprint", () => {
     assert.notEqual(fp1, fp2);
 
     rmSync(dir, { recursive: true });
+  });
+
+  it("changes when subdir codegen inputs change", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
+    mkdirSync(join(dir, "packages", "web"), { recursive: true });
+    writeFileSync(join(dir, "package.json"), '{"name":"root"}');
+    writeFileSync(join(dir, "packages", "web", "package.json"), '{"name":"web"}');
+    writeFileSync(
+      join(dir, "packages", "web", "codegen.yml"),
+      "schema: schema.graphql",
+    );
+    writeFileSync(
+      join(dir, "packages", "web", "schema.graphql"),
+      "type Query { hello: String }",
+    );
+
+    const command = "cd packages/web && pnpm run codegen";
+    const fp1 = computeFingerprint(command, dir);
+
+    writeFileSync(
+      join(dir, "packages", "web", "schema.graphql"),
+      "type Query { hello: String, world: String }",
+    );
+    const fp2 = computeFingerprint(command, dir);
+
+    assert.notEqual(fp1, fp2);
+
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 
@@ -383,6 +436,48 @@ describe("shouldSkipHook / recordHookSuccess", () => {
       shouldSkipHook("cd . && CI=1 pnpm install --frozen-lockfile", cwd, cacheDir),
       false,
     );
+  });
+
+  it("does not skip subdir install hooks after subdir dependencies change", () => {
+    mkdirSync(join(cwd, "packages", "api"), { recursive: true });
+    writeFileSync(join(cwd, "packages", "api", "package.json"), '{"name":"api"}');
+    writeFileSync(
+      join(cwd, "packages", "api", "pnpm-lock.yaml"),
+      "api-lockfile-v1",
+    );
+
+    const command = "cd packages/api && pnpm install --frozen-lockfile";
+    recordHookSuccess(command, cwd, cacheDir);
+    assert.equal(shouldSkipHook(command, cwd, cacheDir), true);
+
+    writeFileSync(
+      join(cwd, "packages", "api", "pnpm-lock.yaml"),
+      "api-lockfile-v2",
+    );
+    assert.equal(shouldSkipHook(command, cwd, cacheDir), false);
+  });
+
+  it("does not skip subdir codegen hooks after subdir inputs change", () => {
+    mkdirSync(join(cwd, "packages", "web"), { recursive: true });
+    writeFileSync(join(cwd, "packages", "web", "package.json"), '{"name":"web"}');
+    writeFileSync(
+      join(cwd, "packages", "web", "codegen.yml"),
+      "schema: schema.graphql",
+    );
+    writeFileSync(
+      join(cwd, "packages", "web", "schema.graphql"),
+      "type Query { hello: String }",
+    );
+
+    const command = "cd packages/web && pnpm run codegen";
+    recordHookSuccess(command, cwd, cacheDir);
+    assert.equal(shouldSkipHook(command, cwd, cacheDir), true);
+
+    writeFileSync(
+      join(cwd, "packages", "web", "schema.graphql"),
+      "type Query { hello: String, world: String }",
+    );
+    assert.equal(shouldSkipHook(command, cwd, cacheDir), false);
   });
 });
 
