@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
 import type { Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
+import { pickTaskUpdate } from "../ws/update-payloads.js";
 import type { WorkflowHookResult } from "../workflow/hooks.js";
 
 export type SpawnFailureCode =
@@ -195,8 +196,13 @@ export function handleSpawnFailure(
   ).run(task.id, logMessage);
 
   invalidateCaches(options.cache);
-  const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
-  ws.broadcast("task_update", updatedTask ?? { id: task.id, status: "human_review", completed_at: now });
+  ws.broadcast(
+    "task_update",
+    pickTaskUpdate(
+      { id: task.id, status: "human_review", started_at: null, completed_at: now, updated_at: now },
+      ["status", "started_at", "completed_at", "updated_at"],
+    ),
+  );
 
   return {
     handled: true,
