@@ -314,4 +314,287 @@ describe("createWsHub", () => {
     assert.equal(JSON.parse(ws.sent[1]!).payload.id, "task-2");
     assert.equal(JSON.parse(ws.sent[2]!).payload.id, "task-3");
   });
+
+  it("sends non-batched event types immediately without buffering", () => {
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_created", { id: "task-1", title: "new" });
+    hub.broadcast("task_created", { id: "task-2", title: "another" });
+    hub.broadcast("task_created", { id: "task-3", title: "third" });
+
+    assert.equal(ws.sent.length, 3);
+  });
+
+  it("does not deduplicate non-DEDUP_TYPES even with identical payloads", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+    hub.subscribeClientToTask(ws as never, "task-1");
+
+    const payload = { task_id: "task-1", kind: "stdout", message: "same" };
+
+    hub.broadcast("cli_output", payload, { taskId: "task-1" });
+    assert.equal(ws.sent.length, 1);
+
+    t.mock.timers.tick(80);
+
+    hub.broadcast("cli_output", payload, { taskId: "task-1" });
+    assert.equal(ws.sent.length, 2);
+  });
+
+  it("does not deduplicate DEDUP_TYPES when payload lacks an id field", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    t.mock.timers.tick(50);
+
+    hub.broadcast("task_update", { status: "in_progress" });
+    assert.equal(ws.sent.length, 2);
+  });
+
+  it("skips clients with closed readyState", () => {
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws1 = new FakeWebSocket();
+    const ws2 = new FakeWebSocket();
+
+    hub.addClient(ws1 as never);
+    hub.addClient(ws2 as never);
+
+    ws1.readyState = 3; // CLOSED
+    hub.broadcast("task_created", { id: "task-1" });
+
+    assert.equal(ws1.sent.length, 0);
+    assert.equal(ws2.sent.length, 1);
+  });
+
+  it("includes type, payload, and ts in every sent message", () => {
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+    hub.broadcast("task_created", { id: "task-1", title: "test" });
+
+    assert.equal(ws.sent.length, 1);
+    const msg = JSON.parse(ws.sent[0]!);
+    assert.equal(msg.type, "task_created");
+    assert.deepEqual(msg.payload, { id: "task-1", title: "test" });
+    assert.equal(typeof msg.ts, "number");
+  });
+
+  it("removed client does not receive subsequent broadcasts", () => {
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+    hub.broadcast("task_created", { id: "task-1" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.removeClient(ws as never);
+    hub.broadcast("task_created", { id: "task-2" });
+    assert.equal(ws.sent.length, 1);
+  });
+
+  it("coalesces agent_status by entity id within batch window", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("agent_status", { id: "agent-1", status: "idle" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("agent_status", { id: "agent-1", status: "working" });
+    hub.broadcast("agent_status", { id: "agent-1", status: "busy" });
+
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 2);
+    assert.equal(JSON.parse(ws.sent[1]!).payload.status, "busy");
+  });
+
+  it("coalesces different entity ids independently within same batch window", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "qa_testing" });
+    hub.broadcast("task_update", { id: "task-2", status: "in_progress" });
+    hub.broadcast("task_update", { id: "task-1", status: "done" });
+    hub.broadcast("task_update", { id: "task-2", status: "done" });
+
+    t.mock.timers.tick(50);
+
+    assert.equal(ws.sent.length, 3);
+    const flushed1 = JSON.parse(ws.sent[1]!).payload;
+    const flushed2 = JSON.parse(ws.sent[2]!).payload;
+    assert.equal(flushed1.id, "task-1");
+    assert.equal(flushed1.status, "done");
+    assert.equal(flushed2.id, "task-2");
+    assert.equal(flushed2.status, "done");
+  });
+
+  it("maintains separate batch windows for different taskId-scoped events", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+    hub.subscribeClientToTask(ws as never, "task-1");
+    hub.subscribeClientToTask(ws as never, "task-2");
+
+    hub.broadcast("cli_output", { message: "a" }, { taskId: "task-1" });
+    hub.broadcast("cli_output", { message: "b" }, { taskId: "task-2" });
+
+    assert.equal(ws.sent.length, 2);
+
+    hub.broadcast("cli_output", { message: "c" }, { taskId: "task-1" });
+    hub.broadcast("cli_output", { message: "d" }, { taskId: "task-2" });
+
+    assert.equal(ws.sent.length, 2);
+
+    t.mock.timers.tick(80);
+
+    assert.equal(ws.sent.length, 4);
+    const batch1 = JSON.parse(ws.sent[2]!).payload as Array<{ message: string }>;
+    const batch2 = JSON.parse(ws.sent[3]!).payload as Array<{ message: string }>;
+    assert.deepEqual(batch1.map((p) => p.message), ["c"]);
+    assert.deepEqual(batch2.map((p) => p.message), ["d"]);
+  });
+
+  it("drops oldest items when batch queue exceeds max size", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+    hub.subscribeClientToTask(ws as never, "task-1");
+
+    hub.broadcast("cli_output", { message: "first" }, { taskId: "task-1" });
+    assert.equal(ws.sent.length, 1);
+
+    for (let i = 0; i < 65; i++) {
+      hub.broadcast("cli_output", { message: `item-${i}` }, { taskId: "task-1" });
+    }
+
+    t.mock.timers.tick(80);
+    assert.equal(ws.sent.length, 2);
+    const flushed = JSON.parse(ws.sent[1]!).payload as Array<{ message: string }>;
+    assert.equal(flushed.length, 60);
+    assert.equal(flushed[0]!.message, "item-5");
+    assert.equal(flushed[59]!.message, "item-64");
+  });
+
+  it("does not flush after dispose is called", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+    hub.subscribeClientToTask(ws as never, "task-1");
+
+    hub.broadcast("cli_output", { message: "first" }, { taskId: "task-1" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("cli_output", { message: "second" }, { taskId: "task-1" });
+
+    hub.dispose();
+
+    t.mock.timers.tick(80);
+    assert.equal(ws.sent.length, 1);
+  });
+
+  it("dedup applies across all clients, not per-client", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws1 = new FakeWebSocket();
+    const ws2 = new FakeWebSocket();
+
+    hub.addClient(ws1 as never);
+    hub.addClient(ws2 as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws1.sent.length, 1);
+    assert.equal(ws2.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    t.mock.timers.tick(50);
+    assert.equal(ws1.sent.length, 1);
+    assert.equal(ws2.sent.length, 1);
+  });
+
+  it("dedup resets when payload changes, allowing subsequent identical sends", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "done" });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 2);
+
+    hub.broadcast("task_update", { id: "task-1", status: "done" });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 2);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 3);
+  });
+
+  it("coalesced flush suppresses when final state matches last delivered", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const hub = createWsHub();
+    hubs.push(hub);
+    const ws = new FakeWebSocket();
+
+    hub.addClient(ws as never);
+
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+    assert.equal(ws.sent.length, 1);
+
+    hub.broadcast("task_update", { id: "task-1", status: "qa_testing" });
+    hub.broadcast("task_update", { id: "task-1", status: "in_progress" });
+
+    t.mock.timers.tick(50);
+    // Coalesced value is "in_progress" which matches lastDelivered — dedup suppresses
+    assert.equal(ws.sent.length, 1);
+
+    // A genuinely new state still goes through
+    hub.broadcast("task_update", { id: "task-1", status: "done" });
+    t.mock.timers.tick(50);
+    assert.equal(ws.sent.length, 2);
+    assert.equal(JSON.parse(ws.sent[1]!).payload.status, "done");
+  });
 });
