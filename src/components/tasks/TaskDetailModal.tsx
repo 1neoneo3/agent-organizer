@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { PanelLeft, PanelRight } from "lucide-react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
@@ -11,6 +11,7 @@ import { buildAgentViewState } from "./agent-view.js";
 import { getResumeActionState } from "./task-resume.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
+import { FEEDBACK_MAX_LENGTH } from "./feedback-validation.js";
 
 /**
  * Layout mode for the task detail view.
@@ -152,12 +153,90 @@ export function TaskDetailModal({
   const [sendingFeedback, setSendingFeedback] = useState(false);
   const [refinementFeedback, setRefinementFeedback] = useState("");
   const [sendingRefinementFeedback, setSendingRefinementFeedback] = useState(false);
+  const [refinementFeedbackError, setRefinementFeedbackError] = useState<string | null>(null);
+  const [refinementFeedbackSent, setRefinementFeedbackSent] = useState(false);
+  const [actionLoading, setActionLoading] = useState<"approve" | "reject" | "split" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const feedbackSentTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
   const agent = task.assigned_agent_id ? agentView.agentById.get(task.assigned_agent_id) : undefined;
   const idleAgents = agentView.idleAgents;
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
   const roleLabel = agent ? agentView.roleLabelById.get(agent.id) ?? null : null;
   const feedbackUi = getTaskFeedbackUi(task.status);
+
+  useEffect(() => {
+    setActionError(null);
+    setActionLoading(null);
+    setRefinementFeedbackError(null);
+    setRefinementFeedbackSent(false);
+    setRefinementFeedback("");
+  }, [task.id]);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackSentTimerRef.current) clearTimeout(feedbackSentTimerRef.current);
+    };
+  }, []);
+
+  const handleApprove = useCallback(async () => {
+    setActionLoading("approve");
+    setActionError(null);
+    try {
+      await approveTask(task.id);
+    } catch {
+      setActionError("Failed to approve plan. Please try again.");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [task.id]);
+
+  const handleReject = useCallback(async () => {
+    setActionLoading("reject");
+    setActionError(null);
+    try {
+      await rejectTask(task.id);
+    } catch {
+      setActionError("Failed to reject plan. Please try again.");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [task.id]);
+
+  const handleSplit = useCallback(async () => {
+    if (!confirm("Split this plan into individual tasks? The parent task will be marked as done.")) return;
+    setActionLoading("split");
+    setActionError(null);
+    try {
+      await splitTask(task.id);
+    } catch {
+      setActionError("Failed to split plan. Please try again.");
+    } finally {
+      setActionLoading(null);
+    }
+  }, [task.id]);
+
+  const handleSendRefinementFeedback = useCallback(async () => {
+    const trimmed = refinementFeedback.trim();
+    if (!trimmed || sendingRefinementFeedback) return;
+    if (trimmed.length > FEEDBACK_MAX_LENGTH) {
+      setRefinementFeedbackError(`Feedback exceeds ${FEEDBACK_MAX_LENGTH.toLocaleString()} character limit.`);
+      return;
+    }
+    setSendingRefinementFeedback(true);
+    setRefinementFeedbackError(null);
+    try {
+      await sendTaskFeedback(task.id, trimmed);
+      setRefinementFeedback("");
+      setRefinementFeedbackSent(true);
+      if (feedbackSentTimerRef.current) clearTimeout(feedbackSentTimerRef.current);
+      feedbackSentTimerRef.current = setTimeout(() => setRefinementFeedbackSent(false), 2000);
+    } catch {
+      setRefinementFeedbackError("Failed to send revision request. Please try again.");
+    } finally {
+      setSendingRefinementFeedback(false);
+    }
+  }, [refinementFeedback, sendingRefinementFeedback, task.id]);
 
   const handleSendFeedback = async () => {
     if (!feedbackText.trim()) return;
@@ -527,66 +606,82 @@ export function TaskDetailModal({
                 zIndex: 1,
               }}
             >
+              {actionError && (
+                <div style={{ fontSize: "12px", color: "var(--status-cancelled)", padding: "6px 8px", background: "var(--bg-tertiary)", borderRadius: "6px", border: "1px solid var(--status-cancelled)" }}>
+                  {actionError}
+                </div>
+              )}
               <div style={{ display: "flex", gap: "8px" }}>
                 <button
-                  onClick={async () => { await approveTask(task.id); }}
+                  onClick={handleApprove}
+                  disabled={actionLoading !== null}
                   className="eb-btn eb-btn--primary"
-                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", opacity: actionLoading !== null ? 0.5 : 1 }}
                 >
-                  Approve Plan
+                  {actionLoading === "approve" ? "..." : "Approve Plan"}
                 </button>
                 <button
-                  onClick={async () => {
-                    if (!confirm("Split this plan into individual tasks? The parent task will be marked as done.")) return;
-                    await splitTask(task.id);
-                  }}
+                  onClick={handleSplit}
+                  disabled={actionLoading !== null}
                   className="eb-btn"
-                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", background: "var(--status-refinement)", color: "#fff" }}
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", background: "var(--status-refinement)", color: "#fff", opacity: actionLoading !== null ? 0.5 : 1 }}
                 >
-                  Split into Tasks
+                  {actionLoading === "split" ? "..." : "Split into Tasks"}
                 </button>
                 <button
-                  onClick={async () => { await rejectTask(task.id); }}
+                  onClick={handleReject}
+                  disabled={actionLoading !== null}
                   className="eb-btn eb-btn--danger"
-                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", opacity: actionLoading !== null ? 0.5 : 1 }}
                 >
-                  Reject Plan
+                  {actionLoading === "reject" ? "..." : "Reject Plan"}
                 </button>
               </div>
+              {refinementFeedbackError && (
+                <div style={{ fontSize: "12px", color: "var(--status-cancelled)", padding: "6px 8px", background: "var(--bg-tertiary)", borderRadius: "6px", border: "1px solid var(--status-cancelled)" }}>
+                  {refinementFeedbackError}
+                </div>
+              )}
+              {refinementFeedbackSent && (
+                <div style={{ fontSize: "12px", color: "var(--status-done)", padding: "6px 8px", background: "var(--bg-tertiary)", borderRadius: "6px", border: "1px solid var(--status-done)" }}>
+                  Revision request sent successfully.
+                </div>
+              )}
               <div style={{ display: "flex", gap: "6px" }}>
-                <textarea
-                  value={refinementFeedback}
-                  onChange={(e) => setRefinementFeedback(e.target.value)}
-                  placeholder="Request changes to the plan..."
-                  rows={2}
-                  style={{
-                    flex: 1,
-                    background: "var(--bg-tertiary)",
-                    border: "1px solid var(--border-default)",
-                    borderRadius: "6px",
-                    padding: "8px",
-                    fontSize: "12px",
-                    color: "var(--text-primary)",
-                    resize: "vertical",
-                    outline: "none",
-                  }}
-                />
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <textarea
+                    value={refinementFeedback}
+                    onChange={(e) => {
+                      setRefinementFeedback(e.target.value);
+                      setRefinementFeedbackError(null);
+                    }}
+                    placeholder="Request changes to the plan..."
+                    rows={2}
+                    maxLength={FEEDBACK_MAX_LENGTH}
+                    style={{
+                      width: "100%",
+                      background: "var(--bg-tertiary)",
+                      border: `1px solid ${refinementFeedbackError ? "var(--status-cancelled)" : "var(--border-default)"}`,
+                      borderRadius: "6px",
+                      padding: "8px",
+                      fontSize: "12px",
+                      color: "var(--text-primary)",
+                      resize: "vertical",
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", fontSize: "10px", color: refinementFeedback.length > FEEDBACK_MAX_LENGTH * 0.9 ? "var(--status-cancelled)" : "var(--text-tertiary)" }}>
+                    {refinementFeedback.length.toLocaleString()}/{FEEDBACK_MAX_LENGTH.toLocaleString()}
+                  </div>
+                </div>
                 <button
-                  onClick={async () => {
-                    if (!refinementFeedback.trim()) return;
-                    setSendingRefinementFeedback(true);
-                    try {
-                      await sendTaskFeedback(task.id, refinementFeedback.trim());
-                      setRefinementFeedback("");
-                    } finally {
-                      setSendingRefinementFeedback(false);
-                    }
-                  }}
+                  onClick={handleSendRefinementFeedback}
                   disabled={!refinementFeedback.trim() || sendingRefinementFeedback}
                   className="eb-btn eb-btn--primary"
-                  style={{ alignSelf: "flex-end", fontSize: "12px", padding: "8px 16px", opacity: (!refinementFeedback.trim() || sendingRefinementFeedback) ? 0.5 : 1 }}
+                  style={{ alignSelf: "flex-start", fontSize: "12px", padding: "8px 16px", opacity: (!refinementFeedback.trim() || sendingRefinementFeedback) ? 0.5 : 1 }}
                 >
-                  {sendingRefinementFeedback ? "..." : "Revise"}
+                  {sendingRefinementFeedback ? "..." : (refinementFeedbackSent ? "Sent!" : "Revise")}
                 </button>
               </div>
             </div>
