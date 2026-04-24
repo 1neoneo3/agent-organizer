@@ -147,7 +147,7 @@ export function createWsHub(): WsHub {
       }
     }
     if (delivered > 0) {
-      recordWsBroadcast(byteLength * delivered);
+      recordWsBroadcast(byteLength * delivered, type);
       if (dedupKey && payloadHash) {
         lastDelivered.set(dedupKey, payloadHash);
         if (lastDelivered.size > 2000) {

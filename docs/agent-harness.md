@@ -204,6 +204,16 @@ after_run: ["npm run lint"]
 ---
 ```
 
+### Hook dependency cache
+
+- `before_run` / `after_run` の hook は `data/hook-cache/` に成功時の fingerprint を保存する
+- 同じ command と同じ入力 fingerprint なら hook は `SKIPPED (cached)` になる
+- fingerprint には command 文字列も含まれるため、オプション変更だけでも invalidate される
+- 現在の主な対象:
+  - install 系: `package.json` + lockfile / requirements 系
+  - codegen 系: `codegen.*`, `graphql.config.*`, `schema.graphql`, `openapi.*` などの代表的な入力
+- task log には `invalidate on ... changes` が出るので、どのファイル変更で再実行されるか追跡できる
+
 ## 今後の拡張候補
 
 | 機能 | 概要 | 参考 |

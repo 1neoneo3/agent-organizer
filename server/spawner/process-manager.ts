@@ -41,10 +41,14 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import { recordDbLogInsertMs, recordStdoutChunkMs } from "../perf/metrics.js";
 import { getHeartbeatManager } from "./heartbeat-manager.js";
+import { getLogBatchWriter } from "../db/log-batch-writer.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
-import { runWorkflowHooks } from "../workflow/hooks.js";
+import {
+  runWorkflowHooks,
+  type WorkflowHookResult,
+} from "../workflow/hooks.js";
 import {
   SpawnFailureError,
   classifyRuntimeFailure,
@@ -61,6 +65,27 @@ const pendingFeedback = new Map<string, { message: string; previousStatus: strin
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
+
+function formatWorkflowHookLog(
+  phase: "before_run" | "after_run",
+  result: WorkflowHookResult,
+  failureLabel: "FAILED" | "WARNING",
+  outputLimit?: number,
+): string {
+  const status = result.skipped
+    ? "SKIPPED (cached)"
+    : result.ok
+      ? "OK"
+      : failureLabel;
+  const cacheDetails = result.cacheKeyFiles?.length
+    ? ` [cache:${result.cachePolicyId ?? "deps"}; invalidate on ${result.cacheKeyFiles.join(", ")} changes]`
+    : "";
+  const output = result.output
+    ? `\n${typeof outputLimit === "number" ? result.output.slice(0, outputLimit) : result.output}`
+    : "";
+
+  return `[${phase}] ${result.command}: ${status}${cacheDetails}${output}`;
+}
 
 /**
  * Coordination state for a parallel review panel. When `triggerAutoReview`
@@ -380,6 +405,38 @@ export function buildRefinementRevisionPrompt(feedback: string): string {
   ].join("\n");
 }
 
+const PLAN_START_MARKER = "---REFINEMENT PLAN---";
+const PLAN_END_MARKER = "---END REFINEMENT---";
+const PLAN_MARKER_BUFFER_SIZE = PLAN_START_MARKER.length - 1;
+
+export interface PlanBlockTracker {
+  update(text: string): void;
+  readonly isInsidePlanBlock: boolean;
+}
+
+export function createPlanBlockTracker(): PlanBlockTracker {
+  let tail = "";
+  let inside = false;
+
+  return {
+    update(text: string): void {
+      const combined = tail + text;
+      if (combined.includes(PLAN_START_MARKER)) {
+        inside = true;
+      }
+      if (combined.includes(PLAN_END_MARKER)) {
+        inside = false;
+      }
+      tail = combined.length > PLAN_MARKER_BUFFER_SIZE
+        ? combined.slice(-PLAN_MARKER_BUFFER_SIZE)
+        : combined;
+    },
+    get isInsidePlanBlock(): boolean {
+      return inside;
+    },
+  };
+}
+
 /**
  * Read all refinement-stage assistant logs for a task since `spawnStartedAt`
  * and decide whether the run produced a canonical plan, a markerless
@@ -394,6 +451,7 @@ export function extractRefinementPlanFromLogs(
   db: DatabaseSync,
   taskId: string,
   spawnStartedAt: number,
+  inMemoryAssistantLogs?: string[],
 ): RefinementPlanExtractionResult {
   const refLogs = db
     .prepare(
@@ -406,7 +464,10 @@ export function extractRefinementPlanFromLogs(
     )
     .all(taskId, spawnStartedAt) as Array<{ message: string }>;
 
-  const combined = refLogs.map((l) => l.message).join("\n");
+  const allMessages = inMemoryAssistantLogs
+    ? [...refLogs.map((l) => l.message), ...inMemoryAssistantLogs]
+    : refLogs.map((l) => l.message);
+  const combined = allMessages.join("\n");
   // Match ALL plan blocks and take the LAST one. Agents sometimes emit
   // a draft plan, then a revised final plan in the same run; taking the
   // first match would freeze the draft. Using the last match aligns with
@@ -855,17 +916,18 @@ export async function spawnAgent(
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
   const workspace = prepareTaskWorkspace(task, workflow, db);
+  const hookCacheDir = join("data", "hook-cache");
 
   // Run before_run hooks (env setup, dependency install, etc.)
   if (workflow?.beforeRun.length && !isContinue) {
-    const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd);
+    const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd, { cacheDir: hookCacheDir });
     const logBefore = db.prepare(
       "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
     );
     for (const hr of beforeResults) {
       logBefore.run(
         task.id,
-        `[before_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`,
+        formatWorkflowHookLog("before_run", hr, "FAILED", 500),
         spawnStage,
         agent.id,
       );
@@ -1001,6 +1063,8 @@ export async function spawnAgent(
 
   // Flag to stop processing stdout after an interactive prompt is detected and process killed
   let interactivePromptKilled = false;
+  let killChunkAssistantMessages: string[] = [];
+  const planBlockTracker = createPlanBlockTracker();
 
   // Subtask tracking
   const subtaskMap = new Map<string, string>(); // toolUseId -> subtaskId
@@ -1260,15 +1324,21 @@ export async function spawnAgent(
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
           insertLogStmt.run(task.id, "system", `Interactive prompt detected: ${interactivePrompt.promptType} (tool_use_id: ${interactivePrompt.toolUseId}). Killing process to await user response.`, spawnStage, agent.id);
 
-          // Kill the process so it can't auto-resolve the prompt
           interactivePromptKilled = true;
+          killChunkAssistantMessages = classified.filter((e) => e.kind === "assistant").map((e) => e.message);
+          if (isRefinementRun) persistRefinementPlanFromCurrentRun(killChunkAssistantMessages);
           try { child.kill("SIGTERM"); } catch { /* already dead */ }
           break; // Stop processing remaining lines in this chunk
         }
 
+        // Track refinement plan block boundaries across streaming chunks
+        if (event && event.kind === "assistant") {
+          planBlockTracker.update(event.message);
+        }
+
         // Text-based interactive prompt detection (for Codex/Gemini/any provider)
-        // Only check "assistant" kind events — agent's direct text output
-        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id)) {
+        // Only check "assistant" kind events outside refinement plan blocks
+        if (event && event.kind === "assistant" && !planBlockTracker.isInsidePlanBlock && !pendingInteractivePrompts.has(task.id)) {
           const textPrompt = detectTextInteractivePrompt(event.message);
           if (textPrompt) {
             const entry = { data: textPrompt, createdAt: Date.now() };
@@ -1278,6 +1348,8 @@ export async function spawnAgent(
             insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`, spawnStage, agent.id);
 
             interactivePromptKilled = true;
+            killChunkAssistantMessages = classified.filter((e) => e.kind === "assistant").map((e) => e.message);
+            if (isRefinementRun) persistRefinementPlanFromCurrentRun(killChunkAssistantMessages);
             try { child.kill("SIGTERM"); } catch { /* already dead */ }
             break;
           }
@@ -1305,9 +1377,22 @@ export async function spawnAgent(
       return true;
     });
 
-    // Persist all entries
+    // Persist all entries via the shared batch writer
     if (deduped.length > 0) {
-      insertLogBatch(deduped);
+      const batchWriter = getLogBatchWriter();
+      if (batchWriter) {
+        for (const entry of deduped) {
+          batchWriter.enqueue({
+            taskId: task.id,
+            kind: entry.kind,
+            message: entry.message,
+            stage: spawnStage,
+            agentId: agent.id,
+          });
+        }
+      } else {
+        insertLogBatch(deduped);
+      }
       runtimeOutputTail = appendRuntimeFailureTail(
         runtimeOutputTail,
         deduped.map((entry) => entry.message).join("\n"),
@@ -1327,7 +1412,12 @@ export async function spawnAgent(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
     logStream.write(`[stderr] ${text}`);
-    insertStderrStmt.run(task.id, text, spawnStage, agent.id);
+    const stderrBatchWriter = getLogBatchWriter();
+    if (stderrBatchWriter) {
+      stderrBatchWriter.enqueue({ taskId: task.id, kind: "stderr", message: text, stage: spawnStage, agentId: agent.id });
+    } else {
+      insertStderrStmt.run(task.id, text, spawnStage, agent.id);
+    }
     runtimeStderrTail = appendRuntimeFailureTail(runtimeStderrTail, text);
     ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
 
@@ -1427,6 +1517,12 @@ export async function spawnAgent(
     getHeartbeatManager()?.unregisterTask(task.id);
     activeProcesses.delete(task.id);
     logStream.end();
+
+    // Flush any buffered log entries for this task before any close handler
+    // logic reads task_logs. This covers all downstream consumers:
+    // refinement plan extraction, executed commands extraction, GitHub URL
+    // extraction, context reset log queries, etc.
+    try { getLogBatchWriter()?.flushForTask(task.id); } catch { /* best-effort */ }
 
     // AO Phase 3: the parallel tester never drives task status. It only
     // records a [PARALLEL_TEST:DONE] marker so stage-pipeline can skip
@@ -1621,7 +1717,7 @@ export async function spawnAgent(
       const finishTime = Date.now();
       const restoreStatus = (options?.previousStatus ?? "in_progress") as Task["status"];
 
-      if (isRefinementRun && code === 0) {
+      if (isRefinementRun) {
         persistRefinementPlanFromCurrentRun();
       }
 
@@ -1712,20 +1808,28 @@ export async function spawnAgent(
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
     let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewRun, workflow) : "cancelled";
 
-    // Extract and store refinement plan when refinement agent completes.
-    // The extraction helper scopes by stage and spawn-start timestamp so
-    // that neither late logs from a prior run nor implementation-stage
-    // noise can contaminate the extracted plan. See
-    // `extractRefinementPlanFromLogs` for the query contract.
-    if (isRefinementRun && code === 0) {
+    // Extract and store refinement plan when a refinement agent exits
+    // — regardless of exit code. The agent may have been killed by
+    // interactive-prompt detection (false positive) or crashed after
+    // emitting the plan. The extraction helper scopes by stage and
+    // spawn-start timestamp so stale/cross-stage logs cannot bleed in,
+    // and the fallback guard inside persistRefinementPlanExtraction
+    // prevents overwriting a valid plan with markerless tail.
+    if (isRefinementRun) {
       persistRefinementPlanFromCurrentRun();
     }
 
     // Run after_run hooks (lint, format, etc.) — log failures as warnings but don't block progress
     if (code === 0 && workflow?.afterRun.length) {
-      const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd);
+      const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd, { cacheDir: hookCacheDir });
       for (const hr of hookResults) {
-        insertLogStmt.run(task.id, "system", `[after_run] ${hr.command}: ${hr.ok ? "OK" : "WARNING"}${hr.output ? `\n${hr.output}` : ""}`, spawnStage, agent.id);
+        insertLogStmt.run(
+          task.id,
+          "system",
+          formatWorkflowHookLog("after_run", hr, "WARNING"),
+          spawnStage,
+          agent.id,
+        );
       }
     }
 
@@ -1864,8 +1968,8 @@ export async function spawnAgent(
     // human_review: no agent trigger — waits for human approval via API
   }
 
-  function persistRefinementPlanFromCurrentRun(): void {
-    const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt);
+  function persistRefinementPlanFromCurrentRun(extraAssistantLogs?: string[]): void {
+    const extraction = extractRefinementPlanFromLogs(db, task.id, spawnStartedAt, extraAssistantLogs);
     // Stamp refinement_completed_at alongside refinement_plan on the canonical
     // path so future re-spawns can tell a finished refinement from a crashed /
     // markerless one. Also stamp planned_files for the file-conflict gate.
@@ -2085,14 +2189,27 @@ export function spawnSecondaryReviewer(
     }
 
     if (classified.length > 0) {
-      db.exec("BEGIN");
-      try {
+      const secBatchWriter = getLogBatchWriter();
+      if (secBatchWriter) {
         for (const entry of classified) {
-          insertLogStmt.run(task.id, entry.kind, entry.message, secondaryStage, agent.id);
+          secBatchWriter.enqueue({
+            taskId: task.id,
+            kind: entry.kind,
+            message: entry.message,
+            stage: secondaryStage,
+            agentId: agent.id,
+          });
         }
-        db.exec("COMMIT");
-      } catch {
-        db.exec("ROLLBACK");
+      } else {
+        db.exec("BEGIN");
+        try {
+          for (const entry of classified) {
+            insertLogStmt.run(task.id, entry.kind, entry.message, secondaryStage, agent.id);
+          }
+          db.exec("COMMIT");
+        } catch {
+          db.exec("ROLLBACK");
+        }
       }
       ws.broadcast(
         "cli_output",
@@ -2106,7 +2223,12 @@ export function spawnSecondaryReviewer(
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
     logStream.write(`[stderr:${role}] ${text}`);
-    insertLogStmt.run(task.id, "stderr", text, secondaryStage, agent.id);
+    const secStderrWriter = getLogBatchWriter();
+    if (secStderrWriter) {
+      secStderrWriter.enqueue({ taskId: task.id, kind: "stderr", message: text, stage: secondaryStage, agentId: agent.id });
+    } else {
+      insertLogStmt.run(task.id, "stderr", text, secondaryStage, agent.id);
+    }
   });
 
   child.on("error", () => {
@@ -2129,6 +2251,9 @@ export function spawnSecondaryReviewer(
     clearTimeout(hardTimer);
     session.secondaries.delete(agent.id);
     logStream.end();
+
+    // Flush buffered log entries for this task before any post-close processing
+    try { getLogBatchWriter()?.flushForTask(task.id); } catch { /* best-effort */ }
 
     const finishTime = Date.now();
     db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(finishTime, agent.id);

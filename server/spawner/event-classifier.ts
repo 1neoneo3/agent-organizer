@@ -112,8 +112,9 @@ function looksLikeCompletionSummary(text: string): boolean {
     /\[REVIEW:\w+:PASS\]/.test(text) ||
     /\[REVIEW:\w+:NEEDS_CHANGES/.test(text) ||
     (text.includes("レビューサマリー") && text.includes("### 判定")) ||
-    // Refinement plan output — not a user prompt
-    (text.includes("---REFINEMENT PLAN---") && text.includes("---END REFINEMENT---"))
+    // Refinement plan output — not a user prompt (start marker alone suffices
+    // because streaming chunks may arrive before the end marker)
+    text.includes("---REFINEMENT PLAN---")
   );
 }
 
@@ -150,54 +151,71 @@ function hasExplicitOptionsPrompt(text: string): boolean {
 }
 
 /**
+ * Strip complete refinement plan blocks from text so that plan prose
+ * doesn't interfere with prompt detection, while text outside the
+ * block (e.g. a trailing prompt) is still checked.
+ */
+function stripRefinementPlanBlocks(text: string): string {
+  return text.replace(/---REFINEMENT PLAN---[\s\S]*?---END REFINEMENT---/g, "").trim();
+}
+
+/**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
  *
  * This is a heuristic — it favors precision over recall to avoid false positives.
  * Only multi-sentence assistant messages are checked (short fragments are skipped).
+ *
+ * Complete refinement plan blocks are stripped before detection so that
+ * plan prose doesn't trigger false positives while trailing prompts
+ * outside the block are still caught. Streaming partial plan blocks
+ * (start marker only) are guarded by `looksLikeCompletionSummary` and
+ * the caller's `insideRefinementPlanBlock` flag.
  */
 export function detectTextInteractivePrompt(
-  assistantText: string
+  assistantText: string,
 ): InteractivePromptData | null {
+  const textToCheck = stripRefinementPlanBlocks(assistantText);
+
   // Skip very short messages — unlikely to be a genuine input request.
   // Threshold is low (10) because CJK languages pack more meaning per character.
-  if (assistantText.length < 10) return null;
+  if (textToCheck.length < 10) return null;
 
   // Strong override: an explicit "question + 2+ numbered options" block
   // is unambiguously a prompt. It wins over the completion-summary
   // guard because agents sometimes finish their report with a verdict
   // tag AND a final "what next?" decision list in the same message.
-  const explicitOptions = hasExplicitOptionsPrompt(assistantText);
+  const explicitOptions = hasExplicitOptionsPrompt(textToCheck);
 
-  if (!explicitOptions && looksLikeCompletionSummary(assistantText)) return null;
+  if (!explicitOptions && looksLikeCompletionSummary(textToCheck)) return null;
 
   if (explicitOptions) {
     return {
       promptType: "text_input_request",
       toolUseId: "",
-      detectedText: assistantText,
-      questions: [{ question: assistantText }],
+      detectedText: textToCheck,
+      questions: [{ question: textToCheck }],
     };
   }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
-    if (pattern.test(assistantText)) {
+    if (pattern.test(textToCheck)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",
-        detectedText: assistantText,
-        questions: [{ question: assistantText }],
+        detectedText: textToCheck,
+        questions: [{ question: textToCheck }],
       };
     }
   }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_EN) {
-    if (pattern.test(assistantText)) {
+    if (pattern.test(textToCheck)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",
-        detectedText: assistantText,
-        questions: [{ question: assistantText }],
+        detectedText: textToCheck,
+        questions: [{ question: textToCheck }],
       };
     }
   }
