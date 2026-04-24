@@ -218,9 +218,16 @@ function fetchTaskById(
   return db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
 }
 
-export function createTasksRouter(ctx: RuntimeContext): Router {
+type TasksRouterDeps = {
+  spawnAgent?: typeof spawnAgent;
+  queueFeedbackAndRestart?: typeof queueFeedbackAndRestart;
+};
+
+export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {}): Router {
   const router = Router();
   const { db, ws, cache } = ctx;
+  const taskSpawner = deps.spawnAgent ?? spawnAgent;
+  const feedbackRestarter = deps.queueFeedbackAndRestart ?? queueFeedbackAndRestart;
 
   async function invalidateTaskCaches(): Promise<void> {
     await cache.invalidatePattern("tasks:*");
@@ -352,7 +359,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       autoAssign: AUTO_ASSIGN_TASK_ON_CREATE,
       autoRun: AUTO_RUN_TASK_ON_CREATE,
       cache,
-      spawnAgent,
+      spawnAgent: taskSpawner,
     }) as Task;
     await invalidateTaskCaches();
     await cache.del("agents:all");
@@ -647,7 +654,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
 
     try {
-      const result = await spawnAgent(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
+      const result = await taskSpawner(db, ws, agent, { ...task, assigned_agent_id: agentId, auto_respawn_count: 0 }, { cache });
       res.json({ started: true, pid: result.pid });
     } catch (error) {
       const handled = handleSpawnFailure(db, ws, task.id, error, {
@@ -715,7 +722,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
     try {
-      const result = await spawnAgent(db, ws, agent, freshTask, { cache });
+      const result = await taskSpawner(db, ws, agent, freshTask, { cache });
       await invalidateTaskCaches();
       res.json({ resumed: true, pid: result.pid });
     } catch (error) {
@@ -799,7 +806,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(updatedTask.assigned_agent_id) as Agent | undefined;
       if (agent && agent.status === "idle") {
         setTimeout(() => {
-          spawnAgent(db, ws, agent, updatedTask, { cache }).catch((err) => {
+          taskSpawner(db, ws, agent, updatedTask, { cache }).catch((err) => {
             const handled = handleSpawnFailure(db, ws, updatedTask.id, err, {
               cache,
               source: "Refinement approval auto-run",
@@ -1155,7 +1162,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
         refinementTransitionDone = true;
       }
       // Running task: kill + respawn with --resume
-      const restarted = queueFeedbackAndRestart(task.id, content, previousStatus);
+      const restarted = feedbackRestarter(task.id, content, previousStatus);
       if (restarted) {
         if (isRefinementRevision) {
           const freshTask = fetchTaskById(db, task.id);
@@ -1195,12 +1202,14 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     // trigger logs both refinement→inbox and inbox→refinement with timestamps.
     // Skip when the running-process path above already recorded the transition
     // (queueFeedbackAndRestart returned false → fell through here).
-    if (previousStatus === "refinement" && !refinementTransitionDone) {
-      db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
-      db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-      ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
-      db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
+    if (previousStatus === "refinement") {
+      if (!refinementTransitionDone) {
+        db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+        ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
+        db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
+      }
     } else {
       // Manual feedback-rework is an explicit user intent — reset the
       // auto-respawn counter so a mid-rework crash gets a full retry budget.
@@ -1212,7 +1221,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     if (previousStatus === "refinement") {
       ws.broadcast("task_update", freshTask);
     }
-    spawnAgent(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
+    taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
         cache,
         source: "Feedback resume",
@@ -1289,7 +1298,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    spawnAgent(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true }).catch((err) => {
+    taskSpawner(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true }).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
         cache,
         source: "Interactive prompt resume",
