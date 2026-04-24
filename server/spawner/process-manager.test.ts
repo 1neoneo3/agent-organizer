@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import {
   buildRefinementRevisionPrompt,
+  clearPendingSpawn,
   createPlanBlockTracker,
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
   extractRefinementPlanFromLogs,
+  getPendingSpawns,
   isReviewRunTask,
   persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
+  spawnAgent,
+  tryStartPendingSpawn,
 } from "./process-manager.js";
 import type { Task } from "../types/runtime.js";
 
@@ -119,6 +126,83 @@ function insertLog(
     "INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
   ).run(taskId, kind, message, createdAt);
 }
+
+function insertAgent(db: DatabaseSync, overrides: { id?: string; status?: string } = {}): { id: string } {
+  const id = overrides.id ?? "agent-1";
+  db.prepare(
+    `INSERT INTO agents (
+      id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, status,
+      current_task_id, stats_tasks_done, created_at, updated_at, role, agent_type
+    ) VALUES (?, ?, 'claude', NULL, NULL, 'A', ?, NULL, 0, ?, ?, NULL, 'worker')`
+  ).run(
+    id,
+    `Agent ${id}`,
+    overrides.status ?? "idle",
+    1_000,
+    1_000,
+  );
+  return { id };
+}
+
+describe("pending spawn helpers", () => {
+  afterEach(() => {
+    clearPendingSpawn("pending-helper-task");
+  });
+
+  it("deduplicates overlapping preflight registration for the same task", () => {
+    assert.equal(tryStartPendingSpawn("pending-helper-task"), true);
+    assert.equal(tryStartPendingSpawn("pending-helper-task"), false);
+    assert.equal(getPendingSpawns().has("pending-helper-task"), true);
+  });
+
+  it("allows reuse after cleanup", () => {
+    assert.equal(tryStartPendingSpawn("pending-helper-task"), true);
+    assert.equal(clearPendingSpawn("pending-helper-task"), true);
+    assert.equal(getPendingSpawns().has("pending-helper-task"), false);
+    assert.equal(tryStartPendingSpawn("pending-helper-task"), true);
+  });
+});
+
+describe("spawnAgent preflight cleanup", () => {
+  it("clears pendingSpawns when workspace preparation throws before child spawn", async () => {
+    const db = createDb();
+    const tempProject = mkdtempSync(join(tmpdir(), "ao-preflight-fail-"));
+    try {
+      insertAgent(db, { id: "agent-preflight", status: "idle" });
+      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+      const task = insertTask(db, {
+        id: "task-preflight",
+        project_path: tempProject,
+        assigned_agent_id: "agent-preflight",
+      });
+
+      await assert.rejects(
+        spawnAgent(db, { broadcast: () => undefined, clients: new Set(), addClient: () => undefined, removeClient: () => undefined, subscribeClientToTask: () => undefined, unsubscribeClientFromTask: () => undefined, dispose: () => undefined } as never, {
+          id: "agent-preflight",
+          name: "Agent preflight",
+          cli_provider: "claude",
+          cli_model: null,
+          cli_reasoning_level: null,
+          avatar_emoji: "A",
+          status: "idle",
+          current_task_id: null,
+          stats_tasks_done: 0,
+          created_at: 1_000,
+          updated_at: 1_000,
+          role: null,
+          agent_type: "worker",
+          sprite_id: null,
+          personality: null,
+        } as never, task),
+      );
+
+      assert.equal(getPendingSpawns().has(task.id), false);
+    } finally {
+      rmSync(tempProject, { recursive: true, force: true });
+      db.close();
+    }
+  });
+});
 
 describe("extractGithubArtifactsFromLogs", () => {
   it("returns nulls when no GitHub URL appears in any log", () => {

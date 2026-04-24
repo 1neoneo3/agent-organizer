@@ -3,7 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import { SCHEMA_SQL } from "../db/schema.js";
-import { recoverInProgressOrphans, recoverStuckAutoStages } from "./jobs.js";
+import {
+  __resetPendingOrphanRespawnsForTests,
+  recoverInProgressOrphans,
+  recoverStuckAutoStages,
+} from "./jobs.js";
 import { createHookFailureFromCommands } from "../spawner/spawn-failures.js";
 
 // ---- Test doubles ---------------------------------------------------------
@@ -86,6 +90,7 @@ describe("recoverInProgressOrphans", () => {
   });
 
   afterEach(() => {
+    __resetPendingOrphanRespawnsForTests();
     db.close();
   });
 
@@ -344,6 +349,99 @@ describe("recoverInProgressOrphans", () => {
       auto_respawn_count: number;
     };
     assert.equal(row.auto_respawn_count, 0, "budget must stay at 0 throughout preflight");
+  });
+
+  it("does not issue duplicate auto-respawn attempts while a respawn preflight is still in flight", async () => {
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    let spawnCalls = 0;
+    let resolveSpawn: (() => void) | null = null;
+    const fakeSpawn = (() => {
+      spawnCalls += 1;
+      return new Promise<{ pid: number }>((resolve) => {
+        resolveSpawn = () => resolve({ pid: 1 });
+      });
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+
+    assert.equal(spawnCalls, 1, "respawn must stay single while preflight is unresolved");
+    const row = db.prepare("SELECT auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
+      auto_respawn_count: number;
+    };
+    assert.equal(row.auto_respawn_count, 1, "budget must only advance once during one preflight window");
+
+    const logs = db.prepare(
+      "SELECT COUNT(*) AS n FROM task_logs WHERE task_id = 't1' AND message LIKE 'Orphan recovery: auto-respawn attempt%'",
+    ).get() as { n: number };
+    assert.equal(logs.n, 1, "only one auto-respawn attempt log should be written");
+
+    if (!resolveSpawn) {
+      throw new Error("expected in-flight spawn resolver to be captured");
+    }
+    const finishSpawn = resolveSpawn as () => void;
+    finishSpawn();
+    await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it("allows a new auto-respawn only after the previous in-flight respawn settles", async () => {
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    let spawnCalls = 0;
+    let resolveFirstSpawn: (() => void) | null = null;
+    const fakeSpawn = (() => {
+      spawnCalls += 1;
+      if (spawnCalls === 1) {
+        return new Promise<{ pid: number }>((resolve) => {
+          resolveFirstSpawn = () => resolve({ pid: 1 });
+        });
+      }
+      return Promise.resolve({ pid: spawnCalls });
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+
+    assert.equal(spawnCalls, 1, "preflight window must suppress duplicate respawns");
+
+    if (!resolveFirstSpawn) {
+      throw new Error("expected first in-flight spawn resolver to be captured");
+    }
+    const finishFirstSpawn = resolveFirstSpawn as () => void;
+    finishFirstSpawn();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+
+    assert.equal(spawnCalls, 2, "next tick may retry only after the previous preflight settles");
+    const row = db.prepare("SELECT auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
+      auto_respawn_count: number;
+    };
+    assert.equal(row.auto_respawn_count, 2);
   });
 
   it("recovers a genuine orphan even when other tasks are in pendingSpawns", () => {

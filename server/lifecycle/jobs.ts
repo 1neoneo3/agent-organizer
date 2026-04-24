@@ -8,6 +8,7 @@ import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
 import type { Agent, Task } from "../types/runtime.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+const pendingOrphanRespawns = new Set<string>();
 
 // Orphan recovery thresholds for stages where an auto-agent should always be
 // running (auto-reviewer, auto-qa, auto-test-gen). Tasks
@@ -71,7 +72,7 @@ export function recoverInProgressOrphans(
 ): void {
   const spawnAgent = options.spawnAgent ?? defaultSpawnAgent;
   const maxAutoRespawn = options.maxAutoRespawn ?? ORPHAN_AUTO_RESPAWN_MAX;
-  const pendingSpawns = options.pending ?? new Set<string>();
+  const pendingSpawns = options.pending ?? getPendingSpawns();
 
   // Recover both in_progress and refinement orphans
   const orphanCandidates = db.prepare(
@@ -88,6 +89,7 @@ export function recoverInProgressOrphans(
   for (const task of orphanCandidates) {
     if (hasActive(active, task.id)) continue;
     if (pendingSpawns.has(task.id)) continue;
+    if (pendingOrphanRespawns.has(task.id)) continue;
 
     // Skip tasks awaiting interactive prompt (unless timed out)
     const pending = getPendingInteractivePrompt(task.id);
@@ -152,6 +154,7 @@ export function recoverInProgressOrphans(
       const respawnDecision = evaluateAutoRespawn(db, task, maxAutoRespawn);
 
       if (respawnDecision.kind === "respawn") {
+        pendingOrphanRespawns.add(task.id);
         if (task.assigned_agent_id) {
           db.prepare(
             "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
@@ -186,6 +189,8 @@ export function recoverInProgressOrphans(
           db.prepare(
             "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
           ).run(task.id, `Orphan recovery: auto-respawn failed: ${msg}. Will retry on next tick.`);
+        }).finally(() => {
+          pendingOrphanRespawns.delete(task.id);
         });
         continue;
       }
@@ -243,6 +248,10 @@ export function recoverInProgressOrphans(
     if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
     ws.broadcast("task_update", { id: task.id, status: "inbox" });
   }
+}
+
+export function __resetPendingOrphanRespawnsForTests(): void {
+  pendingOrphanRespawns.clear();
 }
 
 export function recoverStuckAutoStages(
