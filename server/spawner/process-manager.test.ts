@@ -1013,4 +1013,81 @@ describe("persistRefinementPlanExtraction", () => {
     // Second call overwrites the timestamp, which is fine — same plan.
     assert.equal(row.refinement_completed_at, 3_000);
   });
+
+  it("stamps refinement_revision_completed_at in fallback case when revision was requested", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tfallback-rev-stamp", status: "refinement" });
+    const existingPlan = "---REFINEMENT PLAN---\nOLD\n---END REFINEMENT---";
+    db.prepare(
+      `UPDATE tasks
+       SET refinement_plan = ?,
+           refinement_completed_at = 1000,
+           refinement_revision_requested_at = 3000,
+           refinement_revision_completed_at = NULL
+       WHERE id = ?`,
+    ).run(existingPlan, task.id);
+
+    persistRefinementPlanExtraction(db, task.id, { kind: "fallback", plan: "markerless output" }, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 5_000,
+    });
+
+    const row = db.prepare(
+      "SELECT refinement_revision_completed_at, refinement_plan FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_revision_completed_at: number | null; refinement_plan: string | null };
+
+    assert.equal(row.refinement_plan, existingPlan, "existing plan preserved");
+    assert.equal(row.refinement_revision_completed_at, 5_000, "revision stamped as completed");
+  });
+
+  it("stamps refinement_revision_completed_at in empty case when revision was requested", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tempty-rev-stamp", status: "refinement" });
+    db.prepare(
+      `UPDATE tasks
+       SET refinement_plan = '---REFINEMENT PLAN---\nPLAN\n---END REFINEMENT---',
+           refinement_completed_at = 1000,
+           refinement_revision_requested_at = 3000,
+           refinement_revision_completed_at = NULL
+       WHERE id = ?`,
+    ).run(task.id);
+
+    persistRefinementPlanExtraction(db, task.id, { kind: "empty" }, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 5_000,
+    });
+
+    const row = db.prepare(
+      "SELECT refinement_revision_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_revision_completed_at: number | null };
+
+    assert.equal(row.refinement_revision_completed_at, 5_000, "revision stamped as completed even with empty extraction");
+  });
+
+  it("does not stamp refinement_revision_completed_at when no revision was requested", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tno-rev", status: "refinement" });
+    db.prepare(
+      `UPDATE tasks
+       SET refinement_plan = '---REFINEMENT PLAN---\nPLAN\n---END REFINEMENT---',
+           refinement_completed_at = 1000,
+           refinement_revision_requested_at = NULL,
+           refinement_revision_completed_at = NULL
+       WHERE id = ?`,
+    ).run(task.id);
+
+    persistRefinementPlanExtraction(db, task.id, { kind: "fallback", plan: "some output" }, {
+      stage: "refinement",
+      agentId: "agent-1",
+      now: 5_000,
+    });
+
+    const row = db.prepare(
+      "SELECT refinement_revision_completed_at FROM tasks WHERE id = ?",
+    ).get(task.id) as { refinement_revision_completed_at: number | null };
+
+    assert.equal(row.refinement_revision_completed_at, null, "must not stamp when no revision was requested");
+  });
 });

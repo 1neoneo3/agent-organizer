@@ -107,8 +107,15 @@ export function recoverInProgressOrphans(
     // process died before finalization could run.
     if (task.status === "refinement" && task.refinement_plan) {
       const result = db.prepare(
-        "UPDATE tasks SET completed_at = ?, updated_at = ? WHERE id = ? AND status = 'refinement' AND completed_at IS NULL",
-      ).run(now, now, task.id);
+        `UPDATE tasks
+         SET completed_at = ?,
+             refinement_revision_completed_at = CASE
+               WHEN refinement_revision_requested_at IS NOT NULL THEN ?
+               ELSE refinement_revision_completed_at
+             END,
+             updated_at = ?
+         WHERE id = ? AND status = 'refinement' AND completed_at IS NULL`,
+      ).run(now, now, now, task.id);
       if (result.changes === 0) continue;
 
       db.prepare(
@@ -123,7 +130,8 @@ export function recoverInProgressOrphans(
       }
 
       if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
-      ws.broadcast("task_update", { id: task.id, status: "refinement", completed_at: now });
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id);
+      ws.broadcast("task_update", freshTask ?? { id: task.id, status: "refinement", completed_at: now });
       continue;
     }
 

@@ -288,6 +288,42 @@ describe("recoverInProgressOrphans", () => {
       ),
     );
   });
+
+  it("broadcasts full task row for refinement orphan with plan", () => {
+    insertTask(db, { id: "t3", status: "refinement", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE tasks SET refinement_plan = 'the plan' WHERE id = 't3'").run();
+    const ws = createFakeWs();
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+
+    const taskUpdate = ws.events.find((e) => e.type === "task_update");
+    assert.ok(taskUpdate, "expected task_update broadcast");
+    const payload = taskUpdate!.payload as Record<string, unknown>;
+    assert.equal(payload.refinement_plan, "the plan", "broadcast must include refinement_plan");
+    assert.ok(payload.completed_at, "broadcast must include completed_at");
+    assert.equal(payload.status, "refinement");
+  });
+
+  it("stamps refinement_revision_completed_at for orphan with pending revision", () => {
+    const requestedAt = Date.now() - 60_000;
+    insertTask(db, { id: "t4", status: "refinement", assigned_agent_id: "agent-1" });
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = 'plan v2', refinement_revision_requested_at = ?, refinement_revision_completed_at = NULL WHERE id = 't4'",
+    ).run(requestedAt);
+    const ws = createFakeWs();
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+
+    const row = db.prepare(
+      "SELECT refinement_revision_completed_at FROM tasks WHERE id = 't4'",
+    ).get() as { refinement_revision_completed_at: number | null };
+    assert.ok(row.refinement_revision_completed_at !== null, "revision must be stamped as completed");
+    assert.ok(row.refinement_revision_completed_at! >= requestedAt, "completed_at must be after requested_at");
+
+    const taskUpdate = ws.events.find((e) => e.type === "task_update");
+    const payload = taskUpdate!.payload as Record<string, unknown>;
+    assert.ok(payload.refinement_revision_completed_at, "broadcast must include refinement_revision_completed_at");
+  });
 });
 
 // ---- recoverStuckAutoStages ----------------------------------------------

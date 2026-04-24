@@ -504,6 +504,10 @@ export function persistRefinementPlanExtraction(
   const updatePlanFallbackStmt = db.prepare(
     "UPDATE tasks SET refinement_plan = ? WHERE id = ?",
   );
+  const stampRevisionCompletedStmt = db.prepare(
+    `UPDATE tasks SET refinement_revision_completed_at = ?
+     WHERE id = ? AND refinement_revision_requested_at IS NOT NULL AND refinement_revision_completed_at IS NULL`,
+  );
   const insertLogStmt = db.prepare(
     "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
   );
@@ -530,6 +534,7 @@ export function persistRefinementPlanExtraction(
         context.stage,
         context.agentId,
       );
+      stampRevisionCompletedStmt.run(now, taskId);
       return;
     }
 
@@ -540,6 +545,7 @@ export function persistRefinementPlanExtraction(
       context.stage,
       context.agentId,
     );
+    stampRevisionCompletedStmt.run(now, taskId);
     return;
   }
 
@@ -553,6 +559,7 @@ export function persistRefinementPlanExtraction(
     context.stage,
     context.agentId,
   );
+  stampRevisionCompletedStmt.run(now, taskId);
 }
 
 export function extractGithubArtifactsFromLogs(
