@@ -8,6 +8,7 @@ import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
 import { getRefinementRevisionState } from "./task-refinement-state.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
+import { FEEDBACK_MAX_LENGTH, validateFeedbackContent } from "./feedback-validation.js";
 
 const SIZE_LABEL: Record<string, string> = {
   small: "S",
@@ -106,23 +107,35 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
   const [messageText, setMessageText] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (showMessageForm) inputRef.current?.focus();
   }, [showMessageForm]);
 
+  useEffect(() => {
+    setMessageError(null);
+  }, [task.id, task.status, showMessageForm]);
+
   const handleSendMessage = async () => {
-    if (!messageText.trim() || sending) return;
+    if (sending) return;
+    const validation = validateFeedbackContent(messageText);
+    if (validation.error) {
+      setMessageError(validation.error);
+      return;
+    }
+
     setSending(true);
+    setMessageError(null);
     try {
-      await sendTaskFeedback(task.id, messageText.trim());
+      await sendTaskFeedback(task.id, validation.content);
       setMessageText("");
       setSent(true);
       play("confirm");
       setTimeout(() => setSent(false), 1500);
-    } catch {
-      // silently fail
+    } catch (err) {
+      setMessageError(err instanceof Error ? err.message : "Failed to send feedback. Please try again.");
     } finally {
       setSending(false);
     }
@@ -622,31 +635,42 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
         {/* Message form */}
         {showMessageForm && (
           <div
-            style={{ marginTop: "6px", display: "flex", gap: "4px" }}
+            style={{ marginTop: "6px", display: "flex", flexDirection: "column", gap: "4px" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <input
-              ref={inputRef}
-              type="text"
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) handleSendMessage();
-                if (e.key === "Escape") setShowMessageForm(false);
-              }}
-              placeholder={task.status === "in_progress" ? "Feedback..." : "Message..."}
-              disabled={sending}
-              className="eb-input"
-              style={{ flex: 1, minWidth: 0, fontSize: "12px" }}
-            />
-            <button
-              onClick={handleSendMessage}
-              disabled={!messageText.trim() || sending}
-              className="eb-btn eb-btn--primary"
-              style={{ fontSize: "11px", padding: "3px 8px", opacity: (!messageText.trim() || sending) ? 0.5 : 1 }}
-            >
-              {sending ? "..." : sent ? "OK!" : "Send"}
-            </button>
+            {messageError && (
+              <div style={{ fontSize: "11px", color: "var(--status-cancelled)", padding: "6px 8px", background: "var(--bg-tertiary)", borderRadius: "6px", border: "1px solid var(--status-cancelled)" }}>
+                {messageError}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: "4px" }}>
+              <input
+                ref={inputRef}
+                type="text"
+                value={messageText}
+                onChange={(e) => {
+                  setMessageText(e.target.value);
+                  setMessageError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) handleSendMessage();
+                  if (e.key === "Escape") setShowMessageForm(false);
+                }}
+                placeholder={task.status === "in_progress" ? "Feedback..." : "Message..."}
+                disabled={sending}
+                maxLength={FEEDBACK_MAX_LENGTH}
+                className="eb-input"
+                style={{ flex: 1, minWidth: 0, fontSize: "12px", borderColor: messageError ? "var(--status-cancelled)" : undefined }}
+              />
+              <button
+                onClick={handleSendMessage}
+                disabled={!messageText.trim() || sending}
+                className="eb-btn eb-btn--primary"
+                style={{ fontSize: "11px", padding: "3px 8px", opacity: (!messageText.trim() || sending) ? 0.5 : 1 }}
+              >
+                {sending ? "..." : sent ? "OK!" : "Send"}
+              </button>
+            </div>
           </div>
         )}
 

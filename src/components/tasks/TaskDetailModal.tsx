@@ -11,7 +11,7 @@ import { buildAgentViewState } from "./agent-view.js";
 import { getResumeActionState } from "./task-resume.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
-import { FEEDBACK_MAX_LENGTH } from "./feedback-validation.js";
+import { FEEDBACK_MAX_LENGTH, validateFeedbackContent } from "./feedback-validation.js";
 
 /**
  * Layout mode for the task detail view.
@@ -151,6 +151,7 @@ export function TaskDetailModal({
   const [activeTab, setActiveTab] = useState<"description" | "activity">("description");
   const [feedbackText, setFeedbackText] = useState("");
   const [sendingFeedback, setSendingFeedback] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [refinementFeedback, setRefinementFeedback] = useState("");
   const [sendingRefinementFeedback, setSendingRefinementFeedback] = useState(false);
   const [refinementFeedbackError, setRefinementFeedbackError] = useState<string | null>(null);
@@ -168,10 +169,16 @@ export function TaskDetailModal({
   useEffect(() => {
     setActionError(null);
     setActionLoading(null);
+    setFeedbackError(null);
     setRefinementFeedbackError(null);
     setRefinementFeedbackSent(false);
     setRefinementFeedback("");
   }, [task.id]);
+
+  useEffect(() => {
+    setFeedbackError(null);
+    setRefinementFeedbackError(null);
+  }, [task.id, task.status]);
 
   useEffect(() => {
     return () => {
@@ -217,35 +224,43 @@ export function TaskDetailModal({
   }, [task.id]);
 
   const handleSendRefinementFeedback = useCallback(async () => {
-    const trimmed = refinementFeedback.trim();
-    if (!trimmed || sendingRefinementFeedback) return;
-    if (trimmed.length > FEEDBACK_MAX_LENGTH) {
-      setRefinementFeedbackError(`Feedback exceeds ${FEEDBACK_MAX_LENGTH.toLocaleString()} character limit.`);
+    if (sendingRefinementFeedback) return;
+
+    const validation = validateFeedbackContent(refinementFeedback);
+    if (validation.error) {
+      setRefinementFeedbackError(validation.error);
       return;
     }
+
     setSendingRefinementFeedback(true);
     setRefinementFeedbackError(null);
     try {
-      await sendTaskFeedback(task.id, trimmed);
+      await sendTaskFeedback(task.id, validation.content);
       setRefinementFeedback("");
       setRefinementFeedbackSent(true);
       if (feedbackSentTimerRef.current) clearTimeout(feedbackSentTimerRef.current);
       feedbackSentTimerRef.current = setTimeout(() => setRefinementFeedbackSent(false), 2000);
-    } catch {
-      setRefinementFeedbackError("Failed to send revision request. Please try again.");
+    } catch (error) {
+      setRefinementFeedbackError(error instanceof Error ? error.message : "Failed to send revision request. Please try again.");
     } finally {
       setSendingRefinementFeedback(false);
     }
   }, [refinementFeedback, sendingRefinementFeedback, task.id]);
 
   const handleSendFeedback = async () => {
-    if (!feedbackText.trim()) return;
+    const validation = validateFeedbackContent(feedbackText);
+    if (validation.error) {
+      setFeedbackError(validation.error);
+      return;
+    }
+
     setSendingFeedback(true);
+    setFeedbackError(null);
     try {
-      await sendTaskFeedback(task.id, feedbackText.trim());
+      await sendTaskFeedback(task.id, validation.content);
       setFeedbackText("");
     } catch (err) {
-      console.error("Failed to send feedback:", err);
+      setFeedbackError(err instanceof Error ? err.message : "Failed to send feedback. Please try again.");
     } finally {
       setSendingFeedback(false);
     }
@@ -654,10 +669,10 @@ export function TaskDetailModal({
                     onChange={(e) => {
                       setRefinementFeedback(e.target.value);
                       setRefinementFeedbackError(null);
+                      setRefinementFeedbackSent(false);
                     }}
                     placeholder="Request changes to the plan..."
                     rows={2}
-                    maxLength={FEEDBACK_MAX_LENGTH}
                     style={{
                       width: "100%",
                       background: "var(--bg-tertiary)",
@@ -925,24 +940,38 @@ export function TaskDetailModal({
                   </button>
                 </div>
               )}
+              {feedbackError && (
+                <div style={{ fontSize: "12px", color: "var(--status-cancelled)", padding: "6px 8px", background: "var(--bg-tertiary)", borderRadius: "6px", border: "1px solid var(--status-cancelled)", marginBottom: "8px" }}>
+                  {feedbackError}
+                </div>
+              )}
               <div style={{ display: "flex", gap: "8px" }}>
-                <textarea
-                  style={{
-                    flex: 1,
-                    background: "var(--bg-tertiary)",
-                    border: "1px solid var(--border-default)",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    fontSize: "13px",
-                    color: "var(--text-primary)",
-                    height: task.status === "human_review" ? "84px" : "64px",
-                    resize: "none",
-                    outline: "none",
-                  }}
-                  value={feedbackText}
-                  onChange={(e) => setFeedbackText(e.target.value)}
-                  placeholder={feedbackUi.detailPlaceholder}
-                />
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <textarea
+                    style={{
+                      flex: 1,
+                      background: "var(--bg-tertiary)",
+                      border: `1px solid ${feedbackError ? "var(--status-cancelled)" : "var(--border-default)"}`,
+                      borderRadius: "6px",
+                      padding: "8px 12px",
+                      fontSize: "13px",
+                      color: "var(--text-primary)",
+                      height: task.status === "human_review" ? "84px" : "64px",
+                      resize: "none",
+                      outline: "none",
+                    }}
+                    value={feedbackText}
+                    onChange={(e) => {
+                      setFeedbackText(e.target.value);
+                      setFeedbackError(null);
+                    }}
+                    placeholder={feedbackUi.detailPlaceholder}
+                    maxLength={FEEDBACK_MAX_LENGTH}
+                  />
+                  <div style={{ display: "flex", justifyContent: "flex-end", fontSize: "10px", color: feedbackText.length > FEEDBACK_MAX_LENGTH * 0.9 ? "var(--status-cancelled)" : "var(--text-tertiary)" }}>
+                    {feedbackText.length.toLocaleString()}/{FEEDBACK_MAX_LENGTH.toLocaleString()}
+                  </div>
+                </div>
                 <button
                   onClick={handleSendFeedback}
                   disabled={!feedbackText.trim() || sendingFeedback}

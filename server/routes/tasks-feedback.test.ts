@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { before, after, afterEach, describe, it } from "node:test";
@@ -10,6 +10,9 @@ import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
 import { createTasksRouter } from "./tasks.js";
 import { FEEDBACK_MAX_LENGTH } from "./feedback-validation.js";
+
+const FEEDBACK_REQUIRED_MESSAGE = "Feedback cannot be empty.";
+const FEEDBACK_TOO_LONG_MESSAGE = `Feedback must be ${FEEDBACK_MAX_LENGTH.toLocaleString()} characters or fewer.`;
 
 const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
 process.env.DB_PATH = TEST_DB_PATH;
@@ -90,6 +93,16 @@ function getTransitions(db: DatabaseSync, taskId: string): string[] {
       "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id ASC",
     ).all(taskId) as Array<{ message: string }>
   ).map((row) => row.message);
+}
+
+function getMessageCount(db: DatabaseSync, taskId: string): number {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM messages WHERE task_id = ?").get(taskId) as { count: number };
+  return row.count;
+}
+
+function getTaskLogCount(db: DatabaseSync, taskId: string): number {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM task_logs WHERE task_id = ?").get(taskId) as { count: number };
+  return row.count;
 }
 
 describe("POST /tasks/:id/feedback refinement regressions", () => {
@@ -193,6 +206,17 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         body: JSON.stringify({}),
       });
       assert.equal(response.status, 400);
+      const body = await response.json() as {
+        error: string;
+        message: string;
+        details: { fieldErrors: Record<string, string[]> };
+      };
+      assert.equal(body.error, "invalid_feedback");
+      assert.equal(body.message, FEEDBACK_REQUIRED_MESSAGE);
+      assert.deepEqual(body.details.fieldErrors.content, [FEEDBACK_REQUIRED_MESSAGE]);
+      assert.equal(getMessageCount(db, taskId), 0);
+      assert.equal(getTaskLogCount(db, taskId), 0);
+      assert.equal(existsSync(join("data", "feedback", `${taskId}.md`)), false);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -221,6 +245,14 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         body: JSON.stringify({ content: overlong }),
       });
       assert.equal(response.status, 400);
+      const body = await response.json() as {
+        error: string;
+        message: string;
+        details: { fieldErrors: Record<string, string[]> };
+      };
+      assert.equal(body.error, "invalid_feedback");
+      assert.equal(body.message, FEEDBACK_TOO_LONG_MESSAGE);
+      assert.deepEqual(body.details.fieldErrors.content, [FEEDBACK_TOO_LONG_MESSAGE]);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -276,6 +308,89 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         body: JSON.stringify({ content: "" }),
       });
       assert.equal(response.status, 400);
+      const body = await response.json() as {
+        error: string;
+        message: string;
+        details: { fieldErrors: Record<string, string[]> };
+      };
+      assert.equal(body.error, "invalid_feedback");
+      assert.equal(body.message, FEEDBACK_REQUIRED_MESSAGE);
+      assert.deepEqual(body.details.fieldErrors.content, [FEEDBACK_REQUIRED_MESSAGE]);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects whitespace-only feedback before any side effect is written", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "   \n\t  " }),
+      });
+      assert.equal(response.status, 400);
+      const body = await response.json() as {
+        error: string;
+        message: string;
+        details: { fieldErrors: Record<string, string[]> };
+      };
+      assert.equal(body.error, "invalid_feedback");
+      assert.equal(body.message, FEEDBACK_REQUIRED_MESSAGE);
+      assert.deepEqual(body.details.fieldErrors.content, [FEEDBACK_REQUIRED_MESSAGE]);
+      assert.equal(getMessageCount(db, taskId), 0);
+      assert.equal(getTaskLogCount(db, taskId), 0);
+      assert.equal(existsSync(join("data", "feedback", `${taskId}.md`)), false);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("trims accepted feedback before persisting and restarting the task", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "  Revise the plan.  " }),
+      });
+      assert.equal(response.status, 200);
+
+      const messageRow = db.prepare(
+        "SELECT content FROM messages WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+      ).get(taskId) as { content: string } | undefined;
+      assert.equal(messageRow?.content, "Revise the plan.");
+
+      const feedbackPath = join("data", "feedback", `${taskId}.md`);
+      assert.equal(existsSync(feedbackPath), true);
+      const feedbackFile = readFileSync(feedbackPath, "utf-8");
+      assert.match(feedbackFile, /## CEO Feedback \(.+\)\n\nRevise the plan\.\n/);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
