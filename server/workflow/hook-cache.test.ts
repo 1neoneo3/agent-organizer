@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   computeFingerprint,
   detectDependencyFiles,
+  detectHookCachePolicy,
   invalidateHookCache,
   recordHookSuccess,
   shouldSkipHook,
@@ -111,6 +112,14 @@ describe("detectDependencyFiles", () => {
     assert.notEqual(a, b);
     assert.deepEqual(a, b);
   });
+
+  it("detects codegen dependency files", () => {
+    const policy = detectHookCachePolicy("pnpm run codegen");
+    assert.ok(policy);
+    assert.equal(policy.id, "codegen");
+    assert.ok(policy.files.includes("codegen.yml"));
+    assert.ok(policy.files.includes("schema.graphql"));
+  });
 });
 
 describe("computeFingerprint", () => {
@@ -193,6 +202,22 @@ describe("computeFingerprint", () => {
 
     writeFileSync(join(dir, "package.json"), '{"name":"v2"}');
     const fp2 = computeFingerprint("pnpm install", dir);
+
+    assert.notEqual(fp1, fp2);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("changes when codegen inputs change", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-cache-"));
+    writeFileSync(join(dir, "package.json"), '{"name":"test"}');
+    writeFileSync(join(dir, "codegen.yml"), "schema: schema.graphql");
+    writeFileSync(join(dir, "schema.graphql"), "type Query { hello: String }");
+
+    const fp1 = computeFingerprint("pnpm run codegen", dir);
+
+    writeFileSync(join(dir, "schema.graphql"), "type Query { hello: String, world: String }");
+    const fp2 = computeFingerprint("pnpm run codegen", dir);
 
     assert.notEqual(fp1, fp2);
 
@@ -310,6 +335,17 @@ describe("shouldSkipHook / recordHookSuccess", () => {
 
     recordHookSuccess("pnpm install", cwd, cacheDir);
     assert.equal(shouldSkipHook("pnpm install", cwd, cacheDir), true);
+  });
+
+  it("skips cached codegen hooks until an input file changes", () => {
+    writeFileSync(join(cwd, "codegen.yml"), "schema: schema.graphql");
+    writeFileSync(join(cwd, "schema.graphql"), "type Query { hello: String }");
+
+    recordHookSuccess("pnpm run codegen", cwd, cacheDir);
+    assert.equal(shouldSkipHook("pnpm run codegen", cwd, cacheDir), true);
+
+    writeFileSync(join(cwd, "schema.graphql"), "type Query { hello: String, world: String }");
+    assert.equal(shouldSkipHook("pnpm run codegen", cwd, cacheDir), false);
   });
 });
 

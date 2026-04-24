@@ -15,44 +15,88 @@ interface CacheEntry {
   timestamp: number;
 }
 
-const INSTALL_PATTERNS: ReadonlyArray<{
+export interface HookCachePolicy {
+  id: string;
   match: (cmd: string) => boolean;
-  files: readonly string[];
-}> = [
+  files: string[];
+}
+
+const CACHE_POLICIES: ReadonlyArray<HookCachePolicy> = [
   {
+    id: "pnpm-install",
     match: (cmd) => /^pnpm\s+(install|i)(\s|$)/.test(cmd),
     files: ["pnpm-lock.yaml", "package.json"],
   },
   {
+    id: "npm-install",
     match: (cmd) => /^npm\s+(ci|install|i)(\s|$)/.test(cmd),
     files: ["package-lock.json", "package.json"],
   },
   {
+    id: "yarn-install",
     match: (cmd) => /^yarn\s+(install)(\s|$)/.test(cmd),
     files: ["yarn.lock", "package.json"],
   },
   {
+    id: "pip-install",
     match: (cmd) => /^pip\s+install(\s|$)/.test(cmd),
     files: ["requirements.txt", "setup.py", "pyproject.toml"],
   },
   {
+    id: "poetry-install",
     match: (cmd) => /^poetry\s+install(\s|$)/.test(cmd),
     files: ["poetry.lock", "pyproject.toml"],
   },
   {
+    id: "bundle-install",
     match: (cmd) => /^bundle\s+install(\s|$)/.test(cmd),
     files: ["Gemfile.lock", "Gemfile"],
   },
+  {
+    id: "codegen",
+    match: (cmd) =>
+      /^(?:pnpm|npm|yarn)\s+(?:run\s+)?codegen(\s|$)/.test(cmd) ||
+      /^graphql-codegen(\s|$)/.test(cmd),
+    files: [
+      "package.json",
+      "pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock",
+      "codegen.yml",
+      "codegen.yaml",
+      "codegen.ts",
+      "codegen.js",
+      "graphql.config.ts",
+      "graphql.config.js",
+      "schema.graphql",
+      "schema.json",
+      "openapi.yaml",
+      "openapi.yml",
+      "openapi.json",
+    ],
+  },
 ];
 
-export function detectDependencyFiles(command: string): string[] | null {
+export function detectHookCachePolicy(
+  command: string,
+): HookCachePolicy | null {
   const trimmed = command.trim();
-  for (const pattern of INSTALL_PATTERNS) {
-    if (pattern.match(trimmed)) {
-      return [...pattern.files];
+  for (const policy of CACHE_POLICIES) {
+    if (policy.match(trimmed)) {
+      return {
+        id: policy.id,
+        match: policy.match,
+        files: [...policy.files],
+      };
     }
   }
   return null;
+}
+
+export function detectDependencyFiles(
+  command: string,
+): readonly string[] | null {
+  return detectHookCachePolicy(command)?.files ?? null;
 }
 
 export function computeFingerprint(

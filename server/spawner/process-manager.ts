@@ -44,7 +44,10 @@ import { getHeartbeatManager } from "./heartbeat-manager.js";
 import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
-import { runWorkflowHooks } from "../workflow/hooks.js";
+import {
+  runWorkflowHooks,
+  type WorkflowHookResult,
+} from "../workflow/hooks.js";
 import {
   SpawnFailureError,
   classifyRuntimeFailure,
@@ -60,6 +63,27 @@ const pendingFeedback = new Map<string, { message: string; previousStatus: strin
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
+
+function formatWorkflowHookLog(
+  phase: "before_run" | "after_run",
+  result: WorkflowHookResult,
+  failureLabel: "FAILED" | "WARNING",
+  outputLimit?: number,
+): string {
+  const status = result.skipped
+    ? "SKIPPED (cached)"
+    : result.ok
+      ? "OK"
+      : failureLabel;
+  const cacheDetails = result.cacheKeyFiles?.length
+    ? ` [cache:${result.cachePolicyId ?? "deps"}; invalidate on ${result.cacheKeyFiles.join(", ")} changes]`
+    : "";
+  const output = result.output
+    ? `\n${typeof outputLimit === "number" ? result.output.slice(0, outputLimit) : result.output}`
+    : "";
+
+  return `[${phase}] ${result.command}: ${status}${cacheDetails}${output}`;
+}
 
 /**
  * Coordination state for a parallel review panel. When `triggerAutoReview`
@@ -854,19 +878,18 @@ export async function spawnAgent(
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
   const workspace = prepareTaskWorkspace(task, workflow, db);
+  const hookCacheDir = join("data", "hook-cache");
 
   // Run before_run hooks (env setup, dependency install, etc.)
   if (workflow?.beforeRun.length && !isContinue) {
-    const hookCacheDir = join("data", "hook-cache");
     const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd, { cacheDir: hookCacheDir });
     const logBefore = db.prepare(
       "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
     );
     for (const hr of beforeResults) {
-      const status = hr.skipped ? "SKIPPED (cached)" : hr.ok ? "OK" : "FAILED";
       logBefore.run(
         task.id,
-        `[before_run] ${hr.command}: ${status}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`,
+        formatWorkflowHookLog("before_run", hr, "FAILED", 500),
         spawnStage,
         agent.id,
       );
@@ -1688,9 +1711,15 @@ export async function spawnAgent(
 
     // Run after_run hooks (lint, format, etc.) — log failures as warnings but don't block progress
     if (code === 0 && workflow?.afterRun.length) {
-      const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd);
+      const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd, { cacheDir: hookCacheDir });
       for (const hr of hookResults) {
-        insertLogStmt.run(task.id, "system", `[after_run] ${hr.command}: ${hr.ok ? "OK" : "WARNING"}${hr.output ? `\n${hr.output}` : ""}`, spawnStage, agent.id);
+        insertLogStmt.run(
+          task.id,
+          "system",
+          formatWorkflowHookLog("after_run", hr, "WARNING"),
+          spawnStage,
+          agent.id,
+        );
       }
     }
 

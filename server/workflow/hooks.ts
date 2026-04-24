@@ -1,11 +1,17 @@
 import { spawnSync } from "node:child_process";
-import { shouldSkipHook, recordHookSuccess } from "./hook-cache.js";
+import {
+  detectHookCachePolicy,
+  recordHookSuccess,
+  shouldSkipHook,
+} from "./hook-cache.js";
 
 export interface WorkflowHookResult {
   command: string;
   ok: boolean;
   output: string;
   skipped: boolean;
+  cachePolicyId?: string;
+  cacheKeyFiles?: readonly string[];
 }
 
 export interface RunHooksOptions {
@@ -21,8 +27,18 @@ export function runWorkflowHooks(
   const cacheDir = options?.cacheDir;
 
   for (const command of commands) {
+    const cachePolicy = detectHookCachePolicy(command);
+    const cacheKeyFiles = cachePolicy?.files;
+
     if (cacheDir && shouldSkipHook(command, cwd, cacheDir)) {
-      results.push({ command, ok: true, output: "", skipped: true });
+      results.push({
+        command,
+        ok: true,
+        output: "",
+        skipped: true,
+        cachePolicyId: cachePolicy?.id,
+        cacheKeyFiles,
+      });
       continue;
     }
 
@@ -43,7 +59,14 @@ export function runWorkflowHooks(
       recordHookSuccess(command, cwd, cacheDir);
     }
 
-    results.push({ command, ok, output, skipped: false });
+    results.push({
+      command,
+      ok,
+      output,
+      skipped: false,
+      cachePolicyId: cachePolicy?.id,
+      cacheKeyFiles,
+    });
   }
 
   return results;

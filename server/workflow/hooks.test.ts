@@ -51,6 +51,11 @@ describe("runWorkflowHooks", () => {
     assert.equal(results[0]?.ok, true);
     assert.equal(results[0]?.skipped, true);
     assert.equal(results[0]?.output, "");
+    assert.equal(results[0]?.cachePolicyId, "pnpm-install");
+    assert.deepEqual(results[0]?.cacheKeyFiles, [
+      "pnpm-lock.yaml",
+      "package.json",
+    ]);
   });
 
   it("does not skip when dependency files change after cache", () => {
@@ -140,6 +145,23 @@ describe("runWorkflowHooks", () => {
     assert.equal(results[0]?.ok, true);
     assert.equal(results[1]?.skipped, false);
     assert.equal(results[1]?.ok, true);
+    assert.equal(results[1]?.cachePolicyId, undefined);
+  });
+
+  it("returns cache metadata for codegen hooks", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "ao-hooks-codegen-"));
+    const cacheDir = mkdtempSync(join(tmpdir(), "ao-hooks-cachedir-"));
+    writeFileSync(join(cwd, "package.json"), '{"name":"test"}');
+    writeFileSync(join(cwd, "codegen.yml"), "schema: schema.graphql");
+    writeFileSync(join(cwd, "schema.graphql"), "type Query { hello: String }");
+
+    recordHookSuccess("pnpm run codegen", cwd, cacheDir);
+
+    const second = runWorkflowHooks(["pnpm run codegen"], cwd, { cacheDir });
+
+    assert.equal(second[0]?.skipped, true);
+    assert.equal(second[0]?.cachePolicyId, "codegen");
+    assert.ok(second[0]?.cacheKeyFiles?.includes("codegen.yml"));
   });
 
   it("successful install records cache and skips on next run", () => {
