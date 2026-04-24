@@ -148,6 +148,41 @@ function persistPromptToDb(db: DatabaseSync, taskId: string, entry: { data: Inte
   } catch { /* best-effort persist */ }
 }
 
+/**
+ * Feed one assistant chunk into the structured-block tracker and persist a
+ * text-based interactive prompt only when the fallback heuristic is allowed to
+ * fire.
+ *
+ * Guard order matters:
+ * 1. Always feed the tracker first so split refinement markers are observed.
+ * 2. Suppress the heuristic while inside a structured refinement block.
+ * 3. Suppress when a structured prompt is already pending for the task.
+ * 4. Persist only when the remaining assistant text is an actual prompt.
+ */
+export function registerTextInteractivePromptFromAssistantChunk(
+  db: DatabaseSync,
+  taskId: string,
+  assistantText: string,
+  structuredBlockTracker: StructuredBlockTracker,
+  now: number = Date.now(),
+): { detected: false } | { detected: true; entry: { data: InteractivePromptData; createdAt: number } } {
+  structuredBlockTracker.feed(assistantText);
+
+  if (pendingInteractivePrompts.has(taskId) || structuredBlockTracker.insideBlock) {
+    return { detected: false };
+  }
+
+  const textPrompt = detectTextInteractivePrompt(assistantText);
+  if (!textPrompt) {
+    return { detected: false };
+  }
+
+  const entry = { data: textPrompt, createdAt: now };
+  pendingInteractivePrompts.set(taskId, entry);
+  persistPromptToDb(db, taskId, entry);
+  return { detected: true, entry };
+}
+
 export function getPendingInteractivePrompt(taskId: string): { data: InteractivePromptData; createdAt: number } | undefined {
   return pendingInteractivePrompts.get(taskId);
 }
@@ -1255,20 +1290,18 @@ export async function spawnAgent(
         }
 
         // Text-based interactive prompt detection (for Codex/Gemini/any provider)
-        // Only check "assistant" kind events — agent's direct text output.
-        // Feed every assistant chunk into the structured-block tracker first
-        // so that the rolling buffer sees markers before we decide whether
-        // to run the heuristic detector.
+        // Only classified assistant text is eligible, and even then the
+        // fallback heuristic is disabled while streaming a structured
+        // refinement block.
         if (event && event.kind === "assistant") {
-          structuredBlockTracker.feed(event.message);
-        }
-        if (event && event.kind === "assistant" && !pendingInteractivePrompts.has(task.id) && !structuredBlockTracker.insideBlock) {
-          const textPrompt = detectTextInteractivePrompt(event.message);
-          if (textPrompt) {
-            const entry = { data: textPrompt, createdAt: Date.now() };
-            pendingInteractivePrompts.set(task.id, entry);
-            persistPromptToDb(db, task.id, entry);
-            ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
+          const textPrompt = registerTextInteractivePromptFromAssistantChunk(
+            db,
+            task.id,
+            event.message,
+            structuredBlockTracker,
+          );
+          if (textPrompt.detected) {
+            ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt.entry.data });
             insertLogStmt.run(task.id, "system", `Text-based interactive prompt detected. Killing process to await user response.`, spawnStage, agent.id);
 
             interactivePromptKilled = true;

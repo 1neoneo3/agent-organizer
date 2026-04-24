@@ -4,11 +4,14 @@ import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import {
   buildRefinementRevisionPrompt,
+  clearPendingInteractivePrompt,
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
   extractRefinementPlanFromLogs,
+  getPendingInteractivePrompt,
   isReviewRunTask,
   persistRefinementPlanExtraction,
+  registerTextInteractivePromptFromAssistantChunk,
   resolveCompletionStatusAfterPromotion,
 } from "./process-manager.js";
 import { StructuredBlockTracker, detectTextInteractivePrompt } from "./event-classifier.js";
@@ -984,5 +987,88 @@ describe("streaming refinement plan suppresses text-based detection", () => {
     ]);
     assert.strictEqual(result.detected, true);
     assert.strictEqual(result.detectedAt, 0);
+  });
+});
+
+describe("registerTextInteractivePromptFromAssistantChunk", () => {
+  it("does not persist or detect a split-marker refinement plan chunk sequence (#465 regression)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tprompt-refinement" });
+    const tracker = new StructuredBlockTracker();
+
+    const chunks = [
+      "preface\n---REFINE",
+      "MENT PLAN---\n## 背景\nrefinement plan 本文をそのまま保存する\n",
+      "## 要件\n- 追加情報が必要な場合のみ Input Required とする\n",
+      "- 対象ファイルを指定してください等の文言が plan 内にあっても無視\n",
+      "## 実装計画\n1. event-classifier.ts を調整\n2. process-manager.ts を調整\n",
+      "---END REFINEMENT---",
+    ];
+
+    for (const chunk of chunks) {
+      const result = registerTextInteractivePromptFromAssistantChunk(
+        db,
+        task.id,
+        chunk,
+        tracker,
+        12_345,
+      );
+      assert.deepStrictEqual(result, { detected: false });
+    }
+
+    const row = db.prepare(
+      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
+    ).get(task.id) as { interactive_prompt_data: string | null };
+
+    assert.equal(getPendingInteractivePrompt(task.id), undefined);
+    assert.equal(row.interactive_prompt_data, null);
+  });
+
+  it("persists a real prompt once the refinement block has ended", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tprompt-real" });
+    const tracker = new StructuredBlockTracker();
+
+    for (const chunk of [
+      "---REFINEMENT PLAN---\n## Plan\n1. Update classifier\n",
+      "---END REFINEMENT---",
+    ]) {
+      const result = registerTextInteractivePromptFromAssistantChunk(
+        db,
+        task.id,
+        chunk,
+        tracker,
+        20_000,
+      );
+      assert.deepStrictEqual(result, { detected: false });
+    }
+
+    const detected = registerTextInteractivePromptFromAssistantChunk(
+      db,
+      task.id,
+      "対象ファイルのパスを指定してください。",
+      tracker,
+      20_001,
+    );
+
+    assert.equal(detected.detected, true);
+    if (!detected.detected) {
+      assert.fail("expected a real text prompt to be detected");
+    }
+
+    const row = db.prepare(
+      "SELECT interactive_prompt_data FROM tasks WHERE id = ?",
+    ).get(task.id) as { interactive_prompt_data: string | null };
+
+    assert.ok(row.interactive_prompt_data);
+    const persisted = JSON.parse(row.interactive_prompt_data) as {
+      createdAt: number;
+      data: { promptType: string; detectedText?: string };
+    };
+    assert.equal(persisted.createdAt, 20_001);
+    assert.equal(persisted.data.promptType, "text_input_request");
+    assert.equal(persisted.data.detectedText, "対象ファイルのパスを指定してください。");
+
+    clearPendingInteractivePrompt(task.id, db);
   });
 });
