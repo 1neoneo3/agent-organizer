@@ -1113,5 +1113,51 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     res.json({ sent: true, restarted: true });
   });
 
+  // Sync refinement plan content from file (PostToolUse hook or manual call)
+  const RefinementPlanSyncSchema = z.object({
+    content: z.string().min(1).max(500_000),
+    source: z.enum(["file", "agent_output"]).default("file"),
+  });
+
+  router.put("/tasks/:id/refinement-plan", async (req, res) => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+
+    if (task.status !== "refinement" && task.status !== "inbox") {
+      return res.status(409).json({
+        error: "invalid_status",
+        message: `Cannot update refinement_plan when status is '${task.status}'. Expected 'refinement' or 'inbox'.`,
+        current_status: task.status,
+      });
+    }
+
+    const parsed = RefinementPlanSyncSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const { content, source } = parsed.data;
+    const now = Date.now();
+
+    const updates: string[] = ["refinement_plan = ?", "updated_at = ?"];
+    const values: (string | number | null)[] = [content, now];
+
+    if (!task.refinement_completed_at) {
+      updates.push("refinement_completed_at = ?");
+      values.push(now);
+    }
+
+    values.push(req.params.id);
+    db.prepare(`UPDATE tasks SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+    ).run(task.id, `[plan-sync] refinement_plan updated from ${source}`);
+
+    const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
+    await invalidateTaskCaches();
+    ws.broadcast("task_update", updated);
+
+    res.json(updated);
+  });
+
   return router;
 }
