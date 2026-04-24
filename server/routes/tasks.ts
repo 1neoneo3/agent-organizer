@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync } from "
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
+import { FEEDBACK_MAX_LENGTH } from "./feedback-validation.js";
 import { recordReadApi } from "../perf/metrics.js";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
@@ -1105,7 +1106,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
-    const schema = z.object({ content: z.string().min(1) });
+    const schema = z.object({ content: z.string().min(1).max(FEEDBACK_MAX_LENGTH) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 

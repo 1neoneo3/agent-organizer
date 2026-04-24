@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
 import { createTasksRouter } from "./tasks.js";
+import { FEEDBACK_MAX_LENGTH } from "./feedback-validation.js";
 
 const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
 process.env.DB_PATH = TEST_DB_PATH;
@@ -141,6 +142,89 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "__STAGE_TRANSITION__:refinement→inbox",
         "__STAGE_TRANSITION__:inbox→refinement",
       ]);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects feedback content exceeding FEEDBACK_MAX_LENGTH", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const overlong = "x".repeat(FEEDBACK_MAX_LENGTH + 1);
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: overlong }),
+      });
+      assert.equal(response.status, 400);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("accepts feedback content at exactly FEEDBACK_MAX_LENGTH", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const exact = "x".repeat(FEEDBACK_MAX_LENGTH);
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: exact }),
+      });
+      assert.equal(response.status, 200);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("rejects empty feedback content", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 }) as never,
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "" }),
+      });
+      assert.equal(response.status, 400);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
