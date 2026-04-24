@@ -130,6 +130,78 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
     });
   });
 
+  it("each test gets a fresh in-memory DB with no leaked rows", async () => {
+    db = createDb();
+    const agentId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    const taskId = randomUUID();
+    insertRefinementTask(db, taskId, agentId);
+
+    const agentCount = (db.prepare("SELECT COUNT(*) AS cnt FROM agents").get() as { cnt: number }).cnt;
+    const taskCount = (db.prepare("SELECT COUNT(*) AS cnt FROM tasks").get() as { cnt: number }).cnt;
+    assert.equal(agentCount, 1, "fresh DB should contain exactly one agent");
+    assert.equal(taskCount, 1, "fresh DB should contain exactly one task");
+
+    const started = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 0 } as never),
+    });
+    server = started.server;
+  });
+
+  it("still has zero leftover rows from the previous test", async () => {
+    db = createDb();
+    const agentCount = (db.prepare("SELECT COUNT(*) AS cnt FROM agents").get() as { cnt: number }).cnt;
+    const taskCount = (db.prepare("SELECT COUNT(*) AS cnt FROM tasks").get() as { cnt: number }).cnt;
+    assert.equal(agentCount, 0, "no agent rows should leak between tests");
+    assert.equal(taskCount, 0, "no task rows should leak between tests");
+
+    const started = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 0 } as never),
+    });
+    server = started.server;
+  });
+
+  it("returns 404 for a nonexistent task", async () => {
+    db = createDb();
+    const started = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 0 } as never),
+    });
+    server = started.server;
+
+    const response = await fetch(`${started.baseUrl}/tasks/${randomUUID()}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "hello" }),
+    });
+    assert.equal(response.status, 404);
+    const body = await response.json() as { error: string };
+    assert.equal(body.error, "not_found");
+  });
+
+  it("returns 400 when content is empty", async () => {
+    db = createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertRefinementTask(db, taskId, agentId);
+
+    const started = await startServer(db, {
+      queueFeedbackAndRestart: () => true,
+      spawnAgent: async () => ({ pid: 0 } as never),
+    });
+    server = started.server;
+
+    const response = await fetch(`${started.baseUrl}/tasks/${taskId}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "" }),
+    });
+    assert.equal(response.status, 400);
+  });
+
   it("records one refinement round-trip when an active child process is restarted", async () => {
     db = createDb();
     const agentId = randomUUID();
@@ -212,5 +284,71 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
       started.events.some((event) => event.type === "task_update"),
       "expected a task_update broadcast for the respawned refinement task",
     );
+  });
+
+  it("resets auto_respawn_count and sets in_progress for non-refinement feedback on idle agent", async () => {
+    db = createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, assigned_agent_id, status, task_size, task_number,
+        auto_respawn_count, completed_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'in_progress', 'medium', ?, 3, ?, ?, ?)`,
+    ).run(taskId, `Task ${taskId}`, "Non-refinement feedback", agentId, `#${taskId.slice(0, 6)}`, now, now, now);
+
+    const started = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 0 } as never),
+    });
+    server = started.server;
+
+    const response = await fetch(`${started.baseUrl}/tasks/${taskId}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "Fix the output format." }),
+    });
+    assert.equal(response.status, 200);
+
+    const updated = db.prepare("SELECT status, auto_respawn_count, completed_at FROM tasks WHERE id = ?").get(taskId) as {
+      status: string;
+      auto_respawn_count: number;
+      completed_at: number | null;
+    };
+    assert.equal(updated.status, "in_progress");
+    assert.equal(updated.auto_respawn_count, 0, "auto_respawn_count should be reset to 0");
+    assert.equal(updated.completed_at, null, "completed_at should be cleared");
+  });
+
+  it("returns restarted:false when task has no assigned agent", async () => {
+    db = createDb();
+    const taskId = randomUUID();
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, assigned_agent_id, status, task_size, task_number, created_at, updated_at
+      ) VALUES (?, ?, ?, NULL, 'refinement', 'medium', ?, ?, ?)`,
+    ).run(taskId, `Task ${taskId}`, "Unassigned refinement", `#${taskId.slice(0, 6)}`, now, now);
+
+    const started = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        throw new Error("spawnAgent should not be called for unassigned tasks");
+      },
+    });
+    server = started.server;
+
+    const response = await fetch(`${started.baseUrl}/tasks/${taskId}/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "Revise this." }),
+    });
+    assert.equal(response.status, 200);
+
+    const body = await response.json() as { restarted: boolean };
+    assert.equal(body.restarted, false, "should not restart when no agent is assigned");
   });
 });
