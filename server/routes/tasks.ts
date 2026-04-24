@@ -672,15 +672,45 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", updatedTask);
 
-    // Trigger next stage's auto-agent if applicable
+    // Trigger next stage's auto-agent if applicable.
+    // Wrap deferred spawns in try/catch so synchronous throws from git/spawn
+    // operations cannot escape the setTimeout callback and kill the process.
     if (next === "ci_check") {
-      setTimeout(() => triggerAutoCiCheck(db, ws, updatedTask, cache), 500);
+      setTimeout(() => {
+        try {
+          triggerAutoCiCheck(db, ws, updatedTask, cache);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[tasks.approve] triggerAutoCiCheck failed for task ${updatedTask.id}:`, err);
+          try {
+            db.prepare(
+              "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+            ).run(updatedTask.id, `triggerAutoCiCheck failed: ${message}`);
+          } catch {
+            // swallow logging failure — we must not re-throw inside setTimeout
+          }
+        }
+      }, 500);
     }
     // After refinement approval → auto-dispatch to in_progress if agent is idle
     if (isRefinement && next === "in_progress" && updatedTask.assigned_agent_id) {
       const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(updatedTask.assigned_agent_id) as Agent | undefined;
       if (agent && agent.status === "idle") {
-        setTimeout(() => spawnAgent(db, ws, agent, updatedTask, { cache }), 500);
+        setTimeout(() => {
+          try {
+            spawnAgent(db, ws, agent, updatedTask, { cache });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`[tasks.approve] spawnAgent failed for task ${updatedTask.id}:`, err);
+            try {
+              db.prepare(
+                "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+              ).run(updatedTask.id, `spawnAgent failed: ${message}`);
+            } catch {
+              // swallow logging failure — we must not re-throw inside setTimeout
+            }
+          }
+        }, 500);
       }
     }
 

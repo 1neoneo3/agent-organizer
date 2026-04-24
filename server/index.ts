@@ -115,6 +115,19 @@ startOrphanRecovery(db, wsHub, cache);
 startGithubIssueSync(db, wsHub, cache);
 startAutoDispatchScheduler(db, wsHub, cache);
 
+// Fatal error safety net: log the incident and exit cleanly so the process
+// supervisor (systemd Restart=always) can bring us back up. Without this,
+// an unhandled exception inside a setTimeout / detached promise leaves the
+// parent supervisor blind to the failure.
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] uncaughtException:", err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] unhandledRejection:", reason);
+  process.exit(1);
+});
+
 // Start
 server.listen(PORT, () => {
   console.log(`Agent Organizer running on http://localhost:${PORT}`);
