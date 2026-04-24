@@ -313,6 +313,40 @@ describe("initializeDb", () => {
     );
   });
 
+  it("refinement feedback round-trip records exactly one pair of stage transitions (regression: #476 double transition)", async () => {
+    // Regression test for issue #476: when refinement feedback fell through
+    // from the running-process path (queueFeedbackAndRestart returned false)
+    // to the idle-agent path, the refinement→inbox→refinement round-trip
+    // was executed twice, producing 4 __STAGE_TRANSITION__ markers instead
+    // of 2. The fix uses a `refinementTransitionDone` flag to skip the
+    // second path when the first already recorded the transitions.
+    //
+    // This test verifies at the DB/trigger level that performing the
+    // round-trip exactly once produces exactly 2 transition markers.
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run("agent-dbl-trans", `dbl-trans-${now}`, "claude", "idle", now, now);
+    db.prepare(
+      "INSERT INTO tasks (id, title, status, assigned_agent_id, task_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run("task-dbl-trans", "Double Transition", "refinement", "agent-dbl-trans", "medium", now, now);
+
+    // Simulate the refinement feedback round-trip (exactly once)
+    db.prepare("UPDATE tasks SET status = 'inbox', updated_at = ? WHERE id = ?").run(now, "task-dbl-trans");
+    db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, "task-dbl-trans");
+
+    const transitions = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id ASC"
+    ).all("task-dbl-trans") as Array<{ message: string }>;
+
+    assert.equal(transitions.length, 2, `expected exactly 2 stage transitions but got ${transitions.length}: ${JSON.stringify(transitions)}`);
+    assert.equal(transitions[0].message, "__STAGE_TRANSITION__:refinement→inbox");
+    assert.equal(transitions[1].message, "__STAGE_TRANSITION__:inbox→refinement");
+  });
+
   it("creates idx_task_logs_task_kind index on task_logs(task_id, kind)", async () => {
     const { initializeDb } = await import("./runtime.js");
     const db = initializeDb();
