@@ -1,15 +1,31 @@
 import { spawnSync } from "node:child_process";
+import { shouldSkipHook, recordHookSuccess } from "./hook-cache.js";
 
 export interface WorkflowHookResult {
   command: string;
   ok: boolean;
   output: string;
+  skipped: boolean;
 }
 
-export function runWorkflowHooks(commands: string[], cwd: string): WorkflowHookResult[] {
+export interface RunHooksOptions {
+  cacheDir?: string;
+}
+
+export function runWorkflowHooks(
+  commands: string[],
+  cwd: string,
+  options?: RunHooksOptions,
+): WorkflowHookResult[] {
   const results: WorkflowHookResult[] = [];
+  const cacheDir = options?.cacheDir;
 
   for (const command of commands) {
+    if (cacheDir && shouldSkipHook(command, cwd, cacheDir)) {
+      results.push({ command, ok: true, output: "", skipped: true });
+      continue;
+    }
+
     const run = spawnSync("bash", ["-lc", command], {
       cwd,
       encoding: "utf-8",
@@ -21,11 +37,13 @@ export function runWorkflowHooks(commands: string[], cwd: string): WorkflowHookR
       .join("\n")
       .trim();
 
-    results.push({
-      command,
-      ok: run.status === 0,
-      output,
-    });
+    const ok = run.status === 0;
+
+    if (ok && cacheDir) {
+      recordHookSuccess(command, cwd, cacheDir);
+    }
+
+    results.push({ command, ok, output, skipped: false });
   }
 
   return results;

@@ -857,14 +857,16 @@ export async function spawnAgent(
 
   // Run before_run hooks (env setup, dependency install, etc.)
   if (workflow?.beforeRun.length && !isContinue) {
-    const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd);
+    const hookCacheDir = join("data", "hook-cache");
+    const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd, { cacheDir: hookCacheDir });
     const logBefore = db.prepare(
       "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
     );
     for (const hr of beforeResults) {
+      const status = hr.skipped ? "SKIPPED (cached)" : hr.ok ? "OK" : "FAILED";
       logBefore.run(
         task.id,
-        `[before_run] ${hr.command}: ${hr.ok ? "OK" : "FAILED"}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`,
+        `[before_run] ${hr.command}: ${status}${hr.output ? `\n${hr.output.slice(0, 500)}` : ""}`,
         spawnStage,
         agent.id,
       );
