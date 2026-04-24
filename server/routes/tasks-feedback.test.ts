@@ -167,6 +167,8 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
     const taskId = randomUUID();
     insertAgent(db, agentId, "idle");
     insertRefinementTask(db, taskId, agentId);
+    const completedAt = Date.now();
+    db.prepare("UPDATE tasks SET completed_at = ?, updated_at = ? WHERE id = ?").run(completedAt, completedAt, taskId);
 
     const { server, baseUrl } = await startServer(db, {
       queueFeedbackAndRestart: () => false,
@@ -181,6 +183,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
       assert.equal(res.status, 200);
       const task = getTask(db, taskId);
       assert.ok(task);
+      assert.equal(task.completed_at, null);
       assert.ok(typeof task.refinement_revision_requested_at === "number");
       assert.equal(task.refinement_revision_completed_at, null);
     } finally {
