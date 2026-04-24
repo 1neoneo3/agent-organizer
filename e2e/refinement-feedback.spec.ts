@@ -1,5 +1,30 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type APIRequestContext } from "@playwright/test";
 import { authenticate, cleanupTestData, apiCall } from "./helpers.js";
+
+async function createAssignedIdleRefinementTask(request: APIRequestContext) {
+  const agentRes = await apiCall(request, "post", "/agents", {
+    name: `refinement-agent-${Date.now()}`,
+    cli_provider: "claude",
+  });
+  const agent = await agentRes.json() as { id: string };
+
+  const taskRes = await apiCall(request, "post", "/tasks", {
+    title: "Assigned Refinement Feedback E2E",
+    description: "Exercise idle-agent refinement feedback path",
+    assigned_agent_id: agent.id,
+    task_size: "small",
+  });
+  const task = await taskRes.json() as { id: string };
+
+  await apiCall(request, "put", `/tasks/${task.id}`, {
+    status: "refinement",
+  });
+  await apiCall(request, "put", `/agents/${agent.id}`, {
+    status: "idle",
+  });
+
+  return { agent, task };
+}
 
 test.describe("Refinement Feedback (E2E)", () => {
   test.beforeEach(async ({ page, request }) => {
@@ -78,6 +103,47 @@ test.describe("Refinement Feedback (E2E)", () => {
     expect(updated.status).toBe("refinement");
   });
 
+  test("feedback on assigned idle refinement task restarts once and records exactly 2 stage transitions", async ({ request }) => {
+    const { task } = await createAssignedIdleRefinementTask(request);
+
+    const beforeTerminalRes = await apiCall(request, "get", `/tasks/${task.id}/terminal`);
+    expect(beforeTerminalRes.ok()).toBeTruthy();
+    const beforeTerminal = await beforeTerminalRes.json() as {
+      stage_transitions: Array<{ from: string; to: string }>;
+    };
+
+    const beforeFeedback = Date.now();
+    const feedbackRes = await apiCall(request, "post", `/tasks/${task.id}/feedback`, {
+      content: "Revise the plan to make rollback handling explicit.",
+    });
+    expect(feedbackRes.ok()).toBeTruthy();
+    const feedbackBody = await feedbackRes.json();
+    expect(feedbackBody.sent).toBe(true);
+    expect(feedbackBody.restarted).toBe(true);
+
+    const terminalRes = await apiCall(request, "get", `/tasks/${task.id}/terminal`);
+    expect(terminalRes.ok()).toBeTruthy();
+    const terminal = await terminalRes.json() as {
+      stage_transitions: Array<{ from: string; to: string }>;
+      task_logs: Array<{ message: string }>;
+    };
+
+    const feedbackTransitions = terminal.stage_transitions.slice(beforeTerminal.stage_transitions.length);
+    expect(feedbackTransitions).toHaveLength(2);
+    expect(feedbackTransitions[0]).toMatchObject({ from: "refinement", to: "inbox" });
+    expect(feedbackTransitions[1]).toMatchObject({ from: "inbox", to: "refinement" });
+    expect(
+      terminal.task_logs.filter((log) => log.message.includes("Returning to inbox before re-entering refinement.")),
+    ).toHaveLength(1);
+
+    const updatedRes = await apiCall(request, "get", `/tasks/${task.id}`);
+    expect(updatedRes.ok()).toBeTruthy();
+    const updated = await updatedRes.json();
+    expect(updated.status).toBe("refinement");
+    expect(Number(updated.refinement_revision_requested_at)).toBeGreaterThanOrEqual(beforeFeedback);
+    expect(updated.refinement_revision_completed_at).toBeFalsy();
+  });
+
   test("feedback on non-refinement task does not produce refinement transitions", async ({ request }) => {
     const taskRes = await apiCall(request, "post", "/tasks", {
       title: "Non-Refinement Feedback E2E",
@@ -142,6 +208,28 @@ test.describe("Refinement Feedback (E2E)", () => {
       content: "   ",
     });
     expect(feedbackRes.status()).toBe(400);
+  });
+
+  test("feedback trims surrounding whitespace before storing logs on assigned idle refinement task", async ({ request }) => {
+    const { task } = await createAssignedIdleRefinementTask(request);
+
+    const feedbackRes = await apiCall(request, "post", `/tasks/${task.id}/feedback`, {
+      content: "   Tighten acceptance criteria and boundary checks.   ",
+    });
+    expect(feedbackRes.ok()).toBeTruthy();
+    const feedbackBody = await feedbackRes.json();
+    expect(feedbackBody.restarted).toBe(true);
+
+    const logsRes = await apiCall(request, "get", `/tasks/${task.id}/logs`);
+    expect(logsRes.ok()).toBeTruthy();
+    const logs = await logsRes.json() as Array<{ message: string }>;
+
+    expect(
+      logs.some((log) => log.message === "[CEO Feedback] Tighten acceptance criteria and boundary checks."),
+    ).toBe(true);
+    expect(
+      logs.some((log) => log.message === "[CEO Feedback]    Tighten acceptance criteria and boundary checks.   "),
+    ).toBe(false);
   });
 
   test("multiple rapid feedbacks on refinement task produce exactly one pair per feedback", async ({ request }) => {
