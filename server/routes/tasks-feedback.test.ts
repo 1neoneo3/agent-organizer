@@ -298,4 +298,168 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
       });
     }
   });
+
+  it("allows concurrent feedback spawns for different tasks", async () => {
+    const db = await createDb();
+    const agentId1 = randomUUID();
+    const agentId2 = randomUUID();
+    const taskId1 = randomUUID();
+    const taskId2 = randomUUID();
+    insertAgent(db, agentId1, "idle");
+    insertAgent(db, agentId2, "idle");
+    insertRefinementTask(db, taskId1, agentId1);
+    insertRefinementTask(db, taskId2, agentId2);
+
+    const spawnedTasks: string[] = [];
+    const resolvers: Array<() => void> = [];
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async (_db, _ws, _agent, task) => {
+        spawnedTasks.push(task.id);
+        await new Promise<void>((r) => { resolvers.push(r); });
+        return { pid: 9999 } as never;
+      },
+    });
+
+    try {
+      const response1 = await fetch(`${baseUrl}/tasks/${taskId1}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Task 1 feedback." }),
+      });
+      assert.equal(response1.status, 200);
+      assert.equal((await response1.json() as { restarted: boolean }).restarted, true);
+
+      const response2 = await fetch(`${baseUrl}/tasks/${taskId2}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Task 2 feedback." }),
+      });
+      assert.equal(response2.status, 200);
+      assert.equal(
+        (await response2.json() as { restarted: boolean }).restarted,
+        true,
+        "different tasks should not block each other",
+      );
+
+      assert.equal(spawnedTasks.length, 2);
+      assert.ok(spawnedTasks.includes(taskId1));
+      assert.ok(spawnedTasks.includes(taskId2));
+    } finally {
+      for (const r of resolvers) r();
+      await new Promise((r) => setTimeout(r, 10));
+      clearPendingSpawn(taskId1);
+      clearPendingSpawn(taskId2);
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("clears pending-spawn slot after successful spawn so next feedback is not blocked", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    let spawnCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        return { pid: 7777 } as never;
+      },
+    });
+
+    try {
+      const response1 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "First revision." }),
+      });
+      assert.equal(response1.status, 200);
+      assert.equal((await response1.json() as { restarted: boolean }).restarted, true);
+      assert.equal(spawnCalls, 1);
+
+      await new Promise((r) => setTimeout(r, 20));
+
+      const response2 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Second revision after first completed." }),
+      });
+      assert.equal(response2.status, 200);
+      const body2 = await response2.json() as { restarted: boolean };
+      assert.equal(body2.restarted, true, "second spawn should work after first completes");
+      assert.equal(spawnCalls, 2);
+    } finally {
+      await new Promise((r) => setTimeout(r, 10));
+      clearPendingSpawn(taskId);
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("persists feedback data even when concurrent spawn is blocked", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    let resolveSpawn!: () => void;
+    const { server, baseUrl, events } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        await new Promise<void>((r) => { resolveSpawn = r; });
+        return { pid: 3333 } as never;
+      },
+    });
+
+    try {
+      const response1 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "First feedback." }),
+      });
+      assert.equal(response1.status, 200);
+
+      const response2 = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Blocked feedback." }),
+      });
+      assert.equal(response2.status, 200);
+      const body2 = await response2.json() as { sent: boolean; restarted: boolean };
+      assert.equal(body2.sent, true, "feedback should still be recorded");
+      assert.equal(body2.restarted, false, "spawn should be blocked");
+
+      const messages = db.prepare(
+        "SELECT content FROM messages WHERE task_id = ? ORDER BY created_at ASC",
+      ).all(taskId) as Array<{ content: string }>;
+      assert.equal(messages.length, 2, "both feedback messages should be persisted");
+      assert.equal(messages[0].content, "First feedback.");
+      assert.equal(messages[1].content, "Blocked feedback.");
+
+      const logs = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '%[CEO Feedback]%' ORDER BY id ASC",
+      ).all(taskId) as Array<{ message: string }>;
+      assert.equal(logs.length, 2, "both feedback logs should be persisted");
+
+      const messageNewEvents = events.filter((e) => e.type === "message_new");
+      assert.equal(messageNewEvents.length, 2, "both message_new events should be broadcast");
+    } finally {
+      resolveSpawn();
+      await new Promise((r) => setTimeout(r, 10));
+      clearPendingSpawn(taskId);
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
 });
