@@ -37,7 +37,7 @@ export class LogBatchWriter {
       "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, ?, ?, ?, ?)",
     );
 
-    this.timer = setInterval(() => this.flush(), this.flushMs);
+    this.timer = setInterval(() => this.flushFromTimer(), this.flushMs);
     this.timer.unref?.();
   }
 
@@ -45,11 +45,16 @@ export class LogBatchWriter {
     return this.queue.length;
   }
 
+  /**
+   * `enqueue()` is on the stdout/stderr hot path, so its batch-size
+   * auto-flush must never throw. On failure we retain the queue in
+   * memory and rely on later auto/manual flush attempts to retry.
+   */
   enqueue(entry: LogEntry): void {
     if (this.closed) return;
     this.queue.push(entry);
     if (this.queue.length >= this.batchSize) {
-      this.flush();
+      this.flushWithoutThrow("batch-size");
     }
   }
 
@@ -64,11 +69,12 @@ export class LogBatchWriter {
     const batch = this.queue;
     this.queue = [];
 
-    const grouped = groupByTaskId(batch);
     const t0 = performance.now();
     try {
-      for (const entries of grouped.values()) {
-        this.flushGroup(entries);
+      const result = this.tryFlushEntries(batch);
+      if (!result.ok) {
+        this.requeue(result.pendingEntries);
+        throw result.error;
       }
     } finally {
       recordDbLogInsertMs(performance.now() - t0);
@@ -83,6 +89,7 @@ export class LogBatchWriter {
   flushForTask(taskId: string): void {
     if (this.closed) return;
 
+    const originalQueue = this.queue;
     const remaining: LogEntry[] = [];
     const target: LogEntry[] = [];
 
@@ -100,30 +107,51 @@ export class LogBatchWriter {
 
     const t0 = performance.now();
     try {
-      this.flushGroup(target);
+      const result = this.tryFlushEntries(target);
+      if (!result.ok) {
+        this.queue = originalQueue;
+        throw result.error;
+      }
     } finally {
       recordDbLogInsertMs(performance.now() - t0);
     }
   }
 
-  shutdown(): void {
+  shutdown(): boolean {
+    if (this.closed) return true;
+
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
     }
-    this.flush();
-    this.closed = true;
+
+    try {
+      this.flush();
+      this.closed = true;
+      return true;
+    } catch (error) {
+      this.reportFlushFailure("shutdown flush failed; retaining queued logs in memory", error);
+      return false;
+    }
   }
 
   private flushGroup(entries: LogEntry[]): void {
-    this.db.exec("BEGIN");
+    let transactionStarted = false;
     try {
+      this.db.exec("BEGIN");
+      transactionStarted = true;
       for (const entry of entries) {
         this.stmt.run(entry.taskId, entry.kind, entry.message, entry.stage, entry.agentId);
       }
       this.db.exec("COMMIT");
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      if (transactionStarted) {
+        try {
+          this.db.exec("ROLLBACK");
+        } catch (rollbackError) {
+          this.reportRollbackFailure(rollbackError, error);
+        }
+      }
       const isFkViolation =
         error instanceof Error &&
         /FOREIGN KEY constraint failed/i.test(error.message);
@@ -131,6 +159,66 @@ export class LogBatchWriter {
         throw error;
       }
     }
+  }
+
+  private flushFromTimer(): void {
+    if (this.closed || this.queue.length === 0) return;
+
+    this.flushWithoutThrow("timer");
+  }
+
+  private flushWithoutThrow(trigger: "batch-size" | "timer"): void {
+    try {
+      this.flush();
+    } catch (error) {
+      const message = trigger === "batch-size"
+        ? "batch-size auto-flush failed; retaining queued logs in memory for later flush/retry"
+        : "timer flush failed; retaining queued logs in memory for later flush/retry";
+      this.reportFlushFailure(message, error);
+    }
+  }
+
+  private tryFlushEntries(entries: LogEntry[]): FlushResult {
+    const grouped = groupByTaskId(entries);
+    const orderedTaskIds = [...grouped.keys()];
+
+    for (let index = 0; index < orderedTaskIds.length; index += 1) {
+      const taskId = orderedTaskIds[index];
+      const group = grouped.get(taskId);
+      if (!group) continue;
+
+      try {
+        this.flushGroup(group);
+      } catch (error) {
+        const pendingTaskIds = new Set(orderedTaskIds.slice(index));
+        return {
+          ok: false,
+          error,
+          pendingEntries: entries.filter((entry) => pendingTaskIds.has(entry.taskId)),
+        };
+      }
+    }
+
+    return { ok: true };
+  }
+
+  private requeue(entries: LogEntry[]): void {
+    if (entries.length === 0) return;
+    this.queue = [...entries, ...this.queue];
+  }
+
+  private reportFlushFailure(message: string, error: unknown): void {
+    console.error(
+      `[log-batch-writer] ${message} (pending=${this.pendingCount})`,
+      error,
+    );
+  }
+
+  private reportRollbackFailure(rollbackError: unknown, originalError: unknown): void {
+    console.error(
+      "[log-batch-writer] rollback failed while handling log batch error; preserving original error",
+      { rollbackError, originalError },
+    );
   }
 }
 
@@ -164,3 +252,7 @@ function groupByTaskId(entries: LogEntry[]): Map<string, LogEntry[]> {
   }
   return map;
 }
+
+type FlushResult =
+  | { ok: true }
+  | { ok: false; error: unknown; pendingEntries: LogEntry[] };

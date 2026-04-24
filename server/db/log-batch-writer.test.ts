@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "node:test";
 import { SCHEMA_SQL } from "./schema.js";
 
 import type { TaskLogKind } from "../types/runtime.js";
+import type { StatementSync } from "node:sqlite";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -39,6 +40,26 @@ function getAllLogs(
   return db.prepare(
     "SELECT kind, message, stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id",
   ).all(taskId) as Array<{ kind: string; message: string; stage: string | null; agent_id: string | null }>;
+}
+
+function createMockDb(options?: {
+  exec?: (sql: string) => void;
+  run?: (...args: unknown[]) => void;
+}): DatabaseSync {
+  const stmt = {
+    run(...args: unknown[]) {
+      options?.run?.(...args);
+    },
+  } as unknown as StatementSync;
+
+  return {
+    prepare() {
+      return stmt;
+    },
+    exec(sql: string) {
+      options?.exec?.(sql);
+    },
+  } as unknown as DatabaseSync;
 }
 
 const ORIGINAL_BATCH_SIZE = process.env.AO_LOG_BATCH_SIZE;
@@ -135,6 +156,47 @@ describe("LogBatchWriter", () => {
       assert.equal(getLogCount(db), 3);
 
       writer.shutdown();
+    });
+
+    it("keeps process-manager hot-path enqueue safe by not throwing from batch-size auto-flush failures", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db);
+      const writer = new LogBatchWriter(db, { batchSize: 2, flushMs: 60_000 });
+
+      const restoreConsoleError = console.error;
+      const loggedErrors: unknown[][] = [];
+      console.error = (...args: unknown[]) => {
+        loggedErrors.push(args);
+      };
+
+      try {
+        writer.enqueue({ taskId: "task-1", kind: "stdout", message: "safe hot-path entry", stage: null, agentId: null });
+        assert.doesNotThrow(() => {
+          writer.enqueue({
+            taskId: "task-1",
+            kind: "invalid_kind" as TaskLogKind,
+            message: "bad hot-path entry",
+            stage: null,
+            agentId: null,
+          });
+        });
+
+        assert.equal(getLogCount(db), 0);
+        assert.equal(writer.pendingCount, 2);
+        assert.equal(
+          loggedErrors.some(
+            ([message]) =>
+              typeof message === "string"
+              && message.includes("batch-size auto-flush failed; retaining queued logs in memory for later flush/retry"),
+          ),
+          true,
+        );
+        assert.equal(writer.shutdown(), false);
+      } finally {
+        console.error = restoreConsoleError;
+      }
     });
   });
 
@@ -245,6 +307,52 @@ describe("LogBatchWriter", () => {
 
       writer.shutdown();
     });
+
+    it("does not surface non-FK errors as uncaught exceptions and keeps the batch queued", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db);
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 20 });
+
+      const uncaughtErrors: unknown[] = [];
+      const loggedErrors: unknown[][] = [];
+      const onUncaughtException = (error: unknown) => {
+        uncaughtErrors.push(error);
+      };
+      const originalConsoleError = console.error;
+      console.error = (...args: unknown[]) => {
+        loggedErrors.push(args);
+      };
+      process.once("uncaughtException", onUncaughtException);
+
+      try {
+        writer.enqueue({
+          taskId: "task-1",
+          kind: "invalid_kind" as TaskLogKind,
+          message: "bad timer batch",
+          stage: null,
+          agentId: null,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 70));
+
+        assert.equal(uncaughtErrors.length, 0);
+        assert.equal(getLogCount(db), 0);
+        assert.equal(writer.pendingCount, 1);
+        assert.equal(loggedErrors.length > 0, true);
+      } finally {
+        process.removeListener("uncaughtException", onUncaughtException);
+        console.error = originalConsoleError;
+        const originalShutdownConsoleError = console.error;
+        console.error = () => {};
+        try {
+          writer.shutdown();
+        } finally {
+          console.error = originalShutdownConsoleError;
+        }
+      }
+    });
   });
 
   describe("shutdown", () => {
@@ -282,6 +390,39 @@ describe("LogBatchWriter", () => {
       writer.enqueue({ taskId: "task-1", kind: "stdout", message: "after shutdown", stage: null, agentId: null });
       assert.equal(writer.pendingCount, 0);
     });
+
+    it("returns false and keeps pending entries queued when flush fails during shutdown", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db);
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      const originalConsoleError = console.error;
+      const loggedErrors: unknown[][] = [];
+      console.error = (...args: unknown[]) => {
+        loggedErrors.push(args);
+      };
+
+      try {
+        writer.enqueue({
+          taskId: "task-1",
+          kind: "invalid_kind" as TaskLogKind,
+          message: "bad shutdown batch",
+          stage: null,
+          agentId: null,
+        });
+
+        const drained = writer.shutdown();
+
+        assert.equal(drained, false);
+        assert.equal(getLogCount(db), 0);
+        assert.equal(writer.pendingCount, 1);
+        assert.equal(loggedErrors.length > 0, true);
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
   });
 
   describe("error handling", () => {
@@ -315,7 +456,14 @@ describe("LogBatchWriter", () => {
       });
 
       assert.throws(() => writer.flush());
-      writer.shutdown();
+
+      const originalConsoleError = console.error;
+      console.error = () => {};
+      try {
+        writer.shutdown();
+      } finally {
+        console.error = originalConsoleError;
+      }
     });
 
     it("rolls back the entire batch on non-FK error", async () => {
@@ -336,7 +484,93 @@ describe("LogBatchWriter", () => {
 
       try { writer.flush(); } catch { /* expected */ }
       assert.equal(getLogCount(db), 0, "all entries should be rolled back");
-      writer.shutdown();
+
+      const originalConsoleError = console.error;
+      console.error = () => {};
+      try {
+        writer.shutdown();
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    it("re-queues the failed batch on non-FK error", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db);
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "good entry", stage: null, agentId: null });
+      writer.enqueue({
+        taskId: "task-1",
+        kind: "invalid_kind" as TaskLogKind,
+        message: "bad entry",
+        stage: null,
+        agentId: null,
+      });
+
+      assert.throws(() => writer.flush());
+      assert.equal(getLogCount(db), 0);
+      assert.equal(writer.pendingCount, 2);
+
+      const originalConsoleError = console.error;
+      console.error = () => {};
+      try {
+        assert.equal(writer.shutdown(), false);
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    it("re-queues entries when BEGIN fails before the transaction starts", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const beginError = new Error("BEGIN failed");
+      const db = createMockDb({
+        exec(sql) {
+          if (sql === "BEGIN") throw beginError;
+        },
+      });
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({ taskId: "task-1", kind: "stdout", message: "line 1", stage: null, agentId: null });
+
+      assert.throws(() => writer.flush(), (error) => error === beginError);
+      assert.equal(writer.pendingCount, 1);
+
+      const originalConsoleError = console.error;
+      console.error = () => {};
+      try {
+        assert.equal(writer.shutdown(), false);
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    it("preserves the original error when rollback also fails", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const runError = new Error("insert failed");
+      const rollbackError = new Error("rollback failed");
+      const db = createMockDb({
+        exec(sql) {
+          if (sql === "ROLLBACK") throw rollbackError;
+        },
+        run() {
+          throw runError;
+        },
+      });
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      const originalConsoleError = console.error;
+      console.error = () => {};
+      try {
+        writer.enqueue({ taskId: "task-1", kind: "stdout", message: "line 1", stage: null, agentId: null });
+        assert.throws(() => writer.flush(), (error) => error === runError);
+        assert.equal(writer.pendingCount, 1);
+        assert.equal(writer.shutdown(), false);
+      } finally {
+        console.error = originalConsoleError;
+      }
     });
   });
 
@@ -575,6 +809,37 @@ describe("LogBatchWriter", () => {
 
       writer.shutdown();
       assert.equal(getLogCount(db, "task-1"), 1);
+    });
+
+    it("restores the original queue when flushForTask hits a non-FK error", async () => {
+      const { LogBatchWriter } = await import("./log-batch-writer.js");
+      const db = createDb();
+      seedAgent(db);
+      seedTask(db, "task-1");
+      seedTask(db, "task-2");
+      const writer = new LogBatchWriter(db, { batchSize: 1000, flushMs: 60_000 });
+
+      writer.enqueue({
+        taskId: "task-1",
+        kind: "invalid_kind" as TaskLogKind,
+        message: "bad task-1 entry",
+        stage: null,
+        agentId: null,
+      });
+      writer.enqueue({ taskId: "task-2", kind: "stdout", message: "task-2 entry", stage: null, agentId: null });
+
+      assert.throws(() => writer.flushForTask("task-1"));
+      assert.equal(getLogCount(db, "task-1"), 0);
+      assert.equal(getLogCount(db, "task-2"), 0);
+      assert.equal(writer.pendingCount, 2);
+
+      const originalConsoleError = console.error;
+      console.error = () => {};
+      try {
+        assert.equal(writer.shutdown(), false);
+      } finally {
+        console.error = originalConsoleError;
+      }
     });
   });
 

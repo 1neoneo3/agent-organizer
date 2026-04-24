@@ -19,6 +19,7 @@ import { startGithubIssueSync } from "./integrations/github-sync.js";
 import { isPerfLogEnabled, startPerfReporter } from "./perf/metrics.js";
 import { initHeartbeatManager } from "./spawner/heartbeat-manager.js";
 import { initLogBatchWriter } from "./db/log-batch-writer.js";
+import { createLogDrainShutdownHandler } from "./graceful-shutdown.js";
 import {
   PORT,
   IS_DEV,
@@ -118,17 +119,31 @@ startGithubIssueSync(db, wsHub, cache);
 startAutoDispatchScheduler(db, wsHub, cache);
 
 // Graceful shutdown: flush pending log writes before the process exits.
-function shutdownLogWriter(): void {
-  try { logBatchWriter.shutdown(); } catch { /* best-effort */ }
+function shutdownLogWriter(): boolean {
+  return logBatchWriter.shutdown();
 }
 
+let serverCloseStarted = false;
+const handleTerminationSignal = createLogDrainShutdownHandler({
+  shutdownLogWriter,
+  exit: (code) => process.exit(code),
+  onFirstSignal: (signal) => {
+    console.info(`[shutdown] ${signal}: stopping HTTP server and draining queued logs before exit`);
+    if (serverCloseStarted) return;
+    serverCloseStarted = true;
+    server.close((error) => {
+      if (error) {
+        console.error("[shutdown] server.close failed", error);
+      }
+    });
+  },
+});
+
 process.on("SIGINT", () => {
-  shutdownLogWriter();
-  process.exit(0);
+  handleTerminationSignal("SIGINT");
 });
 process.on("SIGTERM", () => {
-  shutdownLogWriter();
-  process.exit(0);
+  handleTerminationSignal("SIGTERM");
 });
 
 // Fatal error safety net: log the incident and exit cleanly so the process
