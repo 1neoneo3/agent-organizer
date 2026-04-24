@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -179,6 +179,17 @@ export function resolveRequestedAgentId(
   return requestedAgentId ?? taskAssignedAgentId ?? undefined;
 }
 
+function sendMeasuredJson(
+  res: Response,
+  route: string,
+  startedAt: number,
+  payload: unknown,
+): void {
+  const body = JSON.stringify(payload);
+  recordReadApi(route, performance.now() - startedAt, Buffer.byteLength(body));
+  res.type("application/json").send(body);
+}
+
 function nextTaskNumber(db: RuntimeContext["db"]): string {
   const row = db.prepare(
     "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
@@ -222,9 +233,8 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
     const cached = await cache.get(cacheKey);
     if (cached) {
-      const body = JSON.stringify(cached);
-      recordReadApi("/tasks", performance.now() - t0, Buffer.byteLength(body));
-      return res.json(cached);
+      sendMeasuredJson(res, "/tasks", t0, cached);
+      return;
     }
 
     const tasks = status
@@ -232,29 +242,26 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       : db.prepare("SELECT * FROM tasks ORDER BY priority DESC, created_at DESC").all();
 
     await cache.set(cacheKey, tasks, 10);
-    const body = JSON.stringify(tasks);
-    recordReadApi("/tasks", performance.now() - t0, Buffer.byteLength(body));
-    res.json(tasks);
+    sendMeasuredJson(res, "/tasks", t0, tasks);
   });
 
   // GET /tasks/interactive-prompts — return all pending interactive prompts
   // Must be before /tasks/:id to avoid being caught by the param route
   router.get("/tasks/interactive-prompts", (_req, res) => {
+    const t0 = performance.now();
     const all = getAllPendingInteractivePrompts();
     const result: Array<{ task_id: string } & Record<string, unknown>> = [];
     for (const [taskId, entry] of all) {
       result.push({ task_id: taskId, ...entry.data });
     }
-    res.json(result);
+    sendMeasuredJson(res, "/tasks/interactive-prompts", t0, result);
   });
 
   router.get("/tasks/:id", (req, res) => {
     const t0 = performance.now();
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
     if (!task) return res.status(404).json({ error: "not_found" });
-    const body = JSON.stringify(task);
-    recordReadApi("/tasks/:id", performance.now() - t0, Buffer.byteLength(body));
-    res.json(task);
+    sendMeasuredJson(res, "/tasks/:id", t0, task);
   });
 
   router.post("/tasks", async (req, res) => {
@@ -483,12 +490,13 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
 
   // GET /tasks/:id/settings — return overrides + the allow-list of keys
   router.get("/tasks/:id/settings", (req, res) => {
+    const t0 = performance.now();
     const task = db
       .prepare("SELECT settings_overrides FROM tasks WHERE id = ?")
       .get(req.params.id) as { settings_overrides: string | null } | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     const overrides = safeParseOverrides(task.settings_overrides) ?? {};
-    res.json({
+    sendMeasuredJson(res, "/tasks/:id/settings", t0, {
       task_id: req.params.id,
       overrides,
       allowed_keys: TASK_OVERRIDABLE_KEYS,
@@ -1023,9 +1031,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
       }
       return row;
     });
-    const body = JSON.stringify(truncated);
-    recordReadApi("/tasks/:id/logs", performance.now() - t0, Buffer.byteLength(body));
-    res.json(truncated);
+    sendMeasuredJson(res, "/tasks/:id/logs", t0, truncated);
   });
 
   // Terminal view: pretty-printed log file + DB logs
@@ -1084,9 +1090,7 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
         };
       }),
     };
-    const body = JSON.stringify(result);
-    recordReadApi("/tasks/:id/terminal", performance.now() - t0, Buffer.byteLength(body));
-    res.json(result);
+    sendMeasuredJson(res, "/tasks/:id/terminal", t0, result);
   });
 
   // CEO Feedback: send directive to a task (in_progress or finished)
