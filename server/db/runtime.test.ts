@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -694,5 +694,107 @@ describe("initializeDb", () => {
       child.refinement_completed_at !== null,
       "child task must carry refinement_completed_at so spawnAgent skips refinement",
     );
+  });
+});
+
+describe("initializeDb dbPath parameter", () => {
+  it("accepts :memory: and returns a fully-migrated in-memory database", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const db = initializeDb(":memory:");
+
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
+    ).map((r) => r.name);
+
+    assert.ok(tables.includes("tasks"), "tasks table should exist");
+    assert.ok(tables.includes("agents"), "agents table should exist");
+    assert.ok(tables.includes("task_logs"), "task_logs table should exist");
+    assert.ok(tables.includes("settings"), "settings table should exist");
+
+    const cols = (
+      db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    assert.ok(cols.includes("refinement_plan"), "migration columns should be applied");
+    assert.ok(cols.includes("refinement_completed_at"), "migration columns should be applied");
+    assert.ok(cols.includes("settings_overrides"), "migration columns should be applied");
+    assert.ok(cols.includes("planned_files"), "migration columns should be applied");
+
+    db.close();
+  });
+
+  it("does not create any file on disk when using :memory:", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const markerDir = mkdtempSync(join(tmpdir(), "ao-memcheck-"));
+    const ghostPath = join(markerDir, "should-not-exist.db");
+
+    const db = initializeDb(":memory:");
+
+    assert.ok(!existsSync(ghostPath), "no file should be created for :memory: databases");
+
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-mem", "mem-agent", "claude", "idle", now, now);
+
+    assert.ok(!existsSync(ghostPath), "writes to :memory: DB must not create disk files");
+    db.close();
+  });
+
+  it("creates a database at the specified custom path", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const customDir = mkdtempSync(join(tmpdir(), "ao-custom-"));
+    const customPath = join(customDir, "custom.db");
+
+    assert.ok(!existsSync(customPath), "DB file should not exist before init");
+    const db = initializeDb(customPath);
+    assert.ok(existsSync(customPath), "DB file should be created at the custom path");
+
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>
+    ).map((r) => r.name);
+    assert.ok(tables.includes("tasks"), "custom-path DB should have full schema");
+
+    db.close();
+  });
+
+  it("allows independent :memory: databases across successive calls without env manipulation", async () => {
+    const { initializeDb } = await import("./runtime.js");
+
+    const db1 = initializeDb(":memory:");
+    const now = Date.now();
+    db1.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-iso-1", "iso-1", "claude", "idle", now, now);
+
+    const db2 = initializeDb(":memory:");
+    const agents = db2
+      .prepare("SELECT id FROM agents")
+      .all() as Array<{ id: string }>;
+
+    assert.ok(
+      !agents.some((a) => a.id === "agent-iso-1"),
+      "a fresh :memory: call must not carry over data from a prior :memory: database",
+    );
+
+    db2.close();
+  });
+
+  it("works with static import (no dynamic import or process.env.DB_PATH required)", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const savedDbPath = process.env.DB_PATH;
+    delete process.env.DB_PATH;
+
+    try {
+      const db = initializeDb(":memory:");
+      const tables = (
+        db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+      ).map((r) => r.name);
+      assert.ok(tables.includes("tasks"), "initializeDb(:memory:) must work without DB_PATH env");
+      db.close();
+    } finally {
+      if (savedDbPath !== undefined) {
+        process.env.DB_PATH = savedDbPath;
+      }
+    }
   });
 });

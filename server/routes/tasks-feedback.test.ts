@@ -2,16 +2,13 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { before, after, afterEach, describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
 import { createTasksRouter } from "./tasks.js";
-
-const TEST_DB_PATH = join(tmpdir(), `ao-feedback-route-${process.pid}-${Date.now()}.db`);
-process.env.DB_PATH = TEST_DB_PATH;
+import { initializeDb } from "../db/runtime.js";
 
 function createCache(): CacheService {
   return {
@@ -39,9 +36,8 @@ function createWsRecorder() {
   };
 }
 
-async function createDb(): Promise<DatabaseSync> {
-  const { initializeDb } = await import("../db/runtime.js");
-  return initializeDb();
+function createDb(): DatabaseSync {
+  return initializeDb(":memory:");
 }
 
 async function startServer(
@@ -94,21 +90,12 @@ function getTransitions(db: DatabaseSync, taskId: string): string[] {
 }
 
 describe("POST /tasks/:id/feedback refinement regressions", () => {
-  before(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
-
-  after(() => {
-    rmSync(TEST_DB_PATH, { force: true });
-  });
-
   afterEach(() => {
     rmSync(join("data", "feedback"), { recursive: true, force: true });
-    rmSync(TEST_DB_PATH, { force: true });
   });
 
   it("records one refinement round-trip when an active child process is restarted", async () => {
-    const db = await createDb();
+    const db = createDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "working");
@@ -152,7 +139,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
   });
 
   it("does not duplicate transitions when feedback falls through to idle-agent respawn", async () => {
-    const db = await createDb();
+    const db = createDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "idle");
