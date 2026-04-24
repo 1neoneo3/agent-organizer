@@ -1,6 +1,6 @@
 import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
@@ -195,6 +195,39 @@ function nextTaskNumber(db: RuntimeContext["db"]): string {
     "SELECT MAX(CAST(SUBSTR(task_number, 2) AS INTEGER)) AS max_num FROM tasks WHERE task_number LIKE '#%'"
   ).get() as { max_num: number | null } | undefined;
   return `#${(row?.max_num ?? 0) + 1}`;
+}
+
+class RouteResponseError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: unknown,
+  ) {
+    super(`HTTP ${status}`);
+  }
+}
+
+type FileSnapshot =
+  | { existed: true; content: string }
+  | { existed: false };
+
+function captureFileSnapshot(path: string): FileSnapshot {
+  if (!existsSync(path)) {
+    return { existed: false };
+  }
+
+  return {
+    existed: true,
+    content: readFileSync(path, "utf-8"),
+  };
+}
+
+function restoreFileSnapshot(path: string, snapshot: FileSnapshot): void {
+  if (!snapshot.existed) {
+    rmSync(path, { force: true });
+    return;
+  }
+
+  writeFileSync(path, snapshot.content, "utf-8");
 }
 
 function fetchTaskById(
@@ -1093,7 +1126,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
-    const schema = z.object({ content: z.string().min(1) });
+    const schema = z.object({ content: z.string().trim().min(1) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1102,16 +1135,20 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     }
     feedbackInFlight.add(task.id);
 
+    const feedbackPath = join("data", "feedback", `${task.id}.md`);
+    const feedbackSnapshot = captureFileSnapshot(feedbackPath);
+    let shouldRestoreFeedbackFile = false;
+
     try {
       const { content } = parsed.data;
       const now = Date.now();
       const timestamp = new Date(now).toISOString();
 
-      // File I/O outside transaction — if this fails, no DB mutation occurs
       const feedbackDir = join("data", "feedback");
       mkdirSync(feedbackDir, { recursive: true });
-      const feedbackPath = join(feedbackDir, `${task.id}.md`);
+
       appendFileSync(feedbackPath, `\n---\n## CEO Feedback (${timestamp})\n\n${content}\n`, "utf-8");
+      shouldRestoreFeedbackFile = true;
 
       const previousStatus = task.status;
       const isRefinementRevision = previousStatus === "refinement";
@@ -1126,11 +1163,11 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         const current = db.prepare("SELECT status, completed_at FROM tasks WHERE id = ?").get(task.id) as { status: string; completed_at: number | null } | undefined;
         if (!current) {
           db.exec("ROLLBACK");
-          return res.status(404).json({ error: "not_found" });
+          throw new RouteResponseError(404, { error: "not_found" });
         }
         if (current.status !== task.status) {
           db.exec("ROLLBACK");
-          return res.status(409).json({ error: "status_changed", expected_status: task.status, current_status: current.status });
+          throw new RouteResponseError(409, { error: "status_changed", expected_status: task.status, current_status: current.status });
         }
         freshCompletedAt = current.completed_at;
 
@@ -1165,6 +1202,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         }
 
         db.exec("COMMIT");
+        shouldRestoreFeedbackFile = false;
       } catch (txErr) {
         try { db.exec("ROLLBACK"); } catch { /* double-fault guard */ }
         throw txErr;
@@ -1214,11 +1252,11 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         const current = fetchTaskById(db, task.id);
         if (!current) {
           db.exec("ROLLBACK");
-          return res.status(404).json({ error: "not_found" });
+          throw new RouteResponseError(404, { error: "not_found" });
         }
         if (current.status !== task.status) {
           db.exec("ROLLBACK");
-          return res.status(409).json({ error: "status_changed", expected_status: task.status, current_status: current.status });
+          throw new RouteResponseError(409, { error: "status_changed", expected_status: task.status, current_status: current.status });
         }
 
         if (previousStatus === "refinement") {
@@ -1261,6 +1299,21 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       });
 
       res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
+    } catch (error) {
+      if (shouldRestoreFeedbackFile) {
+        try {
+          restoreFileSnapshot(feedbackPath, feedbackSnapshot);
+        } catch {
+          // Best-effort cleanup only; preserve the original failure below.
+        }
+      }
+
+      if (error instanceof RouteResponseError) {
+        return res.status(error.status).json(error.body);
+      }
+
+      console.error(`[tasks.feedback] failed for task ${task.id}:`, error);
+      return res.status(500).json({ error: "feedback_failed" });
     } finally {
       feedbackInFlight.delete(task.id);
     }

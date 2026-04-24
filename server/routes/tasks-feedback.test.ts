@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { before, after, afterEach, describe, it } from "node:test";
@@ -296,6 +296,43 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
     }
   });
 
+  it("rolls back feedback file append when DB work fails", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const feedbackDir = join("data", "feedback");
+    const feedbackPath = join(feedbackDir, `${taskId}.md`);
+    const existingContent = "# Existing feedback\n";
+    rmSync(feedbackDir, { recursive: true, force: true });
+    mkdirSync(feedbackDir, { recursive: true });
+    writeFileSync(feedbackPath, existingContent, "utf-8");
+
+    db.exec("DROP TABLE messages");
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 } as never),
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Should not leak into the file." }),
+      });
+      assert.equal(response.status, 500);
+      assert.equal(readFileSync(feedbackPath, "utf-8"), existingContent);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("concurrency guard is released after a failed request (next request succeeds)", async () => {
     const db = await createDb();
     const agentId = randomUUID();
@@ -394,6 +431,31 @@ describe("POST /tasks/:id/feedback — validation and edge cases", () => {
         body: JSON.stringify({ content: "" }),
       });
       assert.equal(response.status, 400);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("returns 400 for whitespace-only content", async () => {
+    const db = await createDb();
+    const taskId = randomUUID();
+    insertTask(db, taskId, null, "in_progress");
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => ({ pid: 1234 } as never),
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: " \n\t " }),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(existsSync(join("data", "feedback", `${taskId}.md`)), false);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
