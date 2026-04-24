@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import {
+  buildSpawnStartTaskUpdate,
   buildRefinementRevisionPrompt,
   createPlanBlockTracker,
   determineCompletionStatus,
@@ -119,6 +120,44 @@ function insertLog(
     "INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, ?, ?, ?)",
   ).run(taskId, kind, message, createdAt);
 }
+
+describe("buildSpawnStartTaskUpdate", () => {
+  it("clears completed_at when an auto-stage restarts without changing status", () => {
+    const update = buildSpawnStartTaskUpdate(
+      { id: "t-auto", status: "qa_testing" },
+      "agent-qa",
+      5_000,
+      false,
+    );
+
+    assert.deepStrictEqual(update, {
+      id: "t-auto",
+      status: "qa_testing",
+      assigned_agent_id: "agent-qa",
+      started_at: 5_000,
+      completed_at: null,
+      updated_at: 5_000,
+    });
+  });
+
+  it("transitions inbox runs into refinement when refinement is the first stage", () => {
+    const update = buildSpawnStartTaskUpdate(
+      { id: "t-refine", status: "inbox" },
+      "agent-refine",
+      9_000,
+      true,
+    );
+
+    assert.deepStrictEqual(update, {
+      id: "t-refine",
+      status: "refinement",
+      assigned_agent_id: "agent-refine",
+      started_at: 9_000,
+      completed_at: null,
+      updated_at: 9_000,
+    });
+  });
+});
 
 describe("extractGithubArtifactsFromLogs", () => {
   it("returns nulls when no GitHub URL appears in any log", () => {

@@ -198,6 +198,27 @@ export function getCapturedSessionId(taskId: string): string | undefined {
   return capturedSessionIds.get(taskId);
 }
 
+export function buildSpawnStartTaskUpdate(
+  task: Pick<Task, "id" | "status">,
+  agentId: string,
+  now: number,
+  isRefinementRun: boolean,
+): Pick<Task, "id" | "status" | "assigned_agent_id" | "started_at" | "completed_at" | "updated_at"> {
+  const nextStatus =
+    task.status === "inbox"
+      ? (isRefinementRun ? "refinement" : "in_progress")
+      : task.status;
+
+  return {
+    id: task.id,
+    status: nextStatus,
+    assigned_agent_id: agentId,
+    started_at: now,
+    completed_at: null,
+    updated_at: now,
+  };
+}
+
 /** Queue feedback for a running task: kills the process and respawns with --resume */
 export function queueFeedbackAndRestart(taskId: string, message: string, previousStatus: string): boolean {
   const child = activeProcesses.get(taskId);
@@ -951,9 +972,13 @@ export async function spawnAgent(
   // Update task and agent status (skip for continue — already in_progress)
   if (!isContinue) {
     const now = Date.now();
-    // Preserve current status for QA/review/test_generation runs — only set in_progress for inbox tasks
-    const currentStatus = task.status;
-    const shouldTransitionFromInbox = currentStatus === "inbox";
+    // Preserve current status for QA/review/test_generation runs — only set
+    // in_progress/refinement for inbox tasks. Every fresh spawn clears any
+    // stale completed_at from the previous stage/run so started_at/completed_at
+    // stays monotonic and the UI does not merge a "completed" marker into the
+    // newly-started auto-stage.
+    const startUpdate = buildSpawnStartTaskUpdate(task, agent.id, now, isRefinementRun);
+    const shouldTransitionFromInbox = task.status === "inbox";
     if (isParallelTester) {
       // The implementer "owns" assigned_agent_id / started_at / status.
       // The parallel tester must not overwrite them — it just borrows the
@@ -961,12 +986,13 @@ export async function spawnAgent(
       // Only flip the *tester* agent to working so the UI shows both
       // agents busy during parallel execution.
     } else if (shouldTransitionFromInbox) {
-      // When refinement is the first active stage, transition to refinement
-      // instead of in_progress so the pipeline gate is respected.
-      const firstStage = isRefinementRun ? "refinement" : "in_progress";
-      db.prepare("UPDATE tasks SET status = ?, assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(firstStage, agent.id, now, now, task.id);
+      db.prepare(
+        "UPDATE tasks SET status = ?, assigned_agent_id = ?, started_at = ?, completed_at = NULL, updated_at = ? WHERE id = ?",
+      ).run(startUpdate.status, startUpdate.assigned_agent_id, startUpdate.started_at, startUpdate.updated_at, task.id);
     } else {
-      db.prepare("UPDATE tasks SET assigned_agent_id = ?, started_at = ?, updated_at = ? WHERE id = ?").run(agent.id, now, now, task.id);
+      db.prepare(
+        "UPDATE tasks SET assigned_agent_id = ?, started_at = ?, completed_at = NULL, updated_at = ? WHERE id = ?",
+      ).run(startUpdate.assigned_agent_id, startUpdate.started_at, startUpdate.updated_at, task.id);
     }
     // Atomic idle guard: only transition the agent if it is currently idle.
     // If another spawn grabbed it first (race with orphan-recovery tick /
@@ -984,16 +1010,7 @@ export async function spawnAgent(
     invalidateCaches(cache);
     ws.broadcast(
       "task_update",
-      pickTaskUpdate(
-        {
-          id: task.id,
-          status: shouldTransitionFromInbox ? (isRefinementRun ? "refinement" : "in_progress") : currentStatus,
-          assigned_agent_id: agent.id,
-          started_at: now,
-          updated_at: now,
-        },
-        ["status", "assigned_agent_id", "started_at", "updated_at"],
-      ),
+      pickTaskUpdate(startUpdate, ["status", "assigned_agent_id", "started_at", "completed_at", "updated_at"]),
     );
     ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
 
