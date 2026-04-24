@@ -15,6 +15,10 @@ import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE, isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
+import {
+  countAcceptanceCriteria,
+  setAcceptanceCriterionChecked,
+} from "../domain/acceptance-criteria.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
@@ -504,6 +508,62 @@ export function createTasksRouter(ctx: RuntimeContext): Router {
     db.prepare("UPDATE tasks SET settings_overrides = NULL, updated_at = ? WHERE id = ?").run(now, req.params.id);
     await invalidateTaskCaches();
     res.json({ task_id: req.params.id, overrides: {} });
+  });
+
+  // PATCH /tasks/:id/acceptance-criterion — toggle the N-th GFM checkbox
+  // in the refinement_plan. Only permitted during pr_review so reviewers
+  // can mark criteria as verified without letting any other stage mutate
+  // the plan text (refinement finalization owns the full rewrite path).
+  router.patch("/tasks/:id/acceptance-criterion", async (req, res) => {
+    const BodySchema = z.object({
+      index: z.number().int().nonnegative(),
+      checked: z.boolean(),
+    });
+    const parsed = BodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const { index, checked } = parsed.data;
+
+    const task = db
+      .prepare("SELECT id, status, refinement_plan FROM tasks WHERE id = ?")
+      .get(req.params.id) as
+      | { id: string; status: string; refinement_plan: string | null }
+      | undefined;
+    if (!task) return res.status(404).json({ error: "not_found" });
+    if (task.status !== "pr_review") {
+      return res.status(409).json({
+        error: "not_in_pr_review",
+        current_status: task.status,
+      });
+    }
+    if (!task.refinement_plan) {
+      return res.status(400).json({ error: "no_refinement_plan" });
+    }
+
+    const total = countAcceptanceCriteria(task.refinement_plan);
+    const { text } = setAcceptanceCriterionChecked(task.refinement_plan, index, checked);
+    if (!text) {
+      return res
+        .status(400)
+        .json({ error: "checkbox_index_out_of_range", index, total });
+    }
+
+    const now = Date.now();
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = ?, updated_at = ? WHERE id = ?",
+    ).run(text, now, task.id);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+    ).run(
+      task.id,
+      `Acceptance criterion #${index + 1} ${checked ? "checked" : "unchecked"} during pr_review.`,
+    );
+
+    await invalidateTaskCaches();
+    const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    ws.broadcast("task_update", updated);
+    res.json({ task: updated, index, checked, total });
   });
 
   // Run a task (spawn agent)

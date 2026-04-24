@@ -3,7 +3,7 @@ import { PanelLeft, PanelRight } from "lucide-react";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
 import { getRoleLabel, getRoleColorClass } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
-import { sendTaskFeedback, approveTask, rejectTask, splitTask } from "../../api/endpoints.js";
+import { sendTaskFeedback, approveTask, rejectTask, splitTask, toggleAcceptanceCriterion } from "../../api/endpoints.js";
 import { InteractivePromptPanel } from "./InteractivePromptPanel.js";
 import { MarkdownContent } from "./MarkdownContent.js";
 import type { Task, Agent, WSEventType, InteractivePrompt } from "../../types/index.js";
@@ -95,9 +95,11 @@ function formatDuration(ms: number | null): string {
 function RefinementPlanBlock({
   plan,
   testId = "refinement-plan-section",
+  onToggleCheckbox,
 }: {
   plan: string;
   testId?: string;
+  onToggleCheckbox?: (index: number, checked: boolean) => void;
 }) {
   const body = plan
     .replace(/^---REFINEMENT PLAN---\n?/, "")
@@ -113,7 +115,7 @@ function RefinementPlanBlock({
         padding: "12px",
         border: "1px solid var(--border-subtle)",
       }}>
-        <MarkdownContent content={body} />
+        <MarkdownContent content={body} onToggleCheckbox={onToggleCheckbox} />
       </div>
     </div>
   );
@@ -169,6 +171,24 @@ export function TaskDetailModal({
       setSendingFeedback(false);
     }
   };
+
+  // Only pr_review reviewers may tick off acceptance criteria; all other
+  // stages render the plan as read-only. The server enforces the same rule
+  // (`not_in_pr_review` 409), but gating in the UI prevents the optimistic
+  // checked state from flashing before the server rejects the call.
+  const handleToggleAcceptanceCriterion =
+    task.status === "pr_review" && task.refinement_plan
+      ? async (index: number, checked: boolean) => {
+          try {
+            await toggleAcceptanceCriterion(task.id, index, checked);
+            // The server broadcasts a task_update; useAppData merges it and
+            // the modal re-renders with the new refinement_plan text, so
+            // we intentionally do NOT mutate local state here.
+          } catch (err) {
+            console.error("Failed to toggle acceptance criterion:", err);
+          }
+        }
+      : undefined;
   const status = STATUS_LABELS[task.status] ?? { label: task.status, color: "var(--status-inbox)" };
   const sizeLabel = SIZE_LABELS[task.task_size] ?? task.task_size;
 
@@ -469,7 +489,10 @@ export function TaskDetailModal({
               below is gated on status === "refinement" so it never appears in
               this branch. */}
           {task.refinement_plan && task.status !== "refinement" && (
-            <RefinementPlanBlock plan={task.refinement_plan} />
+            <RefinementPlanBlock
+              plan={task.refinement_plan}
+              onToggleCheckbox={handleToggleAcceptanceCriterion}
+            />
           )}
 
           {/* Approve / Reject / Feedback — sticky at the bottom of the scroll

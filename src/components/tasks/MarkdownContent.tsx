@@ -1,9 +1,16 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useRef, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 interface MarkdownContentProps {
   content: string;
+  /**
+   * Enable GFM task-list checkbox interaction. When set, clicking an
+   * unchecked/checked `- [ ]` / `- [x]` item calls the handler with its
+   * 0-based index (in document order across the whole markdown). When
+   * omitted, checkboxes render as disabled — the remark-gfm default.
+   */
+  onToggleCheckbox?: (index: number, checked: boolean) => void;
 }
 
 const headingStyle = (level: 1 | 2 | 3 | 4 | 5 | 6): CSSProperties => {
@@ -107,9 +114,26 @@ const hrStyle: CSSProperties = {
   margin: "12px 0",
 };
 
-export function MarkdownContent({ content }: MarkdownContentProps): ReactNode {
+export function MarkdownContent({ content, onToggleCheckbox }: MarkdownContentProps): ReactNode {
+  // Compute a checkbox's index *at click time* by walking the rendered DOM,
+  // rather than tracking it during render. React StrictMode double-invokes
+  // component function bodies in development so any render-time counter
+  // gets incremented twice per checkbox, producing off-by-one indices.
+  // DOM-based lookup sidesteps that entirely.
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const handleCheckboxChange = (e: ChangeEvent<HTMLInputElement>) => {
+    if (!onToggleCheckbox || !rootRef.current) return;
+    const boxes = Array.from(
+      rootRef.current.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+    );
+    const index = boxes.indexOf(e.target);
+    if (index >= 0) onToggleCheckbox(index, e.target.checked);
+  };
+
   return (
     <div
+      ref={rootRef}
       data-testid="markdown-content"
       style={{
         fontSize: "13px",
@@ -189,6 +213,31 @@ export function MarkdownContent({ content }: MarkdownContentProps): ReactNode {
           hr: () => <hr style={hrStyle} />,
           strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
           em: ({ children }) => <em style={{ fontStyle: "italic" }}>{children}</em>,
+          input: ({ type, checked, ...rest }) => {
+            if (type !== "checkbox") {
+              return <input type={type} {...rest} />;
+            }
+            // Task-list checkbox from `- [ ]` / `- [x]`. react-markdown
+            // renders these as disabled inputs by default; we override so
+            // the reviewer can flip them during pr_review. Index is
+            // resolved lazily in `handleCheckboxChange` via DOM order.
+            const interactive = typeof onToggleCheckbox === "function";
+            return (
+              <input
+                type="checkbox"
+                checked={!!checked}
+                disabled={!interactive}
+                onChange={handleCheckboxChange}
+                style={{
+                  marginRight: "6px",
+                  cursor: interactive ? "pointer" : "default",
+                  // Light compensation so the native checkbox aligns
+                  // visually with the 13px body text.
+                  verticalAlign: "middle",
+                }}
+              />
+            );
+          },
         }}
       >
         {content}

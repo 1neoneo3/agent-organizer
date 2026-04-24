@@ -22,6 +22,15 @@ export const resumeTask = (id: string, agentId?: string) =>
 export const approveTask = (id: string) => api.post<{ approved: boolean; next_status: string }>(`/tasks/${id}/approve`);
 export const rejectTask = (id: string, reason?: string) => api.post<{ rejected: boolean; reason: string }>(`/tasks/${id}/reject`, { reason });
 export const splitTask = (id: string) => api.post<{ parent: Task; children: Task[]; plan_path: string | null }>(`/tasks/${id}/split`);
+export const toggleAcceptanceCriterion = (
+  id: string,
+  index: number,
+  checked: boolean,
+) =>
+  api.patch<{ task: Task; index: number; checked: boolean; total: number }>(
+    `/tasks/${id}/acceptance-criterion`,
+    { index, checked },
+  );
 export const fetchTaskLogs = (id: string, limit = 200) =>
   api.get<TaskLog[]>(`/tasks/${id}/logs?limit=${limit}`);
 
