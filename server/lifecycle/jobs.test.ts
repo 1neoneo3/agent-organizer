@@ -376,6 +376,72 @@ describe("recoverInProgressOrphans", () => {
     assert.ok(!spawnedTasks.includes("t1"), "t1 must not be respawned (in preflight)");
     assert.ok(spawnedTasks.includes("t2"), "t2 must be respawned (genuine orphan)");
   });
+
+  it("skips refinement tasks in pendingSpawns (preflight applies to all orphan candidates)", () => {
+    insertTask(db, { id: "t1", status: "refinement", assigned_agent_id: "agent-1" });
+    const ws = createFakeWs();
+
+    const pending = new Set(["t1"]);
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { pending });
+
+    const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
+    assert.equal(row.status, "refinement", "must not bounce to inbox during preflight");
+    assert.equal(ws.events.length, 0, "no broadcasts during preflight");
+  });
+
+  it("recovers task after preflight completes (pendingSpawns cleared)", () => {
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    let spawnCalls = 0;
+    const fakeSpawn = (() => {
+      spawnCalls += 1;
+      return Promise.resolve({ pid: 1 });
+    }) as never;
+
+    const pending = new Set(["t1"]);
+
+    // Tick 1: task in preflight → skipped
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+      pending,
+    });
+    assert.equal(spawnCalls, 0, "skipped during preflight");
+
+    // Preflight completes: task removed from pendingSpawns
+    pending.delete("t1");
+
+    // Tick 2: task is now a genuine orphan → respawned
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+      pending,
+    });
+    assert.equal(spawnCalls, 1, "respawned after preflight completed");
+  });
+
+  it("does not emit park log for budget-exhausted tasks in pendingSpawns", () => {
+    insertTask(db, {
+      id: "t1",
+      status: "in_progress",
+      assigned_agent_id: "agent-1",
+      auto_respawn_count: 3,
+    });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const pending = new Set(["t1"]);
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      spawnAgent: (() => Promise.resolve({ pid: 1 })) as never,
+      maxAutoRespawn: 3,
+      pending,
+    });
+
+    const logs = db.prepare("SELECT COUNT(*) AS n FROM task_logs WHERE task_id = 't1'").get() as { n: number };
+    assert.equal(logs.n, 0, "no park/budget-exhausted log during preflight");
+  });
 });
 
 // ---- recoverStuckAutoStages ----------------------------------------------
@@ -544,5 +610,35 @@ describe("recoverStuckAutoStages", () => {
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'preflight'").get() as { status: string };
     assert.equal(row.status, "pr_review", "must not promote a task in pendingSpawns");
     assert.equal(ws.events.length, 0);
+  });
+
+  it("selectively promotes only non-pending auto-stage tasks", () => {
+    const elevenMinutesAgo = Date.now() - 11 * 60 * 1000;
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("agent-2", "tester-2", "claude", "idle", now, now);
+
+    insertTask(db, {
+      id: "pending-task",
+      status: "pr_review",
+      assigned_agent_id: "agent-1",
+      last_heartbeat_at: elevenMinutesAgo,
+    });
+    insertTask(db, {
+      id: "genuine-stuck",
+      status: "qa_testing",
+      assigned_agent_id: "agent-2",
+      last_heartbeat_at: elevenMinutesAgo,
+    });
+    const ws = createFakeWs();
+
+    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, new Set(["pending-task"]));
+
+    const pendingRow = db.prepare("SELECT status FROM tasks WHERE id = 'pending-task'").get() as { status: string };
+    assert.equal(pendingRow.status, "pr_review", "pending task stays in pr_review");
+
+    const genuineRow = db.prepare("SELECT status FROM tasks WHERE id = 'genuine-stuck'").get() as { status: string };
+    assert.equal(genuineRow.status, "human_review", "genuine stuck task promoted to human_review");
   });
 });
