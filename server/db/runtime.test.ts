@@ -770,6 +770,62 @@ describe("migrateCleanupLeakedTestTasks", () => {
     assert.equal(tasks[1].task_number, "#2");
   });
 
+  it("deletes leaked refinement feedback regression rows and recompacts numbering", async () => {
+    const { initializeDb } = await import("./runtime.js");
+    const dbPath = freshDbPath();
+    const db = initializeDb(dbPath);
+
+    db.prepare("DELETE FROM settings WHERE key = 'leaked_test_tasks_cleaned_v1'").run();
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at)
+       VALUES ('agent-keep', 'Keep Agent', 'claude', 'idle', ?, ?)`,
+    ).run(now, now);
+    db.prepare(
+      `INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at)
+       VALUES ('agent-leak', 'Leaked Agent', 'claude', 'idle', ?, ?)`,
+    ).run(now + 1, now + 1);
+
+    db.prepare(
+      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('keep-task', 'Legit task', 'Normal description', 'inbox', 'agent-keep', 'small', '#1', ?, ?)`,
+    ).run(now, now);
+    db.prepare(
+      `INSERT INTO tasks (id, title, description, status, assigned_agent_id, task_size, task_number, created_at, updated_at)
+       VALUES ('123e4567-e89b-12d3-a456-426614174000', 'Task 123e4567-e89b-12d3-a456-426614174000', 'Refinement feedback regression', 'refinement', 'agent-leak', 'medium', '#abc123', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO messages (id, sender_type, sender_id, content, message_type, task_id, created_at)
+       VALUES ('msg-leak', 'user', NULL, 'leaked message', 'directive', '123e4567-e89b-12d3-a456-426614174000', ?)`,
+    ).run(now + 1);
+
+    const db2 = initializeDb(dbPath);
+
+    assert.equal(
+      db2.prepare("SELECT id FROM tasks WHERE id = '123e4567-e89b-12d3-a456-426614174000'").get(),
+      undefined,
+      "regression-leaked task should be deleted",
+    );
+    assert.equal(
+      db2.prepare("SELECT id FROM agents WHERE id = 'agent-leak'").get(),
+      undefined,
+      "orphaned leaked agent should be deleted",
+    );
+    assert.equal(
+      db2.prepare("SELECT id FROM messages WHERE id = 'msg-leak'").get(),
+      undefined,
+      "child messages for leaked tasks should be deleted",
+    );
+    const remainingTasks = (
+      db2.prepare("SELECT id, task_number FROM tasks ORDER BY created_at ASC").all() as Array<{
+        id: string;
+        task_number: string;
+      }>
+    ).map((task) => ({ id: task.id, task_number: task.task_number }));
+    assert.deepEqual(remainingTasks, [{ id: "keep-task", task_number: "#1" }]);
+  });
+
   it("is idempotent — second initializeDb does not re-run the migration", async () => {
     const { initializeDb } = await import("./runtime.js");
     const dbPath = freshDbPath();

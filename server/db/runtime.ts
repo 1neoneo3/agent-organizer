@@ -71,6 +71,20 @@ export function initializeDb(dbPath?: string): DatabaseSync {
   return db;
 }
 
+export function recompactTaskNumbers(db: DatabaseSync): void {
+  const rows = db.prepare(
+    "SELECT id, task_number FROM tasks WHERE task_number LIKE '#%' ORDER BY CAST(SUBSTR(task_number, 2) AS INTEGER) ASC, created_at ASC"
+  ).all() as Array<{ id: string; task_number: string }>;
+
+  const update = db.prepare("UPDATE tasks SET task_number = ? WHERE id = ?");
+  for (let i = 0; i < rows.length; i++) {
+    const expected = `#${i + 1}`;
+    if (rows[i].task_number !== expected) {
+      update.run(expected, rows[i].id);
+    }
+  }
+}
+
 function migrateAddTaskLogHotQueryIndexes(db: DatabaseSync): void {
   // Promote the hot-query helper index for `WHERE task_id = ? ORDER BY id`
   // to a stable schema index. Older databases may still carry the temporary
@@ -542,7 +556,12 @@ function migrateCleanupLeakedTestTasks(db: DatabaseSync): void {
 
   const taskIds = (
     db.prepare(
-      "SELECT id FROM tasks WHERE title = 'Refinement feedback test task'"
+      `SELECT id FROM tasks
+       WHERE title = 'Refinement feedback test task'
+          OR (
+            description = 'Refinement feedback regression'
+            AND title = 'Task ' || id
+          )`
     ).all() as Array<{ id: string }>
   ).map((r) => r.id);
 
@@ -560,8 +579,16 @@ function migrateCleanupLeakedTestTasks(db: DatabaseSync): void {
     // Collect orphaned agent IDs before deleting tasks
     const orphanAgentIds = (
       db.prepare(
-        `SELECT DISTINCT assigned_agent_id AS aid FROM tasks
-         WHERE title = 'Refinement feedback test task' AND assigned_agent_id IS NOT NULL`
+        `SELECT DISTINCT assigned_agent_id AS aid
+         FROM tasks
+         WHERE assigned_agent_id IS NOT NULL
+           AND (
+             title = 'Refinement feedback test task'
+             OR (
+               description = 'Refinement feedback regression'
+               AND title = 'Task ' || id
+             )
+           )`
       ).all() as Array<{ aid: string }>
     ).map((r) => r.aid);
 
@@ -582,17 +609,7 @@ function migrateCleanupLeakedTestTasks(db: DatabaseSync): void {
     }
 
     // Recompact task numbers within the same transaction
-    const rows = db.prepare(
-      "SELECT id, task_number FROM tasks WHERE task_number LIKE '#%' ORDER BY CAST(SUBSTR(task_number, 2) AS INTEGER) ASC"
-    ).all() as Array<{ id: string; task_number: string }>;
-
-    const update = db.prepare("UPDATE tasks SET task_number = ? WHERE id = ?");
-    for (let i = 0; i < rows.length; i++) {
-      const expected = `#${i + 1}`;
-      if (rows[i].task_number !== expected) {
-        update.run(expected, rows[i].id);
-      }
-    }
+    recompactTaskNumbers(db);
 
     db.prepare(
       "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)"

@@ -16,6 +16,7 @@ import { loadProjectWorkflow } from "../workflow/loader.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE, isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
+import { recompactTaskNumbers } from "../db/runtime.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import {
   countAcceptanceCriteria,
@@ -490,7 +491,15 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     // when the child's next stdout chunk tried to insert a task_log
     // referencing the now-deleted task id, crashing the server.
     killAgent(task.id);
-    db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
+    db.exec("BEGIN TRANSACTION");
+    try {
+      db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
+      recompactTaskNumbers(db);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
     await invalidateTaskCaches();
     res.json({ deleted: true });
   });
