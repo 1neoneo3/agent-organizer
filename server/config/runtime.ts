@@ -134,6 +134,7 @@ export const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET ?? "";
 // (in_progress → qa_testing, pr_review → in_progress rework, etc.), on
 // manual Run (POST /tasks/:id/run), and on manual feedback-rework.
 export const ORPHAN_AUTO_RESPAWN_MAX = Number(process.env.ORPHAN_AUTO_RESPAWN_MAX ?? 3);
+export const TRANSIENT_SPAWN_RETRY_BASE_DELAY_MS = Number(process.env.TRANSIENT_SPAWN_RETRY_BASE_DELAY_MS ?? 10_000);
 
 export const SETTINGS_DEFAULTS = {
   review_mode: "pr_only" as const, // "none" | "pr_only" | "meeting"

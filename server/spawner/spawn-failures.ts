@@ -4,18 +4,39 @@ import type { Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import type { WorkflowHookResult } from "../workflow/hooks.js";
 
-export type SpawnFailureCode = "before_run_failed";
+export type SpawnFailureCode =
+  | "before_run_failed"
+  | "runtime_rate_limit"
+  | "runtime_provider_overloaded"
+  | "runtime_auth_expired"
+  | "runtime_oom"
+  | "runtime_playwright_mcp_failed";
 
-export class SpawnPreflightError extends Error {
+export class SpawnFailureError extends Error {
   readonly code: SpawnFailureCode;
   readonly retryable: boolean;
 
   constructor(code: SpawnFailureCode, message: string, retryable = false) {
     super(message);
-    this.name = "SpawnPreflightError";
+    this.name = "SpawnFailureError";
     this.code = code;
     this.retryable = retryable;
   }
+}
+
+export class SpawnPreflightError extends SpawnFailureError {
+  constructor(code: SpawnFailureCode, message: string, retryable = false) {
+    super(code, message, retryable);
+    this.name = "SpawnPreflightError";
+  }
+}
+
+export interface RuntimeFailureInput {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+  output?: string;
+  errorMessage?: string;
 }
 
 export function createBeforeRunFailureError(results: WorkflowHookResult[]): SpawnPreflightError {
@@ -30,8 +51,68 @@ export function createBeforeRunFailureError(results: WorkflowHookResult[]): Spaw
   );
 }
 
-export function classifySpawnFailure(error: unknown): SpawnPreflightError | null {
-  if (error instanceof SpawnPreflightError) {
+export function classifyRuntimeFailure(input: RuntimeFailureInput): SpawnFailureError | null {
+  const haystack = [
+    input.errorMessage ?? "",
+    input.stderr,
+    input.output ?? "",
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  if (
+    /playwright/.test(haystack) &&
+    /\bmcp\b/.test(haystack) &&
+    /(failed to start|startup failed|timed out|timeout|could not start|transport closed|connection closed)/.test(haystack)
+  ) {
+    return new SpawnFailureError("runtime_playwright_mcp_failed", "playwright MCP startup failed", false);
+  }
+
+  if (
+    /(authentication failed|invalid api key|api key .*invalid|unauthorized|not authenticated|login required|please run .*login|session expired|token expired|expired token|reauth|re-auth|auth.*expired)/.test(haystack)
+  ) {
+    return new SpawnFailureError("runtime_auth_expired", "authentication expired or invalid", false);
+  }
+
+  if (
+    /\b429\b/.test(haystack) ||
+    /rate limit/.test(haystack) ||
+    /too many requests/.test(haystack) ||
+    /quota exceeded/.test(haystack)
+  ) {
+    return new SpawnFailureError("runtime_rate_limit", "provider rate limited the run", true);
+  }
+
+  if (
+    /\b529\b/.test(haystack) ||
+    /server overloaded/.test(haystack) ||
+    /service unavailable/.test(haystack) ||
+    /temporarily unavailable/.test(haystack) ||
+    /\boverloaded\b/.test(haystack)
+  ) {
+    return new SpawnFailureError("runtime_provider_overloaded", "provider temporarily overloaded", true);
+  }
+
+  if (
+    input.signal === "SIGKILL" ||
+    /out of memory/.test(haystack) ||
+    /heap out of memory/.test(haystack) ||
+    /memory limit exceeded/.test(haystack) ||
+    /\boom\b/.test(haystack)
+  ) {
+    return new SpawnFailureError("runtime_oom", "process was killed by memory pressure", true);
+  }
+
+  return null;
+}
+
+export function computeTransientRetryDelayMs(attempt: number, baseDelayMs = 10_000): number {
+  const normalized = Math.max(1, attempt);
+  return baseDelayMs * (2 ** (normalized - 1));
+}
+
+export function classifySpawnFailure(error: unknown): SpawnFailureError | null {
+  if (error instanceof SpawnFailureError) {
     return error;
   }
   return null;
@@ -71,6 +152,15 @@ export function handleSpawnFailure(
       retryable: true,
       code: null,
       message,
+    };
+  }
+
+  if (classified.retryable) {
+    return {
+      handled: false,
+      retryable: true,
+      code: classified.code,
+      message: `${options.source}: ${classified.message}`,
     };
   }
 

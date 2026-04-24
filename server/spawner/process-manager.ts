@@ -34,6 +34,8 @@ import type { TaskLogKind } from "../types/runtime.js";
 import {
   TASK_RUN_IDLE_TIMEOUT_MS,
   TASK_RUN_HARD_TIMEOUT_MS,
+  ORPHAN_AUTO_RESPAWN_MAX,
+  TRANSIENT_SPAWN_RETRY_BASE_DELAY_MS,
   isOutputLanguage,
   type OutputLanguage,
 } from "../config/runtime.js";
@@ -45,7 +47,13 @@ import type { CacheService } from "../cache/cache-service.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 import { runWorkflowHooks } from "../workflow/hooks.js";
-import { createBeforeRunFailureError } from "./spawn-failures.js";
+import {
+  SpawnFailureError,
+  classifyRuntimeFailure,
+  computeTransientRetryDelayMs,
+  createBeforeRunFailureError,
+  handleSpawnFailure,
+} from "./spawn-failures.js";
 import { getTaskSetting } from "../domain/task-settings.js";
 import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
 
@@ -641,6 +649,7 @@ export async function spawnAgent(
     parallelTester?: boolean;
   }
 ): Promise<{ pid: number }> {
+  const runtimeRetryOptions = options;
   const cache = options?.cache;
   const isContinue = !!options?.continuePrompt;
   const isParallelTester = options?.parallelTester === true;
@@ -1001,6 +1010,114 @@ export async function spawnAgent(
   const insertStderrStmt = db.prepare(
     "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'stderr', ?, ?, ?)"
   );
+  const RUNTIME_FAILURE_BUFFER_LIMIT = 8_000;
+  let runtimeOutputTail = "";
+  let runtimeStderrTail = "";
+
+  function appendRuntimeFailureTail(current: string, text: string): string {
+    const next = current ? `${current}\n${text}` : text;
+    return next.length > RUNTIME_FAILURE_BUFFER_LIMIT
+      ? next.slice(-RUNTIME_FAILURE_BUFFER_LIMIT)
+      : next;
+  }
+
+  function scheduleTransientRuntimeRetry(
+    failure: SpawnFailureError,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): boolean {
+    const liveTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+    if (!liveTask) return false;
+
+    const currentCount = liveTask.auto_respawn_count ?? 0;
+    if (currentCount >= ORPHAN_AUTO_RESPAWN_MAX) {
+      handleSpawnFailure(
+        db,
+        ws,
+        task.id,
+        new SpawnFailureError(
+          failure.code,
+          `${failure.message}. Auto-retry budget exhausted (${currentCount}/${ORPHAN_AUTO_RESPAWN_MAX})`,
+          false,
+        ),
+        { cache, source: "Runtime failure" },
+      );
+      return true;
+    }
+
+    const nextCount = currentCount + 1;
+    const delayMs = computeTransientRetryDelayMs(
+      nextCount,
+      TRANSIENT_SPAWN_RETRY_BASE_DELAY_MS,
+    );
+    const finishTime = Date.now();
+    const exitLabel = signal ? `signal ${signal}` : `exit ${code ?? "null"}`;
+
+    db.prepare(
+      "UPDATE tasks SET started_at = NULL, completed_at = NULL, auto_respawn_count = ?, updated_at = ? WHERE id = ?",
+    ).run(nextCount, finishTime, task.id);
+    db.prepare(
+      "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+    ).run(finishTime, agent.id);
+    insertLogStmt.run(
+      task.id,
+      "system",
+      `Runtime failure detected (${failure.code}, ${exitLabel}). Auto-retrying in ${Math.round(delayMs / 1000)}s (${nextCount}/${ORPHAN_AUTO_RESPAWN_MAX}): ${failure.message}`,
+      spawnStage,
+      agent.id,
+    );
+
+    invalidateCaches(cache);
+    const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+    ws.broadcast(
+      "task_update",
+      updatedTask ?? {
+        id: task.id,
+        status: liveTask.status,
+        auto_respawn_count: nextCount,
+      },
+    );
+    ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+
+    setTimeout(() => {
+      const retryTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+      const retryAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(agent.id) as Agent | undefined;
+      if (!retryTask || !retryAgent) return;
+      if (retryTask.status === "cancelled" || retryTask.status === "done" || retryTask.status === "human_review") {
+        return;
+      }
+      if (retryAgent.status !== "idle") {
+        insertLogStmt.run(
+          task.id,
+          "system",
+          `Runtime auto-retry skipped: agent "${retryAgent.name}" is no longer idle.`,
+          spawnStage,
+          agent.id,
+        );
+        return;
+      }
+
+      spawnAgent(db, ws, retryAgent, retryTask, runtimeRetryOptions).catch((error) => {
+        const handled = handleSpawnFailure(db, ws, task.id, error, {
+          cache,
+          source: "Runtime auto-retry",
+        });
+        if (handled.handled) {
+          return;
+        }
+        const msg = error instanceof Error ? error.message : String(error);
+        insertLogStmt.run(
+          task.id,
+          "system",
+          `Runtime auto-retry spawn failed: ${msg}`,
+          spawnStage,
+          agent.id,
+        );
+      });
+    }, delayMs);
+
+    return true;
+  }
 
   if (!isContinue) {
     const runtimeMessage = `[Runtime] ${runtimePolicy.summary}`;
@@ -1180,6 +1297,10 @@ export async function spawnAgent(
     // Persist all entries
     if (deduped.length > 0) {
       insertLogBatch(deduped);
+      runtimeOutputTail = appendRuntimeFailureTail(
+        runtimeOutputTail,
+        deduped.map((entry) => entry.message).join("\n"),
+      );
     }
 
     // Broadcast as array (consistent shape for clients)
@@ -1201,6 +1322,7 @@ export async function spawnAgent(
     if (!text.trim()) return;
     logStream.write(`[stderr] ${text}`);
     insertStderrStmt.run(task.id, text, spawnStage, agent.id);
+    runtimeStderrTail = appendRuntimeFailureTail(runtimeStderrTail, text);
     ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
 
     // Loop detection: normalize and count repeated error patterns
@@ -1240,6 +1362,26 @@ export async function spawnAgent(
     }
     logStream.end();
 
+    const runtimeFailure = classifyRuntimeFailure({
+      code: null,
+      signal: null,
+      stderr: runtimeStderrTail,
+      output: runtimeOutputTail,
+      errorMessage: message,
+    });
+    if (runtimeFailure) {
+      if (runtimeFailure.retryable && scheduleTransientRuntimeRetry(runtimeFailure, null, null)) {
+        return;
+      }
+      const handled = handleSpawnFailure(db, ws, task.id, runtimeFailure, {
+        cache,
+        source: "Runtime failure",
+      });
+      if (handled.handled) {
+        return;
+      }
+    }
+
     db.prepare(
       "UPDATE tasks SET status = 'cancelled', completed_at = ?, updated_at = ? WHERE id = ?"
     ).run(finishTime, finishTime, task.id);
@@ -1266,7 +1408,7 @@ export async function spawnAgent(
   // does not await the returned promise, which is fine — the DB
   // writes that used to be synchronous are serialized per-task by
   // the fact that each task has exactly one child process at a time.
-  child.on("close", async (code) => {
+  child.on("close", async (code, signal) => {
     if (terminatedBySpawnError) return;
 
     clearTimeout(idleTimer);
@@ -1417,6 +1559,39 @@ export async function spawnAgent(
       ws.broadcast("task_update", resetTask ?? { id: task.id, status: "inbox" });
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
+    }
+
+    const currentTaskRow = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as { status: string } | undefined;
+    if (currentTaskRow?.status === "cancelled") {
+      const finishTime = Date.now();
+      db.prepare(
+        "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
+      ).run(finishTime, agent.id);
+      insertLogStmt.run(task.id, "system", "Process exited after external cancellation.", spawnStage, agent.id);
+      invalidateCaches(cache);
+      ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
+      return;
+    }
+
+    if (code !== 0 || signal) {
+      const runtimeFailure = classifyRuntimeFailure({
+        code,
+        signal,
+        stderr: runtimeStderrTail,
+        output: runtimeOutputTail,
+      });
+      if (runtimeFailure) {
+        if (runtimeFailure.retryable && scheduleTransientRuntimeRetry(runtimeFailure, code, signal)) {
+          return;
+        }
+        const handled = handleSpawnFailure(db, ws, task.id, runtimeFailure, {
+          cache,
+          source: "Runtime failure",
+        });
+        if (handled.handled) {
+          return;
+        }
+      }
     }
 
     // Feedback respawn completed: restore previous status instead of finalizing as done

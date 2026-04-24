@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
-import { createHookFailureFromCommands, handleSpawnFailure } from "./spawn-failures.js";
+import {
+  classifyRuntimeFailure,
+  computeTransientRetryDelayMs,
+  createHookFailureFromCommands,
+  handleSpawnFailure,
+} from "./spawn-failures.js";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -87,5 +92,70 @@ describe("handleSpawnFailure", () => {
 
     const task = db.prepare("SELECT status FROM tasks WHERE id = 'task-1'").get() as { status: string };
     assert.equal(task.status, "in_progress");
+  });
+});
+
+describe("classifyRuntimeFailure", () => {
+  it("classifies 429 as retryable rate limit", () => {
+    const failure = classifyRuntimeFailure({
+      code: 1,
+      signal: null,
+      stderr: "HTTP 429 Too Many Requests: rate limit exceeded",
+    });
+
+    assert.equal(failure?.code, "runtime_rate_limit");
+    assert.equal(failure?.retryable, true);
+  });
+
+  it("classifies 529 as retryable overload", () => {
+    const failure = classifyRuntimeFailure({
+      code: 1,
+      signal: null,
+      stderr: "Anthropic API returned 529 overloaded_error",
+    });
+
+    assert.equal(failure?.code, "runtime_provider_overloaded");
+    assert.equal(failure?.retryable, true);
+  });
+
+  it("classifies auth expiry as non-retryable", () => {
+    const failure = classifyRuntimeFailure({
+      code: 1,
+      signal: null,
+      stderr: "Authentication failed. Please run codex login again.",
+    });
+
+    assert.equal(failure?.code, "runtime_auth_expired");
+    assert.equal(failure?.retryable, false);
+  });
+
+  it("classifies SIGKILL as retryable OOM", () => {
+    const failure = classifyRuntimeFailure({
+      code: null,
+      signal: "SIGKILL",
+      stderr: "",
+    });
+
+    assert.equal(failure?.code, "runtime_oom");
+    assert.equal(failure?.retryable, true);
+  });
+
+  it("classifies Playwright MCP startup failure as non-retryable", () => {
+    const failure = classifyRuntimeFailure({
+      code: 1,
+      signal: null,
+      stderr: "Playwright MCP failed to start: startup failed after timeout",
+    });
+
+    assert.equal(failure?.code, "runtime_playwright_mcp_failed");
+    assert.equal(failure?.retryable, false);
+  });
+});
+
+describe("computeTransientRetryDelayMs", () => {
+  it("uses exponential backoff from the base delay", () => {
+    assert.equal(computeTransientRetryDelayMs(1), 10_000);
+    assert.equal(computeTransientRetryDelayMs(2), 20_000);
+    assert.equal(computeTransientRetryDelayMs(3), 40_000);
   });
 });
