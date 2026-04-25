@@ -35,6 +35,7 @@ export function appendLiveLogs(
       stage: entry.stage ?? null,
       agent_id: entry.agent_id ?? null,
       created_at: now + index,
+      pending: true as const,
     })),
   ];
 
@@ -309,4 +310,15 @@ export function appendTerminalText(
   }
 
   return { text, lastStage, lastAgentId };
+}
+
+export function mergeFetchedLogs(existing: TaskLog[], incoming: TaskLog[]): TaskLog[] {
+  if (incoming.length === 0) return existing;
+
+  const nonPending = existing.filter((log) => !log.pending);
+  const incomingIds = new Set(incoming.map((log) => log.id));
+  const deduped = nonPending.filter((log) => !incomingIds.has(log.id));
+  const merged = [...deduped, ...incoming];
+  merged.sort((a, b) => a.id - b.id);
+  return merged;
 }

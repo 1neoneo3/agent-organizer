@@ -9,6 +9,7 @@ import {
   emptySegmentLabel,
   groupLogsByStage,
   inferFetchedBaseCount,
+  mergeFetchedLogs,
   mergeOlderLogs,
   parseStageTransition,
   STAGE_TRANSITION_PREFIX,
@@ -271,20 +272,45 @@ function TerminalView({
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadedBaseCount, setLoadedBaseCount] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const maxSeenIdRef = useRef<number | null>(null);
 
   const doFetch = useCallback(async () => {
     try {
-      const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE);
-      const chronological = [...rows].reverse();
-      setLogs(chronological);
-      setLoadedBaseCount(inferFetchedBaseCount(rows.length, LOG_PAGE_SIZE));
-      setHasMore(rows.length >= LOG_PAGE_SIZE);
-    } catch {
-      // ignore fetch errors
+      const sinceId = maxSeenIdRef.current ?? undefined;
+
+      if (sinceId == null) {
+        // Initial load: get the most recent LOG_PAGE_SIZE rows (DESC) so
+        // both the load-more cursor (`loadedBaseCount`) and the incremental
+        // tail cursor (`maxSeenIdRef`) start from the same anchor.
+        const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE);
+        const chronological = [...rows].reverse();
+        setLogs((prev) => mergeFetchedLogs(prev, chronological));
+        if (chronological.length > 0) {
+          maxSeenIdRef.current = chronological[chronological.length - 1]!.id;
+        }
+        setLoadedBaseCount(inferFetchedBaseCount(rows.length, LOG_PAGE_SIZE));
+        setHasMore(rows.length >= LOG_PAGE_SIZE);
+      } else {
+        // Incremental tail: server returns rows with `id > sinceId` ASC.
+        const rows = await fetchTaskLogs(taskId, 300, sinceId);
+        if (rows.length > 0) {
+          maxSeenIdRef.current = rows[rows.length - 1]!.id;
+          setLogs((prev) => mergeFetchedLogs(prev, rows));
+        }
+      }
+    } catch (err) {
+      console.warn("[TerminalView] fetchTaskLogs failed", err);
     }
   }, [taskId]);
 
   useEffect(() => {
+    // Reset cursors and local cache when the rendered task changes so we
+    // do not filter the new task's logs against the previous task's max id
+    // (silent log loss) or replay stale entries from the previous mount.
+    maxSeenIdRef.current = null;
+    setLogs([]);
+    setLoadedBaseCount(0);
+    setHasMore(true);
     doFetch();
   }, [doFetch]);
 
@@ -296,7 +322,7 @@ function TerminalView({
       const prevScrollHeight = el?.scrollHeight ?? 0;
       const prevScrollTop = el?.scrollTop ?? 0;
 
-      const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE, loadedBaseCount);
+      const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE, undefined, loadedBaseCount);
       const olderChronological = [...rows].reverse();
       setLogs((prev) => mergeOlderLogs(prev, olderChronological));
       setLoadedBaseCount((prev) => prev + inferFetchedBaseCount(rows.length, LOG_PAGE_SIZE));
@@ -307,8 +333,8 @@ function TerminalView({
           el.scrollTop = prevScrollTop + (el.scrollHeight - prevScrollHeight);
         }
       });
-    } catch {
-      // ignore fetch errors
+    } catch (err) {
+      console.warn("[TerminalView] load-more fetchTaskLogs failed", err);
     } finally {
       setLoadingMore(false);
     }
@@ -655,14 +681,31 @@ export function TerminalPanel({
   }, [currentStage, currentAgentId]);
 
   const logsFetched = useRef(false);
+  // Reset the fetch latch when the rendered task changes so we re-fetch
+  // historical rows for the new task instead of inheriting the previous
+  // task's `logsFetched=true`.
+  useEffect(() => {
+    logsFetched.current = false;
+  }, [taskId]);
   useEffect(() => {
     if (activeTab === "terminal" || logsFetched.current) return;
+    // Do NOT bail when `logs.length > 0`. The `cli_output` handler populates
+    // `logs` regardless of which tab is active, so by the time the user
+    // switches to Output we may already have a slice of live rows but no
+    // history. Always fetch DB rows on first activation and merge them
+    // against existing live entries (mergeFetchedLogs deduplicates by id
+    // and drops any pending placeholders that the cursor now covers).
     logsFetched.current = true;
-    fetchTaskLogs(taskId, 50).then((data) => {
-      startTransition(() => {
-        setLogs(data.reverse());
+    fetchTaskLogs(taskId, 50)
+      .then((data) => {
+        const chronological = [...data].reverse();
+        startTransition(() => {
+          setLogs((prev) => mergeFetchedLogs(prev, chronological));
+        });
+      })
+      .catch((err) => {
+        console.warn("[TerminalPanel] output-tab fetchTaskLogs failed", err);
       });
-    });
   }, [taskId, activeTab]);
 
   useEffect(() => {

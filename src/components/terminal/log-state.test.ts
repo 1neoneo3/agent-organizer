@@ -10,6 +10,7 @@ import {
   inferFetchedBaseCount,
   mergeOlderLogs,
   MAX_LIVE_LOGS,
+  mergeFetchedLogs,
   parseStageTransition,
   STAGE_TRANSITION_PREFIX,
 } from "./log-state.js";
@@ -536,5 +537,104 @@ describe("inferFetchedBaseCount", () => {
 
   it("returns zero for an empty page", () => {
     assert.equal(inferFetchedBaseCount(0, 1000), 0);
+  });
+});
+
+describe("appendLiveLogs — pending flag", () => {
+  it("marks appended entries as pending", () => {
+    const result = appendLiveLogs([], [
+      { task_id: "task-1", kind: "stdout", message: "live" },
+    ], 100);
+
+    assert.equal(result[0]?.pending, true);
+  });
+
+  it("does not mark pre-existing entries as pending", () => {
+    const existing = createLog(1);
+    assert.equal(existing.pending, undefined);
+
+    const result = appendLiveLogs([existing], [
+      { task_id: "task-1", kind: "stdout", message: "live" },
+    ], 100);
+
+    assert.equal(result[0]?.pending, undefined);
+    assert.equal(result[1]?.pending, true);
+  });
+});
+
+describe("mergeFetchedLogs", () => {
+  it("returns incoming logs when existing is empty", () => {
+    const incoming = [createLog(10), createLog(20)];
+    const result = mergeFetchedLogs([], incoming);
+    assert.equal(result.length, 2);
+    assert.equal(result[0]?.id, 10);
+    assert.equal(result[1]?.id, 20);
+  });
+
+  it("removes duplicate IDs between existing and incoming", () => {
+    const existing = [createLog(1), createLog(2), createLog(3)];
+    const incoming = [createLog(2, { message: "updated" }), createLog(4)];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.length, 4);
+    assert.deepEqual(result.map((r) => r.id), [1, 2, 3, 4]);
+    assert.equal(result.find((r) => r.id === 2)?.message, "updated");
+  });
+
+  it("maintains chronological order by id", () => {
+    const existing = [createLog(5), createLog(10)];
+    const incoming = [createLog(3), createLog(7), createLog(15)];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.deepEqual(result.map((r) => r.id), [3, 5, 7, 10, 15]);
+  });
+
+  it("replaces pending WS entries with HTTP DB entries (dedup)", () => {
+    const wsLog1 = { ...createLog(1777089100000, { message: "ws line 1" }), pending: true };
+    const wsLog2 = { ...createLog(1777089100001, { message: "ws line 2" }), pending: true };
+    const existing = [createLog(100), wsLog1, wsLog2];
+
+    const incoming = [
+      createLog(101, { message: "ws line 1" }),
+      createLog(102, { message: "ws line 2" }),
+    ];
+
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.filter((r) => r.pending).length, 0);
+    assert.equal(result.length, 3);
+    assert.deepEqual(result.map((r) => r.id), [100, 101, 102]);
+  });
+
+  it("preserves non-pending entries that do not conflict with incoming", () => {
+    const existing = [
+      createLog(1, { message: "old db entry" }),
+      { ...createLog(9999999, { message: "pending ws" }), pending: true },
+    ];
+    const incoming = [createLog(2, { message: "new db entry" })];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.length, 2);
+    assert.deepEqual(result.map((r) => r.id), [1, 2]);
+  });
+
+  it("handles stage transition markers correctly during merge", () => {
+    const transitionMsg = `${STAGE_TRANSITION_PREFIX}in_progress→pr_review`;
+    const existing = [
+      createLog(1, { stage: "in_progress", message: "work" }),
+    ];
+    const incoming = [
+      createLog(2, { stage: "pr_review", kind: "system", message: transitionMsg }),
+      createLog(3, { stage: "pr_review", message: "review" }),
+    ];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.length, 3);
+    assert.deepEqual(result.map((r) => r.id), [1, 2, 3]);
+    const segments = groupLogsByStage(result);
+    assert.equal(segments.length, 2);
+    assert.equal(segments[0]?.stage, "in_progress");
+    assert.equal(segments[1]?.stage, "pr_review");
+  });
+
+  it("returns existing unchanged when incoming is empty", () => {
+    const existing = [createLog(1), createLog(2)];
+    const result = mergeFetchedLogs(existing, []);
+    assert.equal(result, existing);
   });
 });
