@@ -233,7 +233,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
   });
 
   it("clears completed_at and restarts when revising a completed refinement with an active agent", async () => {
-    const db = await createDb();
+    const db = createDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "working");
@@ -281,7 +281,7 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
   });
 
   it("clears completed_at on idle-agent respawn for a completed refinement revision", async () => {
-    const db = await createDb();
+    const db = createDb();
     const agentId = randomUUID();
     const taskId = randomUUID();
     insertAgent(db, agentId, "idle");
