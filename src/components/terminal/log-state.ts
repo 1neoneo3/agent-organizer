@@ -35,6 +35,7 @@ export function appendLiveLogs(
       stage: entry.stage ?? null,
       agent_id: entry.agent_id ?? null,
       created_at: now + index,
+      pending: true as const,
     })),
   ];
 
@@ -309,4 +310,22 @@ export function appendTerminalText(
   }
 
   return { text, lastStage, lastAgentId };
+}
+
+export function mergeFetchedLogs(existing: TaskLog[], incoming: TaskLog[]): TaskLog[] {
+  if (incoming.length === 0) return existing;
+
+  // Drop all pending WS-streamed placeholders. They use synthetic
+  // `Date.now() + index` ids (millisecond timestamps) that do not align
+  // with autoincrement DB ids, so we cannot reliably tell which pending
+  // row corresponds to which `incoming` row by id alone. The HTTP fetch
+  // is the source of truth for the rows it returned, so any pending
+  // placeholder still buffered by `appendLiveLogs` is replaced by its
+  // canonical DB row on the next merge cycle.
+  const nonPending = existing.filter((log) => !log.pending);
+  const incomingIds = new Set(incoming.map((log) => log.id));
+  const deduped = nonPending.filter((log) => !incomingIds.has(log.id));
+  const merged = [...deduped, ...incoming];
+  merged.sort((a, b) => a.id - b.id);
+  return merged;
 }

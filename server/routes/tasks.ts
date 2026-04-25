@@ -261,6 +261,8 @@ type TasksRouterDeps = {
   queueFeedbackAndRestart?: typeof queueFeedbackAndRestart;
 };
 
+const STAGE_TRANSITION_MESSAGE_PREFIX = "__STAGE_TRANSITION__:";
+
 export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {}): Router {
   const router = Router();
   const { db, ws, cache } = ctx;
@@ -1068,33 +1070,54 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   });
 
   // Get task logs
+  //
+  // Query params:
+  //   - `limit` (default 200, max 1000)
+  //   - `since_id` (optional): incremental tail fetch — returns rows with
+  //     `id > since_id` ordered ASC, capped at `limit`. Stage-transition
+  //     fold-in is skipped on this path. Callers must loop until the
+  //     returned page length is `< limit` to fully drain a backlog.
+  //   - `offset` (default 0): legacy DESC-ordered pagination — returns the
+  //     newest `limit` rows skipping `offset`, plus a stage-transition
+  //     fold-in so the rendered timeline always opens with a stage marker.
   router.get("/tasks/:id/logs", (req, res) => {
     const t0 = performance.now();
     const limit = Math.min(Number(req.query.limit ?? 200), 1000);
-    const offset = Number(req.query.offset ?? 0);
-    const logs = db.prepare(
-      "SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ? OFFSET ?"
-    ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { id: number; message: string }>;
+    const sinceId = req.query.since_id ? Number(req.query.since_id) : null;
 
-    // Stage transition markers are inserted by the tasks_log_stage_transition
-    // trigger on every status change. When a task is long-lived enough that
-    // in-stage logs exceed `limit`, the oldest transition markers fall
-    // outside the paginated window and the Activity terminal loses the
-    // earliest stage segments (e.g. inbox→refinement, refinement→in_progress).
-    // Always fold every transition marker for the task into the response so
-    // the client can rebuild the full stage timeline regardless of pagination.
-    const transitions = db.prepare(
-      "SELECT * FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' ORDER BY id DESC"
-    ).all(req.params.id) as Array<Record<string, unknown> & { id: number; message: string }>;
+    let logs: Array<Record<string, unknown> & { id: number; message: string }>;
 
-    const seen = new Set<number>(logs.map((row) => row.id));
-    for (const row of transitions) {
-      if (!seen.has(row.id)) {
-        logs.push(row);
-        seen.add(row.id);
+    if (sinceId != null && Number.isFinite(sinceId)) {
+      logs = db.prepare(
+        "SELECT * FROM task_logs WHERE task_id = ? AND id > ? ORDER BY id ASC LIMIT ?"
+      ).all(req.params.id, sinceId, limit) as Array<Record<string, unknown> & { id: number; message: string }>;
+    } else {
+      const offset = Number(req.query.offset ?? 0);
+      logs = db.prepare(
+        "SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ? OFFSET ?"
+      ).all(req.params.id, limit, offset) as Array<Record<string, unknown> & { id: number; message: string }>;
+
+      // Stage transition markers are inserted by the DB trigger on every
+      // status change. For a paginated initial fetch we only need the newest
+      // transition immediately before the oldest row in the window; older
+      // markers do not affect the stage grouping for the current page and
+      // would bloat the payload on long-lived tasks.
+      const oldestFetchedId = logs[logs.length - 1]?.id;
+      if (oldestFetchedId != null) {
+        const boundaryTransition = db.prepare(
+          "SELECT * FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE ? AND id < ? ORDER BY id DESC LIMIT 1"
+        ).get(
+          req.params.id,
+          `${STAGE_TRANSITION_MESSAGE_PREFIX}%`,
+          oldestFetchedId,
+        ) as (Record<string, unknown> & { id: number; message: string }) | undefined;
+
+        if (boundaryTransition) {
+          logs.push(boundaryTransition);
+          logs.sort((a, b) => Number(b.id) - Number(a.id));
+        }
       }
     }
-    logs.sort((a, b) => Number(b.id) - Number(a.id));
 
     // Cap per-message length to keep the response payload bounded. Some rows
     // contain full tool-result JSON blobs (tens of KB each), which can push

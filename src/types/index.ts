@@ -54,6 +54,7 @@ export interface TaskLog {
   stage: string | null;
   agent_id: string | null;
   created_at: number;
+  pending?: boolean;
 }
 
 export interface Message {
