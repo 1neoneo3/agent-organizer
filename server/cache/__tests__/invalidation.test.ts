@@ -60,6 +60,10 @@ describe("invalidateTaskStatusChange", () => {
     assert.ok(!keys.includes(CACHE_KEYS.tasksStatus("done")));
     assert.ok(!keys.includes(CACHE_KEYS.AGENTS_ALL));
   });
+
+  it("no-ops when cache is undefined", async () => {
+    await invalidateTaskStatusChange(undefined, "inbox", "in_progress");
+  });
 });
 
 describe("invalidateTaskContent", () => {
@@ -80,6 +84,10 @@ describe("invalidateTaskContent", () => {
     assert.ok(!keys.includes(CACHE_KEYS.tasksStatus("inbox")));
     assert.ok(!keys.includes(CACHE_KEYS.tasksStatus("done")));
     assert.ok(!keys.includes(CACHE_KEYS.AGENTS_ALL));
+  });
+
+  it("no-ops when cache is undefined", async () => {
+    await invalidateTaskContent(undefined, "inbox");
   });
 });
 
@@ -117,6 +125,10 @@ describe("invalidateTaskAndAgents", () => {
     const keys = cache.deleted[0];
     assert.ok(!keys.includes("settings:all"));
   });
+
+  it("no-ops when cache is undefined", async () => {
+    await invalidateTaskAndAgents(undefined, "inbox", "in_progress");
+  });
 });
 
 describe("invalidateAllTasks", () => {
@@ -145,5 +157,9 @@ describe("invalidateAllTasks", () => {
 
     const keys = cache.deleted[0];
     assert.ok(!keys.includes(CACHE_KEYS.AGENTS_ALL));
+  });
+
+  it("no-ops when cache is undefined", async () => {
+    await invalidateAllTasks(undefined);
   });
 });
