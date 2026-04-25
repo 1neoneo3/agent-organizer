@@ -1,6 +1,6 @@
 import { Router, type Response } from "express";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, appendFileSync, writeFileSync, statSync } from "node:fs";
+import { mkdirSync, appendFileSync, writeFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { z } from "zod";
@@ -15,8 +15,6 @@ import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
 import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransition } from "../workflow/stage-pipeline.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
-import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
-import { readLastLines } from "../utils/read-last-lines.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE, isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import {
@@ -1114,65 +1112,6 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       return row;
     });
     sendMeasuredJson(res, "/tasks/:id/logs", t0, truncated);
-  });
-
-  // Terminal view: pretty-printed log file + DB logs
-  router.get("/tasks/:id/terminal", (req, res) => {
-    const t0 = performance.now();
-    const maxLines = Math.min(Number(req.query.lines ?? 2000), 10000);
-    const pretty = req.query.pretty === "1";
-
-    const logPath = join("data", "logs", `${req.params.id}.log`);
-    let fileExists = false;
-
-    if (existsSync(logPath)) {
-      fileExists = true;
-    }
-
-    const rawText = fileExists ? readLastLines(logPath, maxLines) : "";
-    let text = pretty ? prettyStreamJson(rawText) : rawText;
-
-    // Cap response text to prevent browser freeze on large logs
-    const MAX_TEXT_BYTES = 128 * 1024; // 128KB
-    if (text.length > MAX_TEXT_BYTES) {
-      text = text.slice(-MAX_TEXT_BYTES);
-      const firstNewline = text.indexOf("\n");
-      if (firstNewline > 0) {
-        text = "[truncated]\n" + text.slice(firstNewline + 1);
-      }
-    }
-
-    // Also fetch recent task_logs from DB for system/stderr entries
-    const taskLogs = db.prepare(
-      "SELECT kind, message, stage, agent_id, created_at FROM task_logs WHERE task_id = ? AND kind IN ('system', 'stderr') ORDER BY id DESC LIMIT 50"
-    ).all(req.params.id) as Array<{ kind: string; message: string; stage: string | null; agent_id: string | null; created_at: number }>;
-
-    // Fetch stage transitions (synthetic markers emitted by the tasks_log_stage_transition trigger)
-    // so the terminal view can overlay stage boundaries on the raw log text.
-    const stageTransitions = db.prepare(
-      "SELECT stage, agent_id, message, created_at FROM task_logs " +
-      "WHERE task_id = ? AND kind = 'system' AND message LIKE '__STAGE_TRANSITION__:%' " +
-      "ORDER BY created_at ASC"
-    ).all(req.params.id) as Array<{ stage: string; agent_id: string | null; message: string; created_at: number }>;
-
-    const result = {
-      ok: true,
-      exists: fileExists,
-      text,
-      task_logs: taskLogs,
-      stage_transitions: stageTransitions.map((row) => {
-        // message format: "__STAGE_TRANSITION__:<from>→<to>"
-        const match = row.message.match(/^__STAGE_TRANSITION__:(.+?)→(.+)$/);
-        return {
-          from: match ? match[1] : null,
-          to: match ? match[2] : row.stage,
-          stage: row.stage,
-          agent_id: row.agent_id,
-          created_at: row.created_at,
-        };
-      }),
-    };
-    sendMeasuredJson(res, "/tasks/:id/terminal", t0, result);
   });
 
   // CEO Feedback: send directive to a task (in_progress or finished)

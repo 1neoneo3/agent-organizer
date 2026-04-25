@@ -307,7 +307,6 @@ data/
 | POST | /api/tasks/:id/split | Split a refinement plan into individual child tasks |
 | POST | /api/tasks/:id/feedback | Send feedback to running/completed task |
 | GET | /api/tasks/:id/logs | Get task logs (paginated) |
-| GET | /api/tasks/:id/terminal | Pretty-printed terminal view |
 | POST | /api/tasks/:id/interactive-response | Respond to agent prompt |
 
 ### Agents
