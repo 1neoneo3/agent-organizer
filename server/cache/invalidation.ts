@@ -7,10 +7,11 @@ import { CACHE_KEYS } from "./keys.js";
  * batch del call.
  */
 export async function invalidateTaskStatusChange(
-  cache: CacheService,
+  cache: CacheService | undefined,
   oldStatus: string,
   newStatus: string,
 ): Promise<void> {
+  if (!cache) return;
   const keys = [
     CACHE_KEYS.TASKS_ALL,
     CACHE_KEYS.tasksStatus(oldStatus),
@@ -26,9 +27,10 @@ export async function invalidateTaskStatusChange(
  * which contains full row content via `SELECT *`, is also refreshed.
  */
 export async function invalidateTaskContent(
-  cache: CacheService,
+  cache: CacheService | undefined,
   status: string,
 ): Promise<void> {
+  if (!cache) return;
   await cache.del([CACHE_KEYS.TASKS_ALL, CACHE_KEYS.tasksStatus(status)]);
 }
 
@@ -37,10 +39,11 @@ export async function invalidateTaskContent(
  * uses targeted status invalidation; otherwise wipes all task status caches.
  */
 export async function invalidateTaskAndAgents(
-  cache: CacheService,
+  cache: CacheService | undefined,
   oldStatus?: string,
   newStatus?: string,
 ): Promise<void> {
+  if (!cache) return;
   if (oldStatus !== undefined && newStatus !== undefined) {
     const keys = [
       CACHE_KEYS.TASKS_ALL,
@@ -60,7 +63,8 @@ export async function invalidateTaskAndAgents(
  * Uses batch del for a single round-trip.
  */
 export async function invalidateAllTasks(
-  cache: CacheService,
+  cache: CacheService | undefined,
 ): Promise<void> {
+  if (!cache) return;
   await cache.del(CACHE_KEYS.allTaskKeys());
 }
