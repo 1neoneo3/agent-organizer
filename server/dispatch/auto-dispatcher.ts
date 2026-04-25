@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { CacheService } from "../cache/cache-service.js";
+import { invalidateTaskListOnly, invalidateTaskAndAgents } from "../cache/invalidation-helpers.js";
 import { AUTO_DISPATCH_INTERVAL_MS } from "../config/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
@@ -40,12 +41,6 @@ const ROLE_HINTS: Record<string, string[]> = {
   planner: ["plan", "planning", "roadmap", "breakdown", "spec"],
   lead_engineer: ["fix", "bug", "implement", "feature", "refactor", "api", "backend", "frontend", "typescript", "react", "node"],
 };
-
-function invalidateCaches(cache?: CacheService): void {
-  if (!cache) return;
-  void cache.invalidatePattern("tasks:*");
-  void cache.del("agents:all");
-}
 
 function getSetting(db: DatabaseSync, key: string): string | undefined {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
@@ -230,7 +225,7 @@ function writeDispatchLog(db: DatabaseSync, task: Task, message: string, cache?:
     db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)")
       .run(task.id, fullMessage);
     db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, task.id);
-    invalidateCaches(cache);
+    invalidateTaskListOnly(cache);
   } catch (error) {
     // The task may have been deleted (UI delete, github-sync close,
     // dependency cascade, manual SQL cleanup) between the inbox
@@ -377,7 +372,7 @@ export function dispatchAutoStartableTasks(
     }
 
     const assignedTask = assignTaskToAgent(db, task, selectedAgent);
-    invalidateCaches(options?.cache);
+    invalidateTaskAndAgents(options?.cache);
 
     try {
       writeDispatchLog(

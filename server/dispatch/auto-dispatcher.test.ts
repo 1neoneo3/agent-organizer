@@ -326,6 +326,8 @@ describe("dispatchAutoStartableTasks", () => {
       invalidatePattern() {
         throw new Error("synthetic cache failure (Layer 2 trigger)");
       },
+      getStats() { return { hits: 0, misses: 0, get hitRatio() { return 0; } }; },
+      resetStats() {},
       get isConnected() { return false; },
     };
 

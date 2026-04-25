@@ -24,6 +24,7 @@ import {
   setAcceptanceCriterionChecked,
 } from "../domain/acceptance-criteria.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
+import { invalidateTaskListOnly } from "../cache/invalidation-helpers.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import { isImplementerAgent, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
@@ -268,8 +269,8 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   const taskSpawner = deps.spawnAgent ?? spawnAgent;
   const feedbackRestarter = deps.queueFeedbackAndRestart ?? queueFeedbackAndRestart;
 
-  async function invalidateTaskCaches(): Promise<void> {
-    await cache.invalidatePattern("tasks:*");
+  function invalidateTaskCaches(): void {
+    invalidateTaskListOnly(cache);
   }
 
   router.get("/tasks", async (req, res) => {

@@ -3,6 +3,7 @@ import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clea
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { invalidateTaskAndAgents, invalidateTaskStatusChange } from "../cache/invalidation-helpers.js";
 import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
@@ -136,7 +137,7 @@ export function recoverInProgressOrphans(
         ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
       }
 
-      if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
+      invalidateTaskAndAgents(cache);
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id);
       ws.broadcast("task_update", freshTask ?? { id: task.id, status: "refinement", completed_at: now });
       continue;
@@ -180,7 +181,7 @@ export function recoverInProgressOrphans(
           task.id,
           `Orphan recovery: auto-respawn attempt ${nextCount}/${maxAutoRespawn} with agent "${respawnDecision.agent.name}".`,
         );
-        if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
+        invalidateTaskAndAgents(cache);
 
         const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
         // Fire-and-forget: spawnAgent is async (it awaits Explore Phase
@@ -234,7 +235,7 @@ export function recoverInProgressOrphans(
       db.prepare(
         "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
       ).run(task.id, parkReason);
-      if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
+      invalidateTaskAndAgents(cache);
       continue;
     }
 
@@ -256,7 +257,7 @@ export function recoverInProgressOrphans(
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
-    if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
+    invalidateTaskStatusChange(cache, task.status, "inbox");
     ws.broadcast("task_update", { id: task.id, status: "inbox" });
   }
 }
@@ -317,10 +318,7 @@ export function recoverStuckAutoStages(
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
-    if (cache) {
-      cache.invalidatePattern("tasks:*");
-      cache.del("agents:all");
-    }
+    invalidateTaskStatusChange(cache, task.status, "human_review");
     ws.broadcast("task_update", { id: task.id, status: "human_review" });
   }
 }

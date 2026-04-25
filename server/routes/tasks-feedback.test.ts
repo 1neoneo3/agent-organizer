@@ -18,6 +18,8 @@ function createCache(): CacheService {
     async set() {},
     async del() {},
     async invalidatePattern() {},
+    getStats() { return { hits: 0, misses: 0, get hitRatio() { return 0; } }; },
+    resetStats() {},
     get isConnected() {
       return false;
     },

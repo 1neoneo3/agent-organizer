@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { invalidateAllTasks } from "../cache/invalidation-helpers.js";
 import { spawnAgent } from "../spawner/process-manager.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import {
@@ -48,12 +49,6 @@ function buildDescription(issue: GitHubIssue): string {
     parts.push(issue.body.trim());
   }
   return parts.join("\n");
-}
-
-function invalidateCaches(cache?: CacheService): void {
-  if (!cache) return;
-  void cache.invalidatePattern("tasks:*");
-  void cache.del("agents:all");
 }
 
 export function resolveGitHubSyncToken(
@@ -151,7 +146,8 @@ export function syncGithubIssues(
     cancelled++;
   }
 
-  invalidateCaches(cache);
+  invalidateAllTasks(cache);
+  if (cache) void cache.del("agents:all");
   return { created, updated, cancelled };
 }
 

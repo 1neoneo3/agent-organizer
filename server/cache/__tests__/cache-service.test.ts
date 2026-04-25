@@ -121,6 +121,47 @@ describe("CacheService", () => {
     });
   });
 
+  describe("getStats / resetStats", () => {
+    it("starts with zero hits and misses", () => {
+      const mockRedis = createMockRedis();
+      const c = createCacheService(mockRedis as never);
+      const stats = c.getStats();
+      assert.equal(stats.hits, 0);
+      assert.equal(stats.misses, 0);
+      assert.equal(stats.hitRatio, 0);
+    });
+
+    it("tracks hits and misses", async () => {
+      const mockRedis = createMockRedis();
+      const c = createCacheService(mockRedis as never);
+      await c.set("key1", "value1", 60);
+      await c.get("key1"); // hit
+      await c.get("key1"); // hit
+      await c.get("missing"); // miss
+      const stats = c.getStats();
+      assert.equal(stats.hits, 2);
+      assert.equal(stats.misses, 1);
+      assert.ok(Math.abs(stats.hitRatio - 2 / 3) < 0.001);
+    });
+
+    it("counts miss when redis is null", async () => {
+      const c = createCacheService(null);
+      await c.get("any");
+      assert.equal(c.getStats().misses, 1);
+    });
+
+    it("resetStats clears counters", async () => {
+      const mockRedis = createMockRedis();
+      const c = createCacheService(mockRedis as never);
+      await c.set("k", "v", 60);
+      await c.get("k");
+      c.resetStats();
+      const stats = c.getStats();
+      assert.equal(stats.hits, 0);
+      assert.equal(stats.misses, 0);
+    });
+  });
+
   describe("graceful degradation (redis throws)", () => {
     let cache: CacheService;
 
