@@ -1194,7 +1194,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const timestamp = new Date(now).toISOString();
 
     // 1. Append to feedback file
-    const feedbackDir = join("data", "feedback");
+    const feedbackDir = process.env.AO_FEEDBACK_DIR ?? join("data", "feedback");
     mkdirSync(feedbackDir, { recursive: true });
     const feedbackPath = join(feedbackDir, `${task.id}.md`);
     appendFileSync(feedbackPath, `\n---\n## CEO Feedback (${timestamp})\n\n${content}\n`, "utf-8");

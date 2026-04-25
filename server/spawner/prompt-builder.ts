@@ -654,7 +654,8 @@ export function buildTaskPrompt(
   }
 
   // CEO Feedback file reference — dynamic per task.
-  const feedbackPath = join("data", "feedback", `${task.id}.md`);
+  const feedbackDir = process.env.AO_FEEDBACK_DIR ?? join("data", "feedback");
+  const feedbackPath = join(feedbackDir, `${task.id}.md`);
   if (existsSync(feedbackPath)) {
     dynamicParts.push("## CEO Feedback");
     dynamicParts.push("");

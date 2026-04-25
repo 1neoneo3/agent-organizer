@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -120,8 +121,16 @@ function insertCompletedRefinementTask(db: DatabaseSync, taskId: string, agentId
 }
 
 describe("POST /tasks/:id/feedback refinement regressions", () => {
+  let tmpFeedbackDir: string;
+
+  beforeEach(() => {
+    tmpFeedbackDir = mkdtempSync(join(tmpdir(), "ao-feedback-test-"));
+    process.env.AO_FEEDBACK_DIR = tmpFeedbackDir;
+  });
+
   afterEach(() => {
-    rmSync(join("data", "feedback"), { recursive: true, force: true });
+    delete process.env.AO_FEEDBACK_DIR;
+    rmSync(tmpFeedbackDir, { recursive: true, force: true });
   });
 
   it("records one refinement round-trip when an active child process is restarted", async () => {
