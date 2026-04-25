@@ -7,6 +7,7 @@ import {
   countLogsByTab,
   emptySegmentLabel,
   groupLogsByStage,
+  mergeOlderLogs,
   MAX_LIVE_LOGS,
   parseStageTransition,
   STAGE_TRANSITION_PREFIX,
@@ -459,5 +460,66 @@ describe("groupLogsByStage", () => {
     assert.doesNotMatch(text, /raw cli noise/);
     // Dropped entries must not inflate the counter either.
     assert.equal(segments[0]?.entryCount, 2);
+  });
+});
+
+describe("mergeOlderLogs", () => {
+  it("prepends older logs and returns chronological order", () => {
+    const existing = [createLog(5), createLog(6), createLog(7)];
+    const older = [createLog(1), createLog(2), createLog(3)];
+    const result = mergeOlderLogs(existing, older);
+    assert.deepEqual(result.map((l) => l.id), [1, 2, 3, 5, 6, 7]);
+  });
+
+  it("deduplicates by id", () => {
+    const existing = [createLog(3), createLog(5), createLog(7)];
+    const older = [createLog(1), createLog(3), createLog(5)];
+    const result = mergeOlderLogs(existing, older);
+    assert.deepEqual(result.map((l) => l.id), [1, 3, 5, 7]);
+  });
+
+  it("deduplicates stage transition markers fold-in'd by server", () => {
+    const transitionLog = createLog(10, {
+      kind: "system",
+      message: `${STAGE_TRANSITION_PREFIX}inbox→in_progress`,
+      stage: "in_progress",
+    });
+    const existing = [
+      createLog(20, { stage: "in_progress" }),
+      createLog(30, { stage: "in_progress" }),
+    ];
+    const older = [
+      createLog(5, { stage: "inbox" }),
+      { ...transitionLog },
+    ];
+    const result = mergeOlderLogs(existing, older);
+    assert.deepEqual(result.map((l) => l.id), [5, 10, 20, 30]);
+    assert.equal(result.filter((l) => l.id === 10).length, 1);
+  });
+
+  it("returns existing array unchanged when older has only duplicates", () => {
+    const existing = [createLog(1), createLog(2)];
+    const older = [createLog(1), createLog(2)];
+    const result = mergeOlderLogs(existing, older);
+    assert.strictEqual(result, existing);
+  });
+
+  it("returns existing array unchanged when older is empty", () => {
+    const existing = [createLog(1)];
+    const result = mergeOlderLogs(existing, []);
+    assert.strictEqual(result, existing);
+  });
+
+  it("sorts by created_at then id for logs with same timestamp", () => {
+    const existing = [
+      createLog(10, { created_at: 100 }),
+      createLog(11, { created_at: 100 }),
+    ];
+    const older = [
+      createLog(2, { created_at: 50 }),
+      createLog(3, { created_at: 50 }),
+    ];
+    const result = mergeOlderLogs(existing, older);
+    assert.deepEqual(result.map((l) => l.id), [2, 3, 10, 11]);
   });
 });

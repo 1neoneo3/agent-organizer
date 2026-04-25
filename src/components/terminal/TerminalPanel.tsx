@@ -8,6 +8,7 @@ import {
   countLogsByTab,
   emptySegmentLabel,
   groupLogsByStage,
+  mergeOlderLogs,
   parseStageTransition,
   STAGE_TRANSITION_PREFIX,
   type StageSegment,
@@ -260,22 +261,21 @@ function TerminalView({
   currentAgentId: string | null;
   agents: Agent[];
 }) {
+  const LOG_PAGE_SIZE = 1000;
+
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [follow, setFollow] = useState(true);
   const [expandedOverride, setExpandedOverride] = useState<Record<string, boolean>>({});
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const doFetch = useCallback(async () => {
     try {
-      // Fetch up to 300 rows. Server truncates each message at 4KB to keep
-      // the response payload bounded (some rows contain raw tool-result JSON
-      // blobs tens of KB each, which would otherwise freeze the browser when
-      // rendering the Activity panel). task_logs carries stage/agent_id via
-      // the AFTER INSERT trigger, so grouping is done on the client.
-      const rows = await fetchTaskLogs(taskId, 300);
-      // Server returns rows in reverse chronological order; flip to chronological.
+      const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE);
       const chronological = [...rows].reverse();
       setLogs(chronological);
+      setHasMore(rows.length >= LOG_PAGE_SIZE);
     } catch {
       // ignore fetch errors
     }
@@ -284,6 +284,31 @@ function TerminalView({
   useEffect(() => {
     doFetch();
   }, [doFetch]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const el = containerRef.current;
+      const prevScrollHeight = el?.scrollHeight ?? 0;
+      const prevScrollTop = el?.scrollTop ?? 0;
+
+      const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE, logs.length);
+      const olderChronological = [...rows].reverse();
+      setLogs((prev) => mergeOlderLogs(prev, olderChronological));
+      setHasMore(rows.length >= LOG_PAGE_SIZE);
+
+      requestAnimationFrame(() => {
+        if (el) {
+          el.scrollTop = prevScrollTop + (el.scrollHeight - prevScrollHeight);
+        }
+      });
+    } catch {
+      // ignore fetch errors
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [taskId, logs.length, loadingMore, hasMore]);
 
   // Stage transitions are recorded by a DB trigger but are NOT broadcast
   // over WebSocket (the trigger has no access to the hub). Without this
@@ -413,21 +438,43 @@ function TerminalView({
             Waiting for output...
           </div>
         ) : (
-          segments.map((segment, index) => {
-            const isLast = index === segments.length - 1;
-            const defaultOpen = isLast;
-            const isOpen = expandedOverride[segment.id] ?? defaultOpen;
-            return (
-              <StageSegmentBlock
-                key={segment.id}
-                segment={segment}
-                isOpen={isOpen}
-                onToggle={() => toggleSegment(segment.id, defaultOpen)}
-                agents={agents}
-                previousStage={index > 0 ? segments[index - 1]?.stage ?? null : null}
-              />
-            );
-          })
+          <>
+            {hasMore && (
+              <div style={{ textAlign: "center", padding: "4px 0 8px" }}>
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  style={{
+                    fontSize: "11px",
+                    color: "var(--terminal-text-dim)",
+                    background: "var(--terminal-header-bg)",
+                    border: "1px solid var(--border-default)",
+                    borderRadius: "4px",
+                    padding: "3px 12px",
+                    cursor: loadingMore ? "wait" : "pointer",
+                    opacity: loadingMore ? 0.6 : 1,
+                  }}
+                >
+                  {loadingMore ? "Loading..." : "↑ Load older logs"}
+                </button>
+              </div>
+            )}
+            {segments.map((segment, index) => {
+              const isLast = index === segments.length - 1;
+              const defaultOpen = isLast;
+              const isOpen = expandedOverride[segment.id] ?? defaultOpen;
+              return (
+                <StageSegmentBlock
+                  key={segment.id}
+                  segment={segment}
+                  isOpen={isOpen}
+                  onToggle={() => toggleSegment(segment.id, defaultOpen)}
+                  agents={agents}
+                  previousStage={index > 0 ? segments[index - 1]?.stage ?? null : null}
+                />
+              );
+            })}
+          </>
         )}
       </div>
       {!follow && (

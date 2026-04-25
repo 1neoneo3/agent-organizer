@@ -220,6 +220,21 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
 }
 
 /**
+ * Merge older logs (fetched via load-more) in front of existing logs.
+ * Deduplicates by `id` — the server fold-ins all stage-transition markers
+ * into every page, so duplicates are expected.  Returns chronological order.
+ */
+export function mergeOlderLogs(existing: TaskLog[], older: TaskLog[]): TaskLog[] {
+  const seen = new Set(existing.map((l) => l.id));
+  const unique = older.filter((l) => !seen.has(l.id));
+  if (unique.length === 0) return existing;
+  return [...unique, ...existing].sort((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at - b.created_at;
+    return a.id - b.id;
+  });
+}
+
+/**
  * Append incoming log entries to the terminal text.
  * Automatically injects a stage header when the stage or agent changes
  * between consecutive entries, even if the server did not emit an explicit marker.
