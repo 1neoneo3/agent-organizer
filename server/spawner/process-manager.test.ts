@@ -1062,6 +1062,58 @@ describe("createPlanBlockTracker", () => {
     tracker.update("Please provide the build target directory.");
     assert.strictEqual(tracker.isInsidePlanBlock, false);
   });
+
+  // --- SPRINT CONTRACT block tracking ---
+
+  it("tracks SPRINT CONTRACT block", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("実装を開始します。\n---SPRINT CONTRACT---\n**成果物:**\n1. file.ts");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "should enter block on SPRINT CONTRACT start");
+
+    tracker.update("---END CONTRACT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "should exit block on END CONTRACT");
+  });
+
+  it("tracks SPRINT CONTRACT block split across chunks", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---SPRINT CONT");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "partial start marker should not trigger");
+
+    tracker.update("RACT---\n**成果物:**");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "combined chunks should detect start marker");
+
+    tracker.update("---END CONTRACT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+  });
+
+  it("handles both SPRINT CONTRACT markers in a single chunk", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---SPRINT CONTRACT---\n**成果物:**\n1. A\n---END CONTRACT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false, "both markers in one chunk → opened and closed");
+  });
+
+  it("correctly tracks second block after first closes (tail replay)", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---SPRINT CONTRACT---\ncontent\n---END CONTRACT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+
+    tracker.update("\n---SPRINT CONTRACT---\nnew content");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "second block should be tracked despite tail containing END marker");
+  });
+
+  it("correctly tracks second REFINEMENT PLAN block after first closes (tail replay)", () => {
+    const tracker = createPlanBlockTracker();
+
+    tracker.update("---REFINEMENT PLAN---\nplan\n---END REFINEMENT---");
+    assert.strictEqual(tracker.isInsidePlanBlock, false);
+
+    tracker.update("\n---REFINEMENT PLAN---\nnew plan");
+    assert.strictEqual(tracker.isInsidePlanBlock, true, "second REFINEMENT block should be tracked");
+  });
 });
 
 describe("extractRefinementPlanFromLogs — interactive prompt kill scenario", () => {

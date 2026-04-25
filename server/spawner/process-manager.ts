@@ -441,9 +441,14 @@ export function buildRefinementRevisionPrompt(feedback: string): string {
   ].join("\n");
 }
 
-const PLAN_START_MARKER = "---REFINEMENT PLAN---";
-const PLAN_END_MARKER = "---END REFINEMENT---";
-const PLAN_MARKER_BUFFER_SIZE = PLAN_START_MARKER.length - 1;
+const BLOCK_MARKERS: Array<{ start: string; end: string }> = [
+  { start: "---REFINEMENT PLAN---", end: "---END REFINEMENT---" },
+  { start: "---SPRINT CONTRACT---", end: "---END CONTRACT---" },
+];
+
+const BLOCK_MARKER_BUFFER_SIZE = Math.max(
+  ...BLOCK_MARKERS.flatMap((m) => [m.start.length, m.end.length]),
+) - 1;
 
 export interface PlanBlockTracker {
   update(text: string): void;
@@ -452,23 +457,29 @@ export interface PlanBlockTracker {
 
 export function createPlanBlockTracker(): PlanBlockTracker {
   let tail = "";
-  let inside = false;
+  const insideFlags: boolean[] = BLOCK_MARKERS.map(() => false);
 
   return {
     update(text: string): void {
       const combined = tail + text;
-      if (combined.includes(PLAN_START_MARKER)) {
-        inside = true;
+      for (let i = 0; i < BLOCK_MARKERS.length; i++) {
+        const { start, end } = BLOCK_MARKERS[i];
+        const lastStart = combined.lastIndexOf(start);
+        const lastEnd = combined.lastIndexOf(end);
+        if (lastStart >= 0 && lastEnd >= 0) {
+          insideFlags[i] = lastStart > lastEnd;
+        } else if (lastStart >= 0) {
+          insideFlags[i] = true;
+        } else if (lastEnd >= 0) {
+          insideFlags[i] = false;
+        }
       }
-      if (combined.includes(PLAN_END_MARKER)) {
-        inside = false;
-      }
-      tail = combined.length > PLAN_MARKER_BUFFER_SIZE
-        ? combined.slice(-PLAN_MARKER_BUFFER_SIZE)
+      tail = combined.length > BLOCK_MARKER_BUFFER_SIZE
+        ? combined.slice(-BLOCK_MARKER_BUFFER_SIZE)
         : combined;
     },
     get isInsidePlanBlock(): boolean {
-      return inside;
+      return insideFlags.some(Boolean);
     },
   };
 }
@@ -1412,9 +1423,13 @@ export async function spawnAgent(
         }
 
         // Text-based interactive prompt detection (for Codex/Gemini/any provider)
-        // Only check "assistant" kind events outside refinement plan blocks
+        // Only check "assistant" kind events outside structured blocks.
+        // During in_progress, use strict mode (only explicit "question + numbered
+        // options" fires) to avoid false-positives on agent declarations like
+        // SPRINT CONTRACT, checklists, and implementation announcements.
         if (event && event.kind === "assistant" && !planBlockTracker.isInsidePlanBlock && !pendingInteractivePrompts.has(task.id)) {
-          const textPrompt = detectTextInteractivePrompt(event.message);
+          const useStrictMode = spawnStage === "in_progress" || spawnStage === "test_generation";
+          const textPrompt = detectTextInteractivePrompt(event.message, { strictMode: useStrictMode });
           if (textPrompt) {
             const entry = { data: textPrompt, createdAt: Date.now() };
             pendingInteractivePrompts.set(task.id, entry);

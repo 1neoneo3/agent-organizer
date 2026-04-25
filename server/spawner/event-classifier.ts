@@ -92,7 +92,7 @@ const TEXT_PROMPT_PATTERNS_JA: RegExp[] = [
   /(?:再指定|追加情報|追加入力|確認が必要)/,
   /(?:どちらにしますか|どうしますか|どれを選びますか)/,
   /(?:コマンドを|パスを|ファイルを|ディレクトリを)(?:教えて|指定して|入力して|貼って)/,
-  /(?:完了条件|対象|作業ディレクトリ)を.*(?:指定|教えて|入力)/,
+  /(?:完了条件|対象|作業ディレクトリ)を[^。]{0,30}(?:指定|教えて|入力)(?:して|ください)/,
 ];
 
 const TEXT_PROMPT_PATTERNS_EN: RegExp[] = [
@@ -112,9 +112,11 @@ function looksLikeCompletionSummary(text: string): boolean {
     /\[REVIEW:\w+:PASS\]/.test(text) ||
     /\[REVIEW:\w+:NEEDS_CHANGES/.test(text) ||
     (text.includes("レビューサマリー") && text.includes("### 判定")) ||
-    // Refinement plan output — not a user prompt (start marker alone suffices
-    // because streaming chunks may arrive before the end marker)
-    text.includes("---REFINEMENT PLAN---")
+    // Refinement plan / sprint contract output — not a user prompt.
+    // Guard on the start marker alone: streaming splits the block across
+    // multiple events so the end marker may not yet be present.
+    text.includes("---REFINEMENT PLAN---") ||
+    text.includes("---SPRINT CONTRACT---")
   );
 }
 
@@ -160,6 +162,15 @@ function stripRefinementPlanBlocks(text: string): string {
 }
 
 /**
+ * Strip complete SPRINT CONTRACT blocks.  Agent declarations like
+ * "成果物 / 受け入れ基準 / スコープ外" are internal work-tracking,
+ * not user prompts.
+ */
+function stripSprintContractBlocks(text: string): string {
+  return text.replace(/---SPRINT CONTRACT---[\s\S]*?---END CONTRACT---/g, "").trim();
+}
+
+/**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
  *
@@ -171,11 +182,18 @@ function stripRefinementPlanBlocks(text: string): string {
  * outside the block are still caught. Streaming partial plan blocks
  * (start marker only) are guarded by `looksLikeCompletionSummary` and
  * the caller's `insideRefinementPlanBlock` flag.
+ *
+ * When `strictMode` is true, only the strong "question + numbered options"
+ * signal fires; weak regex-based JA/EN patterns are skipped. This is used
+ * during in_progress stage where agents routinely emit declaration-style
+ * text (SPRINT CONTRACT, checklists) that weak patterns misclassify.
  */
 export function detectTextInteractivePrompt(
   assistantText: string,
+  options?: { strictMode?: boolean },
 ): InteractivePromptData | null {
-  const textToCheck = stripRefinementPlanBlocks(assistantText);
+  const stripped = stripRefinementPlanBlocks(assistantText);
+  const textToCheck = stripSprintContractBlocks(stripped);
 
   // Skip very short messages — unlikely to be a genuine input request.
   // Threshold is low (10) because CJK languages pack more meaning per character.
@@ -197,6 +215,11 @@ export function detectTextInteractivePrompt(
       questions: [{ question: textToCheck }],
     };
   }
+
+  // In strict mode, only the explicit options prompt fires.
+  // Weak regex patterns are skipped to avoid false positives on
+  // agent declarations (SPRINT CONTRACT, checklists, etc.)
+  if (options?.strictMode) return null;
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
     if (pattern.test(textToCheck)) {
