@@ -43,7 +43,11 @@ import { recordDbLogInsertMs, recordStdoutChunkMs } from "../perf/metrics.js";
 import { getHeartbeatManager } from "./heartbeat-manager.js";
 import { getLogBatchWriter } from "../db/log-batch-writer.js";
 import type { CacheService } from "../cache/cache-service.js";
-import { invalidateTaskAndAgents } from "../cache/invalidation.js";
+import {
+  invalidateTaskAndAgents,
+  invalidateTaskContent,
+  invalidateTaskStatusChange,
+} from "../cache/invalidation.js";
 import { CACHE_KEYS } from "../cache/keys.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode, tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
@@ -1074,7 +1078,12 @@ export async function spawnAgent(
       throw new Error(`spawnAgent aborted: agent ${agent.id} is not idle`);
     }
 
-    void invalidateTaskAndAgents(cache, task.status, startUpdate.status);
+    if (shouldTransitionFromInbox) {
+      void invalidateTaskAndAgents(cache, task.status, startUpdate.status);
+    } else {
+      cache?.del(CACHE_KEYS.AGENTS_ALL);
+      void invalidateTaskContent(cache, startUpdate.status);
+    }
     ws.broadcast(
       "task_update",
       pickTaskUpdate(startUpdate, ["status", "assigned_agent_id", "started_at", "completed_at", "updated_at"]),
@@ -1221,7 +1230,8 @@ export async function spawnAgent(
       agent.id,
     );
 
-    void invalidateTaskAndAgents(cache, liveTask.status, liveTask.status);
+    cache?.del(CACHE_KEYS.AGENTS_ALL);
+    void invalidateTaskContent(cache, liveTask.status);
     ws.broadcast(
       "task_update",
       pickTaskUpdate(
@@ -1642,6 +1652,7 @@ export async function spawnAgent(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
       ).run(finishTime, agent.id);
       cache?.del(CACHE_KEYS.AGENTS_ALL);
+      void invalidateTaskContent(cache, runtimeStatus);
       ws.broadcast("agent_status", {
         id: agent.id,
         status: "idle",
@@ -1658,7 +1669,8 @@ export async function spawnAgent(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
       ).run(finishTime, agent.id);
       insertLogStmt.run(task.id, "system", "Agent awaiting user input (interactive prompt). Task remains in_progress.", spawnStage, agent.id);
-      void invalidateTaskAndAgents(cache, runtimeStatus, runtimeStatus);
+      cache?.del(CACHE_KEYS.AGENTS_ALL);
+      void invalidateTaskContent(cache, runtimeStatus);
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -1821,7 +1833,8 @@ export async function spawnAgent(
       // trigger fallback can't stamp the post-transition stage.
       insertLogStmt.run(task.id, "system", `Feedback response complete. Restored status: ${restoreStatus}`, spawnStage, agent.id);
 
-      void invalidateTaskAndAgents(cache, runtimeStatus, restoreStatus);
+      cache?.del(CACHE_KEYS.AGENTS_ALL);
+      void invalidateTaskStatusChange(cache, runtimeStatus, restoreStatus);
       ws.broadcast(
         "task_update",
         pickTaskUpdate(
@@ -2016,7 +2029,18 @@ export async function spawnAgent(
       );
     }
 
-    void invalidateTaskAndAgents(cache, completionTask.status, finalStatus);
+    if (
+      finalStatus === "in_progress" ||
+      finalStatus === "test_generation" ||
+      finalStatus === "qa_testing" ||
+      finalStatus === "pr_review" ||
+      finalStatus === "human_review"
+    ) {
+      cache?.del(CACHE_KEYS.AGENTS_ALL);
+      void invalidateTaskStatusChange(cache, completionTask.status, finalStatus);
+    } else {
+      void invalidateTaskAndAgents(cache, completionTask.status, finalStatus);
+    }
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
     ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
