@@ -122,7 +122,11 @@ describe("PUT /tasks/:id — targeted cache invalidation on status change", () =
     assert.equal(cache.store.has("agents:all"), true, "agents:all should be preserved on non-agent change");
   });
 
-  it("invalidates only tasks:all when metadata changes without status change", async () => {
+  it("invalidates tasks:all + per-status cache when metadata changes without status change", async () => {
+    // GET /tasks?status=X returns full SELECT * rows, so per-status cache
+    // contains content fields (title, settings_overrides, refinement_plan etc).
+    // Status-preserving content updates must invalidate the matching
+    // tasks:status:{X} cache as well, otherwise stale rows leak through.
     const now = Date.now();
     db.prepare(
       `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
@@ -130,7 +134,7 @@ describe("PUT /tasks/:id — targeted cache invalidation on status change", () =
     ).run("task-cache-2", "Metadata test", "#101", now, now);
 
     cache.store.set("tasks:all", [{ id: "task-cache-2" }]);
-    cache.store.set("tasks:status:inbox", [{ id: "task-cache-2" }]);
+    cache.store.set("tasks:status:inbox", [{ id: "task-cache-2", title: "Metadata test" }]);
     cache.store.set("tasks:status:done", [{ id: "other" }]);
 
     const response = await fetch(`${baseUrl}/tasks/task-cache-2`, {
@@ -142,7 +146,12 @@ describe("PUT /tasks/:id — targeted cache invalidation on status change", () =
     assert.equal(response.status, 200);
 
     assert.equal(cache.store.has("tasks:all"), false, "tasks:all should be invalidated");
-    assert.equal(cache.store.has("tasks:status:inbox"), true, "status cache should be preserved when no status change");
-    assert.equal(cache.store.has("tasks:status:done"), true, "unrelated status cache preserved");
+    assert.equal(
+      cache.store.has("tasks:status:inbox"),
+      false,
+      "per-status cache must be invalidated because content fields are part of the cached rows",
+    );
+    assert.equal(cache.store.has("tasks:status:done"), true, "unrelated status cache should be preserved");
+    assert.deepEqual(cache.store.get("tasks:status:done"), [{ id: "other" }]);
   });
 });

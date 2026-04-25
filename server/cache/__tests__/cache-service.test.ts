@@ -95,6 +95,24 @@ describe("CacheService", () => {
       assert.equal(result, null);
     });
 
+    it("del with array removes multiple keys in one call", async () => {
+      await cache.set("tasks:all", "data1", 60);
+      await cache.set("tasks:status:inbox", "data2", 60);
+      await cache.set("agents:all", "data3", 60);
+
+      await cache.del(["tasks:all", "tasks:status:inbox"]);
+
+      assert.equal(await cache.get("tasks:all"), null);
+      assert.equal(await cache.get("tasks:status:inbox"), null);
+      assert.equal(await cache.get("agents:all"), "data3");
+    });
+
+    it("del with empty array is a no-op", async () => {
+      await cache.set("test", "value", 60);
+      await cache.del([]);
+      assert.equal(await cache.get("test"), "value");
+    });
+
     it("invalidatePattern removes matching keys", async () => {
       await cache.set("tasks:all", "data1", 60);
       await cache.set("tasks:status:inbox", "data2", 60);

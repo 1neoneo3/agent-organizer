@@ -24,7 +24,7 @@ import {
   setAcceptanceCriterionChecked,
 } from "../domain/acceptance-criteria.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
-import { CACHE_KEYS, invalidateTaskStatusChange, invalidateTaskListOnly, invalidateTaskAndAgents, invalidateAllTasks } from "../cache/index.js";
+import { CACHE_KEYS, invalidateTaskStatusChange, invalidateTaskContent, invalidateTaskAndAgents, invalidateAllTasks } from "../cache/index.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import { isImplementerAgent, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
@@ -404,7 +404,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       cache,
       spawnAgent: taskSpawner,
     }) as Task;
-    await invalidateTaskAndAgents(cache);
+    await invalidateTaskAndAgents(cache, task.status, task.status);
     res.status(201).json(task);
   });
 
@@ -516,7 +516,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     if (updates.status) {
       await invalidateTaskStatusChange(cache, existingTask.status, updates.status);
     } else {
-      await invalidateTaskListOnly(cache);
+      await invalidateTaskContent(cache, existingTask.status);
     }
     ws.broadcast("task_update", task);
 
@@ -584,8 +584,8 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     }
 
     const task = db
-      .prepare("SELECT settings_overrides FROM tasks WHERE id = ?")
-      .get(req.params.id) as { settings_overrides: string | null } | undefined;
+      .prepare("SELECT settings_overrides, status FROM tasks WHERE id = ?")
+      .get(req.params.id) as { settings_overrides: string | null; status: string } | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
     const merged = mergeOverrides(task.settings_overrides, parsed.data);
@@ -597,17 +597,17 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       req.params.id,
     );
 
-    await invalidateTaskListOnly(cache);
+    await invalidateTaskContent(cache, task.status);
     res.json({ task_id: req.params.id, overrides: merged ?? {} });
   });
 
   // DELETE /tasks/:id/settings — clear all overrides for a task
   router.delete("/tasks/:id/settings", async (req, res) => {
-    const task = db.prepare("SELECT id FROM tasks WHERE id = ?").get(req.params.id) as { id: string } | undefined;
+    const task = db.prepare("SELECT id, status FROM tasks WHERE id = ?").get(req.params.id) as { id: string; status: string } | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     const now = Date.now();
     db.prepare("UPDATE tasks SET settings_overrides = NULL, updated_at = ? WHERE id = ?").run(now, req.params.id);
-    await invalidateTaskListOnly(cache);
+    await invalidateTaskContent(cache, task.status);
     res.json({ task_id: req.params.id, overrides: {} });
   });
 
@@ -661,7 +661,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       `Acceptance criterion #${index + 1} ${checked ? "checked" : "unchecked"} during pr_review.`,
     );
 
-    await invalidateTaskListOnly(cache);
+    await invalidateTaskContent(cache, task.status);
     const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", updated);
     res.json({ task: updated, index, checked, total });

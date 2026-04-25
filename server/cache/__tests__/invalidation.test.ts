@@ -4,7 +4,7 @@ import type { CacheService } from "../cache-service.js";
 import { CACHE_KEYS } from "../keys.js";
 import {
   invalidateTaskStatusChange,
-  invalidateTaskListOnly,
+  invalidateTaskContent,
   invalidateTaskAndAgents,
   invalidateAllTasks,
 } from "../invalidation.js";
@@ -62,14 +62,24 @@ describe("invalidateTaskStatusChange", () => {
   });
 });
 
-describe("invalidateTaskListOnly", () => {
-  it("deletes only tasks:all", async () => {
+describe("invalidateTaskContent", () => {
+  it("deletes tasks:all and the specified status cache (per-status content refresh)", async () => {
     const cache = createTrackingCache();
-    await invalidateTaskListOnly(cache);
+    await invalidateTaskContent(cache, "inbox");
 
-    assert.equal(cache.deleted.length, 1);
+    assert.equal(cache.deleted.length, 1, "should be a single batch del call");
     const keys = cache.deleted[0];
-    assert.deepEqual(keys, [CACHE_KEYS.TASKS_ALL]);
+    assert.deepEqual(keys, [CACHE_KEYS.TASKS_ALL, CACHE_KEYS.tasksStatus("inbox")]);
+  });
+
+  it("does not include unrelated status caches or agents:all", async () => {
+    const cache = createTrackingCache();
+    await invalidateTaskContent(cache, "pr_review");
+
+    const keys = cache.deleted[0];
+    assert.ok(!keys.includes(CACHE_KEYS.tasksStatus("inbox")));
+    assert.ok(!keys.includes(CACHE_KEYS.tasksStatus("done")));
+    assert.ok(!keys.includes(CACHE_KEYS.AGENTS_ALL));
   });
 });
 

@@ -20,13 +20,16 @@ export async function invalidateTaskStatusChange(
 }
 
 /**
- * Invalidate tasks:all only. Use when task metadata changed but the status
- * did not (e.g. settings update, acceptance criterion toggle).
+ * Invalidate caches affected by a status-preserving content update
+ * (e.g. settings update, acceptance criterion toggle, title rename).
+ * Deletes tasks:all + tasks:status:{status} so the per-status cache,
+ * which contains full row content via `SELECT *`, is also refreshed.
  */
-export async function invalidateTaskListOnly(
+export async function invalidateTaskContent(
   cache: CacheService,
+  status: string,
 ): Promise<void> {
-  await cache.del(CACHE_KEYS.TASKS_ALL);
+  await cache.del([CACHE_KEYS.TASKS_ALL, CACHE_KEYS.tasksStatus(status)]);
 }
 
 /**

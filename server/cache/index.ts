@@ -4,7 +4,7 @@ export type { CacheService } from "./cache-service.js";
 export { CACHE_KEYS } from "./keys.js";
 export {
   invalidateTaskStatusChange,
-  invalidateTaskListOnly,
+  invalidateTaskContent,
   invalidateTaskAndAgents,
   invalidateAllTasks,
 } from "./invalidation.js";
