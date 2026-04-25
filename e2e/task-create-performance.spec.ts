@@ -23,7 +23,7 @@ test.describe("Task Create Performance", () => {
 
     const taskTitle = `Perf Task ${Date.now()}`;
     await page.getByPlaceholder("What needs to be done?").fill(taskTitle);
-    await page.getByPlaceholder("Detailed instructions...").fill("Measure create-task latency");
+    await page.getByPlaceholder("What and why in 2-3 sentences. Implementation details go in the plan.").fill("Measure create-task latency");
 
     const submitStartedAt = Date.now();
     await page.getByRole("button", { name: "Create Task" }).click();

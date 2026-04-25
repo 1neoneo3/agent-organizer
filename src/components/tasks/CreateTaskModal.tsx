@@ -87,8 +87,11 @@ export function CreateTaskModal({ agents, onClose, onCreate }: CreateTaskModalPr
             }}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Detailed instructions..."
+            placeholder="What and why in 2-3 sentences. Implementation details go in the plan."
           />
+          <span style={{ display: "block", fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+            Brief overview only. Technical details belong in the Implementation Plan.
+          </span>
         </label>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>

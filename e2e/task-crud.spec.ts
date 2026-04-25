@@ -20,7 +20,7 @@ test.describe("Task CRUD", () => {
 
     // Fill in the task form
     await page.fill('input[placeholder="What needs to be done?"]', "E2E Test Task");
-    await page.fill('textarea[placeholder="Detailed instructions..."]', "This is a test task created by E2E");
+    await page.fill('textarea[placeholder="What and why in 2-3 sentences. Implementation details go in the plan."]', "This is a test task created by E2E");
 
     // Submit the form
     await page.click('button:has-text("Create Task")');

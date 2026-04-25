@@ -8,7 +8,7 @@ async function measureSingleCreate(page: import("@playwright/test").Page, title:
   const modalOpenedAt = Date.now();
 
   await page.getByPlaceholder("What needs to be done?").fill(title);
-  await page.getByPlaceholder("Detailed instructions...").fill("Scenario performance test");
+  await page.getByPlaceholder("What and why in 2-3 sentences. Implementation details go in the plan.").fill("Scenario performance test");
 
   const submitStartedAt = Date.now();
   await page.getByRole("button", { name: "Create Task" }).click();

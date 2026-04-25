@@ -35,7 +35,7 @@ test.describe("Task Flow (Agent + Task integration)", () => {
     await page.click("button:has-text('+ NEW QUEST')");
     await page.waitForSelector('input[placeholder="What needs to be done?"]');
     await page.fill('input[placeholder="What needs to be done?"]', "Auto assign and start task");
-    await page.fill('textarea[placeholder="Detailed instructions..."]', "Verify task create auto-assigns and auto-starts");
+    await page.fill('textarea[placeholder="What and why in 2-3 sentences. Implementation details go in the plan."]', "Verify task create auto-assigns and auto-starts");
 
     const createTaskResponsePromise = page.waitForResponse((response) =>
       response.url().endsWith("/api/tasks") && response.request().method() === "POST"
