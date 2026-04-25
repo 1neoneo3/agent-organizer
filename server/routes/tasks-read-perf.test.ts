@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -140,23 +140,6 @@ describe("tasks read perf metrics", () => {
 
     const stats = metrics.readApi["/tasks/:id/logs"];
     assert.ok(stats, "expected /tasks/:id/logs metrics");
-    assert.equal(stats.count, 1);
-    assert.equal(stats.totalBytes, Buffer.byteLength(body));
-  });
-
-  it("records latency and payload for /tasks/:id/terminal", async () => {
-    mkdirSync(join("data", "logs"), { recursive: true });
-    writeFileSync(logPath, "stdout line 1\nstdout line 2\n", "utf8");
-    db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message, created_at) VALUES (?, 'system', ?, ?)"
-    ).run(taskId, "system note", Date.now());
-
-    const response = await fetch(`${baseUrl}/tasks/${taskId}/terminal`);
-    assert.equal(response.status, 200);
-    const body = await response.text();
-
-    const stats = metrics.readApi["/tasks/:id/terminal"];
-    assert.ok(stats, "expected /tasks/:id/terminal metrics");
     assert.equal(stats.count, 1);
     assert.equal(stats.totalBytes, Buffer.byteLength(body));
   });

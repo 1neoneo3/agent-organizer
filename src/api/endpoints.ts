@@ -34,25 +34,6 @@ export const toggleAcceptanceCriterion = (
 export const fetchTaskLogs = (id: string, limit = 200) =>
   api.get<TaskLog[]>(`/tasks/${id}/logs?limit=${limit}`);
 
-export interface StageTransition {
-  from: string | null;
-  to: string | null;
-  stage: string | null;
-  agent_id: string | null;
-  created_at: number;
-}
-
-export interface TerminalResponse {
-  ok: boolean;
-  exists: boolean;
-  text: string;
-  task_logs: Array<{ kind: string; message: string; stage: string | null; agent_id: string | null; created_at: number }>;
-  stage_transitions: StageTransition[];
-}
-
-export const fetchTerminal = (id: string, lines = 500, pretty = true) =>
-  api.get<TerminalResponse>(`/tasks/${id}/terminal?lines=${lines}&pretty=${pretty ? "1" : "0"}`);
-
 // Messages
 export const fetchMessages = (taskId?: string, limit = 50) =>
   api.get<Message[]>(taskId ? `/messages?task_id=${taskId}&limit=${limit}` : `/messages?limit=${limit}`);
