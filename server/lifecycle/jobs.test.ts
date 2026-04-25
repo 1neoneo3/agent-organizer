@@ -276,6 +276,101 @@ describe("recoverInProgressOrphans", () => {
     assert.ok(logs.some((log) => /Orphan recovery auto-respawn: before_run failed: pnpm install/.test(log.message)));
   });
 
+  it("skips auto-respawn when assigned agent has a non-implementer role (code_reviewer)", () => {
+    // Regression: after pr_review → in_progress rework, assigned_agent_id
+    // could point at the reviewer agent. Orphan recovery must not respawn
+    // a code_reviewer as an implementer.
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("reviewer-1", "Reviewer", "claude", "code_reviewer", "idle", now, now);
+    insertTask(db, { id: "t-rework", status: "in_progress", assigned_agent_id: "reviewer-1" });
+    const ws = createFakeWs();
+
+    let spawnCalls = 0;
+    const fakeSpawn = (() => {
+      spawnCalls += 1;
+      return Promise.resolve({ pid: 1 });
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls, 0, "must not respawn a code_reviewer as implementer");
+    const row = db.prepare("SELECT status, auto_respawn_count FROM tasks WHERE id = 't-rework'").get() as {
+      status: string;
+      auto_respawn_count: number;
+    };
+    assert.equal(row.status, "in_progress");
+    assert.equal(row.auto_respawn_count, 0, "counter should not increment on skip");
+
+    const log = db
+      .prepare("SELECT message FROM task_logs WHERE task_id = 't-rework' ORDER BY id DESC LIMIT 1")
+      .get() as { message: string };
+    assert.match(log.message, /non-implementer role "code_reviewer"/);
+  });
+
+  it("skips auto-respawn when assigned agent has a non-implementer role (security_reviewer)", () => {
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("sec-reviewer-1", "SecReviewer", "claude", "security_reviewer", "idle", now, now);
+    insertTask(db, { id: "t-sec", status: "in_progress", assigned_agent_id: "sec-reviewer-1" });
+    const ws = createFakeWs();
+
+    let spawnCalls = 0;
+    const fakeSpawn = (() => {
+      spawnCalls += 1;
+      return Promise.resolve({ pid: 1 });
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls, 0, "must not respawn a security_reviewer as implementer");
+  });
+
+  it("reassigns orphan recovery to an idle implementer when assigned agent is a reviewer", () => {
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("reviewer-1", "Reviewer", "claude", "code_reviewer", "idle", now, now);
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("impl-1", "Implementer", "codex", "lead_engineer", "idle", now, now);
+    insertTask(db, { id: "t-reassign", status: "in_progress", assigned_agent_id: "reviewer-1" });
+    const ws = createFakeWs();
+
+    const spawnCalls: Array<{ agentId: string }> = [];
+    const fakeSpawn = ((_db: DatabaseSync, _ws: unknown, agent: { id: string }) => {
+      spawnCalls.push({ agentId: agent.id });
+      return Promise.resolve({ pid: 1 });
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls.length, 1, "must auto-respawn with a replacement implementer");
+    assert.equal(spawnCalls[0].agentId, "impl-1");
+  });
+
+  it("allows auto-respawn when assigned agent has an implementer role (lead_engineer)", () => {
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, role, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("impl-1", "Implementer", "claude", "lead_engineer", "idle", now, now);
+    insertTask(db, { id: "t-impl", status: "in_progress", assigned_agent_id: "impl-1" });
+    const ws = createFakeWs();
+
+    const spawnCalls: Array<{ agentId: string }> = [];
+    const fakeSpawn = ((_db: DatabaseSync, _ws: unknown, agent: { id: string }) => {
+      spawnCalls.push({ agentId: agent.id });
+      return Promise.resolve({ pid: 1 });
+    }) as never;
+
+    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+
+    assert.equal(spawnCalls.length, 1, "should respawn lead_engineer as implementer");
+    assert.equal(spawnCalls[0].agentId, "impl-1");
+  });
+
   it("still bounces refinement-without-plan orphans back to inbox", () => {
     // Refinement tasks that never produced a plan are a genuine dead
     // start; the auto-dispatcher needs a fresh run, which only happens

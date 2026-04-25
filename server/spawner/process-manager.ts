@@ -1039,6 +1039,14 @@ export async function spawnAgent(
       db.prepare(
         "UPDATE tasks SET status = ?, assigned_agent_id = ?, started_at = ?, completed_at = NULL, updated_at = ? WHERE id = ?",
       ).run(startUpdate.status, startUpdate.assigned_agent_id, startUpdate.started_at, startUpdate.updated_at, task.id);
+    } else if (isReviewRun || isQaRun || isTestGenRun) {
+      // Reviewer / QA / test-generation agents must NOT overwrite
+      // assigned_agent_id — the implementer "owns" the task lifecycle
+      // and orphan recovery relies on assigned_agent_id to respawn the
+      // correct agent after a rework transition (pr_review → in_progress).
+      db.prepare(
+        "UPDATE tasks SET started_at = ?, completed_at = NULL, updated_at = ? WHERE id = ?",
+      ).run(startUpdate.started_at, startUpdate.updated_at, task.id);
     } else {
       db.prepare(
         "UPDATE tasks SET assigned_agent_id = ?, started_at = ?, completed_at = NULL, updated_at = ? WHERE id = ?",

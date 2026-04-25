@@ -3,6 +3,7 @@ import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clea
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
 import type { Agent, Task } from "../types/runtime.js";
@@ -227,7 +228,9 @@ export function recoverInProgressOrphans(
       const parkReason =
         respawnDecision.kind === "budget_exhausted"
           ? `Orphan recovery: parked at in_progress. Auto-respawn budget exhausted (${task.auto_respawn_count}/${maxAutoRespawn}). Run the task again to resume.`
-          : "Orphan recovery: parked at in_progress (did not regress to inbox). Run the task again to resume.";
+          : respawnDecision.kind === "wrong_role"
+            ? `Orphan recovery: parked at in_progress. Assigned agent has non-implementer role "${respawnDecision.agentRole}" — skipped auto-respawn. Run the task with an implementer agent to resume.`
+            : "Orphan recovery: parked at in_progress (did not regress to inbox). Run the task again to resume.";
       db.prepare(
         "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
       ).run(task.id, parkReason);
@@ -330,6 +333,7 @@ function hasActive(active: Map<string, unknown> | Set<string>, id: string): bool
 type AutoRespawnDecision =
   | { kind: "respawn"; agent: Agent }
   | { kind: "budget_exhausted" }
+  | { kind: "wrong_role"; agentRole: string }
   | { kind: "skip" };
 
 /**
@@ -348,7 +352,7 @@ type AutoRespawnDecision =
  */
 function evaluateAutoRespawn(
   db: DatabaseSync,
-  task: { id: string; assigned_agent_id: string | null; auto_respawn_count: number },
+  task: { id: string; status: string; assigned_agent_id: string | null; auto_respawn_count: number },
   maxAutoRespawn: number,
 ): AutoRespawnDecision {
   if (task.auto_respawn_count >= maxAutoRespawn) {
@@ -362,6 +366,18 @@ function evaluateAutoRespawn(
   ).get(task.assigned_agent_id) as Agent | undefined;
   if (!agent || agent.status !== "idle") {
     return { kind: "skip" };
+  }
+  // Guard: non-implementer agents (reviewer, QA, tester) must not be
+  // respawned as implementers. This can happen when assigned_agent_id
+  // was overwritten by a reviewer spawn before the fix in spawnAgent,
+  // or through a race condition. Skip so the task parks and waits for
+  // dispatcher / manual intervention.
+  if (task.status === "in_progress" && isNonImplementerRole(agent.role)) {
+    const replacementAgent = pickIdleImplementerAgent(db, [agent.id]);
+    if (replacementAgent) {
+      return { kind: "respawn", agent: replacementAgent };
+    }
+    return { kind: "wrong_role", agentRole: agent.role! };
   }
   return { kind: "respawn", agent };
 }
