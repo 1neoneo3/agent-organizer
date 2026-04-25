@@ -895,7 +895,7 @@ export async function spawnAgent(
   let child!: ChildProcess;
   let outputLanguage: OutputLanguage = "ja";
   let prompt = "";
-  let logStream!: ReturnType<typeof createWriteStream>;
+  let logStream: ReturnType<typeof createWriteStream> | undefined;
   let workspace!: ReturnType<typeof prepareTaskWorkspace>;
   const hookCacheDir = join("data", "hook-cache");
   try {
@@ -1003,10 +1003,7 @@ export async function spawnAgent(
     // such as `prepareTaskWorkspace` worktree conflict, before_run hook
     // failure, or `spawn()` itself failing. Close it here so we do not leak
     // a file descriptor on every failed dispatch attempt.
-    const stream = logStream as ReturnType<typeof createWriteStream> | undefined;
-    if (stream) {
-      try { stream.end(); } catch { /* already closed */ }
-    }
+    try { logStream?.end(); } catch { /* already closed */ }
     throw err;
   } finally {
     if (!isParallelTester && !isContinue) {
@@ -1332,7 +1329,7 @@ export async function spawnAgent(
     if (!text.trim()) return;
 
     // Log raw text to file
-    logStream.write(text);
+    logStream!.write(text);
 
     // Classify each line and collect entries
     const classified: Array<{ kind: TaskLogKind; message: string }> = [];
@@ -1474,7 +1471,7 @@ export async function spawnAgent(
   child.stderr?.on("data", (data: Buffer) => {
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
-    logStream.write(`[stderr] ${text}`);
+    logStream!.write(`[stderr] ${text}`);
     const stderrBatchWriter = getLogBatchWriter();
     if (stderrBatchWriter) {
       stderrBatchWriter.enqueue({ taskId: task.id, kind: "stderr", message: text, stage: spawnStage, agentId: agent.id });
@@ -1493,7 +1490,7 @@ export async function spawnAgent(
         if (count >= LOOP_THRESHOLD) {
           loopDetected = true;
           const msg = `[Loop Detection] Same error repeated ${count} times, terminating process. Pattern: ${normalized.slice(0, 200)}`;
-          logStream.write(`${msg}\n`);
+          logStream!.write(`${msg}\n`);
           insertLogStmt.run(task.id, "system", msg, spawnStage, agent.id);
           ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: msg }], { taskId: task.id });
           child.kill("SIGTERM");
@@ -1515,11 +1512,11 @@ export async function spawnAgent(
     const message = error instanceof Error ? error.message : String(error);
 
     try {
-      logStream.write(`[spawn-error] ${message}\n`);
+      logStream!.write(`[spawn-error] ${message}\n`);
     } catch {
       // ignore secondary logging failures
     }
-    logStream.end();
+    logStream!.end();
 
     const runtimeFailure = classifyRuntimeFailure({
       code: null,
@@ -1579,7 +1576,7 @@ export async function spawnAgent(
     clearTimeout(hardTimer);
     getHeartbeatManager()?.unregisterTask(task.id);
     activeProcesses.delete(task.id);
-    logStream.end();
+    logStream!.end();
 
     // Flush any buffered log entries for this task before any close handler
     // logic reads task_logs. This covers all downstream consumers:
