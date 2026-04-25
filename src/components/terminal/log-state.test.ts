@@ -7,6 +7,7 @@ import {
   countLogsByTab,
   emptySegmentLabel,
   groupLogsByStage,
+  inferFetchedBaseCount,
   mergeOlderLogs,
   MAX_LIVE_LOGS,
   parseStageTransition,
@@ -521,5 +522,19 @@ describe("mergeOlderLogs", () => {
     ];
     const result = mergeOlderLogs(existing, older);
     assert.deepEqual(result.map((l) => l.id), [2, 3, 10, 11]);
+  });
+});
+
+describe("inferFetchedBaseCount", () => {
+  it("caps consumed rows at the requested page size when transition fold-ins expand the page", () => {
+    assert.equal(inferFetchedBaseCount(1012, 1000), 1000);
+  });
+
+  it("returns the short page length for the final page", () => {
+    assert.equal(inferFetchedBaseCount(237, 1000), 237);
+  });
+
+  it("returns zero for an empty page", () => {
+    assert.equal(inferFetchedBaseCount(0, 1000), 0);
   });
 });

@@ -8,6 +8,7 @@ import {
   countLogsByTab,
   emptySegmentLabel,
   groupLogsByStage,
+  inferFetchedBaseCount,
   mergeOlderLogs,
   parseStageTransition,
   STAGE_TRANSITION_PREFIX,
@@ -268,6 +269,7 @@ function TerminalView({
   const [expandedOverride, setExpandedOverride] = useState<Record<string, boolean>>({});
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadedBaseCount, setLoadedBaseCount] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const doFetch = useCallback(async () => {
@@ -275,6 +277,7 @@ function TerminalView({
       const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE);
       const chronological = [...rows].reverse();
       setLogs(chronological);
+      setLoadedBaseCount(inferFetchedBaseCount(rows.length, LOG_PAGE_SIZE));
       setHasMore(rows.length >= LOG_PAGE_SIZE);
     } catch {
       // ignore fetch errors
@@ -293,9 +296,10 @@ function TerminalView({
       const prevScrollHeight = el?.scrollHeight ?? 0;
       const prevScrollTop = el?.scrollTop ?? 0;
 
-      const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE, logs.length);
+      const rows = await fetchTaskLogs(taskId, LOG_PAGE_SIZE, loadedBaseCount);
       const olderChronological = [...rows].reverse();
       setLogs((prev) => mergeOlderLogs(prev, olderChronological));
+      setLoadedBaseCount((prev) => prev + inferFetchedBaseCount(rows.length, LOG_PAGE_SIZE));
       setHasMore(rows.length >= LOG_PAGE_SIZE);
 
       requestAnimationFrame(() => {
@@ -308,7 +312,7 @@ function TerminalView({
     } finally {
       setLoadingMore(false);
     }
-  }, [taskId, logs.length, loadingMore, hasMore]);
+  }, [taskId, loadedBaseCount, loadingMore, hasMore]);
 
   // Stage transitions are recorded by a DB trigger but are NOT broadcast
   // over WebSocket (the trigger has no access to the hub). Without this
