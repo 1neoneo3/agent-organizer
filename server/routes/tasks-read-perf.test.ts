@@ -44,8 +44,9 @@ function createCache(): CacheService {
     async set(key: string, value: unknown): Promise<void> {
       store.set(key, value);
     },
-    async del(key: string): Promise<void> {
-      store.delete(key);
+    async del(keyOrKeys: string | string[]): Promise<void> {
+      const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
+      for (const k of keys) store.delete(k);
     },
     async invalidatePattern(pattern: string): Promise<void> {
       const prefix = pattern.replace(/\*$/, "");
