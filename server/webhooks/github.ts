@@ -88,6 +88,11 @@ interface TaskRow {
   pr_urls: string | null;
   merged_pr_urls: string | null;
   result: string | null;
+  // Fields required for tryCleanupCompletedTaskWorkspace on done.
+  // `title` feeds branch-name reconstruction; `project_path` resolves
+  // the repo root.
+  title: string;
+  project_path: string | null;
 }
 
 /**
@@ -114,7 +119,7 @@ export function findTasksByPrUrl(db: DatabaseSync, prUrl: string): TaskRow[] {
   const like = `%${prUrl}%`;
   const rows = db
     .prepare(
-      `SELECT id, task_number, status, pr_url, pr_urls, merged_pr_urls, result
+      `SELECT id, task_number, status, pr_url, pr_urls, merged_pr_urls, result, title, project_path
        FROM tasks
        WHERE status NOT IN ('done', 'cancelled')
          AND (pr_url = ? OR pr_urls LIKE ?)`,
