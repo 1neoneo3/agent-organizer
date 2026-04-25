@@ -271,31 +271,24 @@ describe("dispatchAutoStartableTasks", () => {
     });
   });
 
-  it("does not crash the dispatcher when an iteration body throws unexpectedly", () => {
+  it("reports skipped via the existing inner catch when startTask throws", () => {
+    // This test exercises the *inner* try/catch around startTask
+    // (lines 381-396 of auto-dispatcher.ts), which has been there
+    // long before Layer 2. Documenting it explicitly because the
+    // FK-race fix added a Layer 2 outer guard, and we want to keep
+    // the inner guard's behavior pinned to avoid accidental removal.
     const db = createDb();
     const ws = createWs();
     insertSetting(db, "auto_dispatch_mode", "all_inbox");
     insertAgent(db, { name: "Available", role: "lead_engineer" });
     const task = insertTask(db, { title: "Will explode" });
 
-    // startTask synchronously throws — without the outer iteration
-    // guard this would propagate up to the setInterval timer and
-    // surface as `uncaughtException`. With the guard the next tick
-    // simply records a `skipped`.
     const result = dispatchAutoStartableTasks(db, ws as never, {
       startTask() {
-        // The startTask callsite already has a try/catch in the
-        // assigned-agent branch, but we want to assert that a
-        // non-recoverable throw on the unassigned branch is also
-        // caught by the outer guard. Force the unassigned path by
-        // throwing from within the chosen-agent branch.
         throw new Error("synthetic boom");
       },
     });
 
-    // The iteration was caught: skipped count incremented, dispatch
-    // did not throw, and a log entry survives on the still-existing
-    // task row.
     assert.equal(result.skipped, 1);
     assert.equal(result.started, 0);
 
@@ -307,5 +300,47 @@ describe("dispatchAutoStartableTasks", () => {
       logs.some((l) => l.message.includes("synthetic boom") || l.message.includes("failed to start")),
       "the synthetic failure must appear in task_logs",
     );
+  });
+
+  it("Layer 2: catches errors that escape the inner try (cache.invalidatePattern throws)", () => {
+    // Reproduces a Layer-2-only scenario: the throw originates from
+    // `invalidateCaches(cache)` at line 379 (between assignTaskToAgent
+    // and the inner try around startTask). That call sits OUTSIDE
+    // every inner try/catch in the dispatcher, so without the outer
+    // iteration guard the throw would bubble to setInterval and
+    // crash the dispatcher process.
+    //
+    // Layer 1's try/catch in writeDispatchLog only swallows FK 787 —
+    // the cache exception is rethrown unchanged. Net result: only
+    // Layer 2 can catch it.
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertAgent(db, { name: "Available", role: "lead_engineer" });
+    insertTask(db, { title: "Will trip cache.invalidatePattern" });
+
+    const explodingCache = {
+      async get() { return null; },
+      async set() {},
+      async del() {},
+      invalidatePattern() {
+        throw new Error("synthetic cache failure (Layer 2 trigger)");
+      },
+      get isConnected() { return false; },
+    };
+
+    let result: ReturnType<typeof dispatchAutoStartableTasks> | undefined;
+    assert.doesNotThrow(() => {
+      result = dispatchAutoStartableTasks(db, ws as never, {
+        cache: explodingCache as never,
+        startTask() {
+          throw new Error("should not be reached — invalidateCaches throws first");
+        },
+      });
+    });
+
+    assert.ok(result, "dispatch must return a summary, not propagate the throw");
+    assert.ok(result!.skipped >= 1, `expected skipped >= 1, got ${result!.skipped}`);
+    assert.equal(result!.started, 0);
   });
 });
