@@ -171,6 +171,41 @@ function stripSprintContractBlocks(text: string): string {
 }
 
 /**
+ * Mask regions where prompt-like strings are likely to be QUOTED rather
+ * than ACTUALLY ASKED. Agents frequently embed sample prompts in their
+ * QA reports, documentation, code reviews, and test output; without
+ * masking, the prompt regexes hit those quoted strings verbatim and
+ * trigger a false-positive interactive_prompt on the agent's own
+ * report (the "self-reference" failure mode).
+ *
+ * Regions masked (replaced with empty string for matching purposes):
+ *   - Markdown fenced code blocks (```...```)
+ *   - Inline code spans (`...`)
+ *   - Japanese quotation marks (「...」 and 『...』)
+ *   - QA report lines starting with [PASS] / [FAIL] / [WARN] / [SKIP]
+ *   - Markdown task-list lines (- [x] / - [ ])
+ *
+ * Real prompts written without quoting (e.g. "ファイルを指定してください")
+ * remain intact and are still detected. English double quotes are
+ * intentionally NOT masked because real English prompts are rarely
+ * quoted by the agent and double quotes appear in many other contexts
+ * (string literals, dialog), making the rule too broad.
+ *
+ * The mask is applied for matching only — `detectedText` returned to
+ * the UI keeps the original (post-strip, pre-mask) text so the user
+ * sees the surrounding context of what was detected.
+ */
+function maskQuotedRegions(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`\n]*`/g, "")
+    .replace(/「[^」\n]*」/g, "")
+    .replace(/『[^』\n]*』/g, "")
+    .replace(/^\s*\[(?:PASS|FAIL|WARN|SKIP)\][^\n]*$/gm, "")
+    .replace(/^\s*-\s*\[[ xX]\][^\n]*$/gm, "");
+}
+
+/**
  * Check if a classified assistant message looks like the agent is requesting user input.
  * Returns an InteractivePromptData if detected, null otherwise.
  *
@@ -193,26 +228,30 @@ export function detectTextInteractivePrompt(
   options?: { strictMode?: boolean },
 ): InteractivePromptData | null {
   const stripped = stripRefinementPlanBlocks(assistantText);
-  const textToCheck = stripSprintContractBlocks(stripped);
+  const detectedText = stripSprintContractBlocks(stripped);
+  // Quoted regions (code blocks, inline code, 「...」, [PASS] lines, etc.)
+  // are masked for regex matching only — `detectedText` keeps the original
+  // surrounding context so the UI can show what was matched against.
+  const textToMatch = maskQuotedRegions(detectedText);
 
   // Skip very short messages — unlikely to be a genuine input request.
   // Threshold is low (10) because CJK languages pack more meaning per character.
-  if (textToCheck.length < 10) return null;
+  if (textToMatch.length < 10) return null;
 
   // Strong override: an explicit "question + 2+ numbered options" block
   // is unambiguously a prompt. It wins over the completion-summary
   // guard because agents sometimes finish their report with a verdict
   // tag AND a final "what next?" decision list in the same message.
-  const explicitOptions = hasExplicitOptionsPrompt(textToCheck);
+  const explicitOptions = hasExplicitOptionsPrompt(textToMatch);
 
-  if (!explicitOptions && looksLikeCompletionSummary(textToCheck)) return null;
+  if (!explicitOptions && looksLikeCompletionSummary(textToMatch)) return null;
 
   if (explicitOptions) {
     return {
       promptType: "text_input_request",
       toolUseId: "",
-      detectedText: textToCheck,
-      questions: [{ question: textToCheck }],
+      detectedText,
+      questions: [{ question: detectedText }],
     };
   }
 
@@ -222,23 +261,23 @@ export function detectTextInteractivePrompt(
   if (options?.strictMode) return null;
 
   for (const pattern of TEXT_PROMPT_PATTERNS_JA) {
-    if (pattern.test(textToCheck)) {
+    if (pattern.test(textToMatch)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",
-        detectedText: textToCheck,
-        questions: [{ question: textToCheck }],
+        detectedText,
+        questions: [{ question: detectedText }],
       };
     }
   }
 
   for (const pattern of TEXT_PROMPT_PATTERNS_EN) {
-    if (pattern.test(textToCheck)) {
+    if (pattern.test(textToMatch)) {
       return {
         promptType: "text_input_request",
         toolUseId: "",
-        detectedText: textToCheck,
-        questions: [{ question: textToCheck }],
+        detectedText,
+        questions: [{ question: detectedText }],
       };
     }
   }
