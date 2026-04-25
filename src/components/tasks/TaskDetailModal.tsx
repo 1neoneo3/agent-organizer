@@ -520,7 +520,7 @@ export function TaskDetailModal({
 
           {/* Description */}
           {task.description ? (
-            <div style={{ marginBottom: "16px" }}>
+            <div data-testid="task-description-section" style={{ marginBottom: "16px" }}>
               <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
                 Description
               </h3>
@@ -536,7 +536,7 @@ export function TaskDetailModal({
           ) : isLoadingDetail ? (
             <DetailSkeleton heading="Description" lineCount={2} />
           ) : (
-            <div style={{ marginBottom: "16px" }}>
+            <div data-testid="task-description-section" style={{ marginBottom: "16px" }}>
               <p style={{ fontSize: "13px", color: "var(--text-tertiary)", fontStyle: "italic" }}>No description</p>
             </div>
           )}
