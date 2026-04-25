@@ -1,4 +1,4 @@
-import type { Task } from "../../types/index.js";
+import type { TaskSummary } from "../../types/index.js";
 
 export interface TaskFeedbackUi {
   detailHeading: string;
@@ -9,7 +9,7 @@ export interface TaskFeedbackUi {
   cardActionLabel?: string;
 }
 
-export function getTaskFeedbackUi(status: Task["status"]): TaskFeedbackUi | null {
+export function getTaskFeedbackUi(status: TaskSummary["status"]): TaskFeedbackUi | null {
   switch (status) {
     case "in_progress":
       return {

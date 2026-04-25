@@ -22,7 +22,6 @@ import {
   setAcceptanceCriterionChecked,
 } from "../domain/acceptance-criteria.js";
 import { TASK_STATUSES } from "../domain/task-status.js";
-import { CACHE_KEYS, invalidateTaskStatusChange, invalidateTaskContent, invalidateTaskAndAgents, invalidateAllTasks } from "../cache/index.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import { isImplementerAgent, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
@@ -265,26 +264,27 @@ const STAGE_TRANSITION_MESSAGE_PREFIX = "__STAGE_TRANSITION__:";
 
 export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {}): Router {
   const router = Router();
-  const { db, ws, cache } = ctx;
+  const { db, ws } = ctx;
   const taskSpawner = deps.spawnAgent ?? spawnAgent;
   const feedbackRestarter = deps.queueFeedbackAndRestart ?? queueFeedbackAndRestart;
 
-  router.get("/tasks", async (req, res) => {
+  const TASK_SUMMARY_COLS = [
+    "id", "title", "assigned_agent_id", "project_path", "status",
+    "priority", "task_size", "task_number", "depends_on",
+    "refinement_completed_at", "refinement_revision_requested_at",
+    "refinement_revision_completed_at", "review_count", "directive_id",
+    "pr_url", "external_source", "external_id", "review_branch",
+    "review_commit_sha", "review_sync_status", "review_sync_error",
+    "repository_url", "settings_overrides", "started_at", "completed_at",
+    "last_heartbeat_at", "auto_respawn_count", "created_at", "updated_at",
+  ].join(", ");
+
+  router.get("/tasks", (req, res) => {
     const t0 = performance.now();
     const status = req.query.status as string | undefined;
-    const cacheKey = status ? CACHE_KEYS.tasksStatus(status) : CACHE_KEYS.TASKS_ALL;
-
-    const cached = await cache.get(cacheKey);
-    if (cached) {
-      sendMeasuredJson(res, "/tasks", t0, cached);
-      return;
-    }
-
     const tasks = status
-      ? db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC").all(status)
-      : db.prepare("SELECT * FROM tasks ORDER BY priority DESC, created_at DESC").all();
-
-    await cache.set(cacheKey, tasks, 10);
+      ? db.prepare(`SELECT ${TASK_SUMMARY_COLS} FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC`).all(status)
+      : db.prepare(`SELECT ${TASK_SUMMARY_COLS} FROM tasks ORDER BY priority DESC, created_at DESC`).all();
     sendMeasuredJson(res, "/tasks", t0, tasks);
   });
 
@@ -307,7 +307,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     sendMeasuredJson(res, "/tasks/:id", t0, task);
   });
 
-  router.post("/tasks", async (req, res) => {
+  router.post("/tasks", (req, res) => {
     const parsed = CreateTaskSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -401,14 +401,12 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     task = autoDispatchTask(db, ws, id, {
       autoAssign: AUTO_ASSIGN_TASK_ON_CREATE,
       autoRun: AUTO_RUN_TASK_ON_CREATE,
-      cache,
       spawnAgent: taskSpawner,
     }) as Task;
-    await invalidateTaskAndAgents(cache, task.status, task.status);
     res.status(201).json(task);
   });
 
-  router.put("/tasks/:id", async (req, res) => {
+  router.put("/tasks/:id", (req, res) => {
     const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
     if (!existing) return res.status(404).json({ error: "not_found" });
 
@@ -513,27 +511,22 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
-    if (updates.status) {
-      await invalidateTaskStatusChange(cache, existingTask.status, updates.status);
-    } else {
-      await invalidateTaskContent(cache, existingTask.status);
-    }
     ws.broadcast("task_update", task);
 
     // Trigger auto-QA on manual status change to qa_testing
     if (updates.status === "qa_testing") {
-      setTimeout(() => triggerAutoQa(db, ws, task, cache), 500);
+      setTimeout(() => triggerAutoQa(db, ws, task), 500);
     }
 
     // Trigger auto-review on manual status change to pr_review
     if (updates.status === "pr_review") {
-      setTimeout(() => triggerAutoReview(db, ws, task, cache), 500);
+      setTimeout(() => triggerAutoReview(db, ws, task), 500);
     }
 
     res.json(task);
   });
 
-  router.delete("/tasks/:id", async (req, res) => {
+  router.delete("/tasks/:id", (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     // Kill any active agent process regardless of task.status. Previously
@@ -544,7 +537,6 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     // referencing the now-deleted task id, crashing the server.
     killAgent(task.id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
-    await invalidateTaskStatusChange(cache, task.status, task.status);
     res.json({ deleted: true });
   });
 
@@ -566,7 +558,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   // PUT /tasks/:id/settings — merge a patch of {key: value|null} into
   // tasks.settings_overrides. `null` removes a key. Unknown keys are
   // rejected so typos cannot silently create dead config.
-  router.put("/tasks/:id/settings", async (req, res) => {
+  router.put("/tasks/:id/settings", (req, res) => {
     const PatchSchema = z.record(
       z.string(),
       z.union([z.string(), z.null()]),
@@ -597,17 +589,15 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       req.params.id,
     );
 
-    await invalidateTaskContent(cache, task.status);
     res.json({ task_id: req.params.id, overrides: merged ?? {} });
   });
 
   // DELETE /tasks/:id/settings — clear all overrides for a task
-  router.delete("/tasks/:id/settings", async (req, res) => {
+  router.delete("/tasks/:id/settings", (req, res) => {
     const task = db.prepare("SELECT id, status FROM tasks WHERE id = ?").get(req.params.id) as { id: string; status: string } | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     const now = Date.now();
     db.prepare("UPDATE tasks SET settings_overrides = NULL, updated_at = ? WHERE id = ?").run(now, req.params.id);
-    await invalidateTaskContent(cache, task.status);
     res.json({ task_id: req.params.id, overrides: {} });
   });
 
@@ -615,7 +605,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   // in the refinement_plan. Only permitted during pr_review so reviewers
   // can mark criteria as verified without letting any other stage mutate
   // the plan text (refinement finalization owns the full rewrite path).
-  router.patch("/tasks/:id/acceptance-criterion", async (req, res) => {
+  router.patch("/tasks/:id/acceptance-criterion", (req, res) => {
     const BodySchema = z.object({
       index: z.number().int().nonnegative(),
       checked: z.boolean(),
@@ -661,7 +651,6 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       `Acceptance criterion #${index + 1} ${checked ? "checked" : "unchecked"} during pr_review.`,
     );
 
-    await invalidateTaskContent(cache, task.status);
     const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", updated);
     res.json({ task: updated, index, checked, total });
@@ -715,11 +704,10 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     db.prepare("UPDATE tasks SET auto_respawn_count = 0 WHERE id = ?").run(task.id);
 
     try {
-      const result = await taskSpawner(db, ws, agent, { ...task, assigned_agent_id: agent.id, auto_respawn_count: 0 }, { cache });
+      const result = await taskSpawner(db, ws, agent, { ...task, assigned_agent_id: agent.id, auto_respawn_count: 0 }, {});
       res.json({ started: true, pid: result.pid });
     } catch (error) {
       const handled = handleSpawnFailure(db, ws, task.id, error, {
-        cache,
         source: "Manual run",
       });
       if (handled.handled) {
@@ -730,7 +718,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   });
 
   // Stop a running task
-  router.post("/tasks/:id/stop", async (req, res) => {
+  router.post("/tasks/:id/stop", (req, res) => {
     const killed = killAgent(req.params.id, "user_stop");
     if (!killed) return res.status(404).json({ error: "not_running" });
 
@@ -743,7 +731,6 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
-    await invalidateTaskAndAgents(cache);
     ws.broadcast("task_update", { id: req.params.id, status: "cancelled" });
     res.json({ stopped: true });
   });
@@ -791,12 +778,10 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", { id: task.id, status: "in_progress" });
     try {
-      const result = await taskSpawner(db, ws, agent, freshTask, { cache });
-      await invalidateTaskStatusChange(cache, "cancelled", "in_progress");
+      const result = await taskSpawner(db, ws, agent, freshTask, {});
       res.json({ resumed: true, pid: result.pid });
     } catch (error) {
       const handled = handleSpawnFailure(db, ws, task.id, error, {
-        cache,
         source: "Manual resume",
       });
       if (handled.handled) {
@@ -807,7 +792,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   });
 
   // Approve a task in human_review or refinement — advance to next stage
-  router.post("/tasks/:id/approve", async (req, res) => {
+  router.post("/tasks/:id/approve", (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
@@ -848,7 +833,6 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
           `Refinement plan approved but advancement blocked (${formatAllBlockers(approveBlockers)}). Returned to inbox for auto-dispatch to retry when prerequisites finish.`,
         );
 
-        await invalidateTaskStatusChange(cache, task.status, "inbox");
         ws.broadcast("task_update", { id: task.id, status: "inbox", assigned_agent_id: null, started_at: null });
 
         return res.status(409).json({
@@ -866,7 +850,6 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} approved. Advancing to ${next}.`);
 
-    await invalidateTaskStatusChange(cache, task.status, next);
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", updatedTask);
 
@@ -875,9 +858,8 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(updatedTask.assigned_agent_id) as Agent | undefined;
       if (agent && agent.status === "idle") {
         setTimeout(() => {
-          taskSpawner(db, ws, agent, updatedTask, { cache }).catch((err) => {
+          taskSpawner(db, ws, agent, updatedTask, {}).catch((err) => {
             const handled = handleSpawnFailure(db, ws, updatedTask.id, err, {
-              cache,
               source: "Refinement approval auto-run",
             });
             if (handled.handled) {
@@ -901,7 +883,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   });
 
   // Reject a task in human_review or refinement — send back to inbox
-  router.post("/tasks/:id/reject", async (req, res) => {
+  router.post("/tasks/:id/reject", (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
@@ -925,14 +907,13 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} rejected: ${reason}. Returning to inbox.`);
 
-    await invalidateTaskStatusChange(cache, task.status, "inbox");
     ws.broadcast("task_update", { id: task.id, status: "inbox", assigned_agent_id: null, started_at: null });
 
     res.json({ rejected: true, reason });
   });
 
   // Split a refinement plan into individual tasks
-  router.post("/tasks/:id/split", async (req, res) => {
+  router.post("/tasks/:id/split", (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
     if (!task.refinement_plan) return res.status(400).json({ error: "no_refinement_plan" });
@@ -1049,7 +1030,6 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
-    await invalidateAllTasks(cache);
     const updatedParent = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     ws.broadcast("task_update", updatedParent);
     for (const child of childTasks) {
@@ -1063,7 +1043,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     // Auto-dispatch the first child (no dependencies) immediately to in_progress
     const firstChild = childTasks[0];
     if (firstChild && !firstChild.depends_on) {
-      setTimeout(() => autoDispatchTask(db, ws, firstChild.id, { autoAssign: true, autoRun: true, cache }), 500);
+      setTimeout(() => autoDispatchTask(db, ws, firstChild.id, { autoAssign: true, autoRun: true }), 500);
     }
 
     res.json({ parent: updatedParent, children: childTasks, plan_path: planPath });
@@ -1276,9 +1256,8 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     if (previousStatus === "refinement") {
       ws.broadcast("task_update", freshTask);
     }
-    taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus, cache }).catch((err) => {
+    taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus }).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
-        cache,
         source: "Feedback resume",
       });
       if (handled.handled) {
@@ -1352,9 +1331,8 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     ws.broadcast("task_update", { id: task.id, status: "in_progress", assigned_agent_id: agent.id });
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    taskSpawner(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", cache, finalizeOnComplete: true }).catch((err) => {
+    taskSpawner(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", finalizeOnComplete: true }).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
-        cache,
         source: "Interactive prompt resume",
       });
       if (handled.handled) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Task } from "../../types/index.js";
+import type { TaskSummary } from "../../types/index.js";
 import {
   TASK_BOARD_COLUMNS,
   createEmptyTaskColumns,
@@ -10,11 +10,10 @@ import {
   summarizeTaskColumns,
 } from "./task-columns.js";
 
-function createTask(id: string, status: Task["status"], createdAt = 1): Task {
+function createTask(id: string, status: TaskSummary["status"], createdAt = 1): TaskSummary {
   return {
     id,
     title: id,
-    description: null,
     assigned_agent_id: null,
     project_path: null,
     status,
@@ -22,18 +21,20 @@ function createTask(id: string, status: Task["status"], createdAt = 1): Task {
     task_size: "small",
     task_number: null,
     depends_on: null,
-    result: null,
-    refinement_plan: null,
     pr_url: null,
     review_count: 0,
     directive_id: null,
     external_source: null,
     external_id: null,
+    review_branch: null,
+    review_commit_sha: null,
+    review_sync_status: null,
+    review_sync_error: null,
     repository_url: null,
-    repository_urls: null,
-    pr_urls: null,
+    settings_overrides: null,
     started_at: null,
     completed_at: null,
+    last_heartbeat_at: null,
     auto_respawn_count: 0,
     created_at: createdAt,
     updated_at: 1,
@@ -53,7 +54,7 @@ describe("groupTasksByStatusStable", () => {
     const task3 = createTask("t3", "cancelled");
 
     const grouped = groupTasksByStatusStable([task1, task2, task3]);
-    const groupedByKey = grouped as Record<string, Task[]>;
+    const groupedByKey = grouped as Record<string, TaskSummary[]>;
 
     assert.deepEqual(grouped.inbox, [task1]);
     assert.deepEqual(grouped.done, [task2]);
@@ -62,7 +63,7 @@ describe("groupTasksByStatusStable", () => {
   });
 
   it("creates an explicit cancelled column", () => {
-    const emptyColumns = createEmptyTaskColumns() as Record<string, Task[]>;
+    const emptyColumns = createEmptyTaskColumns() as Record<string, TaskSummary[]>;
 
     assert.deepEqual(emptyColumns.cancelled, []);
   });
@@ -75,8 +76,8 @@ describe("groupTasksByStatusStable", () => {
     const updatedTask2 = { ...task2, title: "t2-updated" };
 
     const grouped = groupTasksByStatusStable([task1, updatedTask2, task3], previous);
-    const groupedByKey = grouped as Record<string, Task[]>;
-    const previousByKey = previous as Record<string, Task[]>;
+    const groupedByKey = grouped as Record<string, TaskSummary[]>;
+    const previousByKey = previous as Record<string, TaskSummary[]>;
 
     assert.equal(grouped.inbox, previous.inbox);
     assert.notEqual(grouped.done, previous.done);

@@ -5,7 +5,6 @@ import { createServer, type Server } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import express from "express";
-import type { CacheService } from "../cache/cache-service.js";
 import { SCHEMA_SQL } from "../db/schema.js";
 import { metrics } from "../perf/metrics.js";
 import { createTasksRouter } from "./tasks.js";
@@ -32,34 +31,6 @@ function createDb(): DatabaseSync {
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA_SQL);
   return db;
-}
-
-function createCache(): CacheService {
-  const store = new Map<string, unknown>();
-
-  return {
-    async get<T>(key: string): Promise<T | null> {
-      return (store.get(key) as T | undefined) ?? null;
-    },
-    async set(key: string, value: unknown): Promise<void> {
-      store.set(key, value);
-    },
-    async del(keyOrKeys: string | string[]): Promise<void> {
-      const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
-      for (const k of keys) store.delete(k);
-    },
-    async invalidatePattern(pattern: string): Promise<void> {
-      const prefix = pattern.replace(/\*$/, "");
-      for (const key of Array.from(store.keys())) {
-        if (key.startsWith(prefix)) {
-          store.delete(key);
-        }
-      }
-    },
-    get isConnected(): boolean {
-      return false;
-    },
-  };
 }
 
 function insertTask(db: DatabaseSync, id: string, overrides: string | null = null): void {
@@ -89,8 +60,7 @@ describe("tasks read perf metrics", () => {
     app.use(createTasksRouter({
       db,
       ws: { broadcast() {} } as never,
-      cache: createCache(),
-    }));
+          }));
 
     server = createServer(app);
     await new Promise<void>((resolve) => {
@@ -196,8 +166,7 @@ describe("tasks/:id/logs incremental (since_id)", () => {
     app.use(createTasksRouter({
       db,
       ws: { broadcast() {} } as never,
-      cache: createCache(),
-    }));
+          }));
 
     server = createServer(app);
     await new Promise<void>((resolve) => {
@@ -352,8 +321,7 @@ describe("tasks/:id/logs initial fetch and fold-in", () => {
     app.use(createTasksRouter({
       db,
       ws: { broadcast() {} } as never,
-      cache: createCache(),
-    }));
+          }));
 
     server = createServer(app);
     await new Promise<void>((resolve) => {
@@ -480,8 +448,7 @@ describe("tasks/:id/logs message truncation", () => {
     app.use(createTasksRouter({
       db,
       ws: { broadcast() {} } as never,
-      cache: createCache(),
-    }));
+          }));
 
     server = createServer(app);
     await new Promise<void>((resolve) => {

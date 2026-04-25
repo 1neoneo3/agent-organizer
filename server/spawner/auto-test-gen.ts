@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
-import type { CacheService } from "../cache/cache-service.js";
 import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
 import { handleSpawnFailure } from "./spawn-failures.js";
 
@@ -16,7 +15,6 @@ export async function triggerAutoTestGen(
   db: DatabaseSync,
   ws: WsHub,
   task: Task,
-  cache?: CacheService,
 ): Promise<void> {
   const existingTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
   if (!existingTask) return;
@@ -45,9 +43,8 @@ export async function triggerAutoTestGen(
   ws.broadcast("cli_output", [{ task_id: currentTask.id, kind: "system", message: `[Auto Test Gen] Starting test generation with agent: ${agent.name}` }], { taskId: currentTask.id });
 
   const { spawnAgent } = await import("./process-manager.js");
-  spawnAgent(db, ws, agent, currentTask, { cache }).catch((err) => {
+  spawnAgent(db, ws, agent, currentTask, {}).catch((err) => {
     const handled = handleSpawnFailure(db, ws, currentTask.id, err, {
-      cache,
       source: "Auto test generation",
     });
     if (handled.handled) {

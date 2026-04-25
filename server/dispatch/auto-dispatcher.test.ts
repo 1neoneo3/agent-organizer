@@ -302,39 +302,22 @@ describe("dispatchAutoStartableTasks", () => {
     );
   });
 
-  it("Layer 2: catches errors that escape the inner try (cache.invalidatePattern throws)", () => {
+  it("Layer 2: catches errors that escape the inner try (startTask throws synchronously)", () => {
     // Reproduces a Layer-2-only scenario: the throw originates from
-    // `invalidateCaches(cache)` at line 379 (between assignTaskToAgent
-    // and the inner try around startTask). That call sits OUTSIDE
-    // every inner try/catch in the dispatcher, so without the outer
-    // iteration guard the throw would bubble to setInterval and
-    // crash the dispatcher process.
-    //
-    // Layer 1's try/catch in writeDispatchLog only swallows FK 787 —
-    // the cache exception is rethrown unchanged. Net result: only
-    // Layer 2 can catch it.
+    // startTask (synchronous throw rather than async rejection).
+    // Without the outer iteration guard the throw would bubble to
+    // setInterval and crash the dispatcher process.
     const db = createDb();
     const ws = createWs();
     insertSetting(db, "auto_dispatch_mode", "all_inbox");
     insertAgent(db, { name: "Available", role: "lead_engineer" });
-    insertTask(db, { title: "Will trip cache.invalidatePattern" });
-
-    const explodingCache = {
-      async get() { return null; },
-      async set() {},
-      async del() {},
-      invalidatePattern() {
-        throw new Error("synthetic cache failure (Layer 2 trigger)");
-      },
-      get isConnected() { return false; },
-    };
+    insertTask(db, { title: "Will trip startTask" });
 
     let result: ReturnType<typeof dispatchAutoStartableTasks> | undefined;
     assert.doesNotThrow(() => {
       result = dispatchAutoStartableTasks(db, ws as never, {
-        cache: explodingCache as never,
         startTask() {
-          throw new Error("should not be reached — invalidateCaches throws first");
+          throw new Error("synthetic startTask failure (Layer 2 trigger)");
         },
       });
     });

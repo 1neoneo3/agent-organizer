@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Agent, Directive, Task } from "../types/index.js";
+import type { Agent, Directive, TaskSummary } from "../types/index.js";
 import { collectReviewTransitions, mergeAgentUpdate, mergeDirectiveUpdate, mergeTaskUpdate } from "./state-updates.js";
 
-function createTask(): Task {
+function createTask(): TaskSummary {
   return {
     id: "task-1",
     title: "Task 1",
-    description: null,
     assigned_agent_id: null,
     project_path: null,
     status: "inbox",
@@ -15,18 +14,20 @@ function createTask(): Task {
     task_size: "small",
     task_number: null,
     depends_on: null,
-    result: null,
-    refinement_plan: null,
     pr_url: null,
     review_count: 0,
     directive_id: null,
     external_source: null,
     external_id: null,
+    review_branch: null,
+    review_commit_sha: null,
+    review_sync_status: null,
+    review_sync_error: null,
     repository_url: null,
-    repository_urls: null,
-    pr_urls: null,
+    settings_overrides: null,
     started_at: null,
     completed_at: null,
+    last_heartbeat_at: null,
     auto_respawn_count: 0,
     created_at: 1,
     updated_at: 1,

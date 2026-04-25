@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Task } from "../../types/index.js";
+import type { TaskSummary } from "../../types/index.js";
 import { getTaskRevisionUi } from "./task-revision-ui.js";
 
-function createTask(overrides: Partial<Task> = {}): Task {
+function createTask(overrides: Partial<TaskSummary> = {}): TaskSummary {
   return {
     id: "task-1",
     title: "Task 1",
-    description: null,
     assigned_agent_id: null,
     project_path: null,
     status: "refinement",
@@ -15,8 +14,6 @@ function createTask(overrides: Partial<Task> = {}): Task {
     task_size: "medium",
     task_number: null,
     depends_on: null,
-    result: null,
-    refinement_plan: null,
     refinement_completed_at: null,
     refinement_revision_requested_at: null,
     refinement_revision_completed_at: null,
@@ -25,11 +22,15 @@ function createTask(overrides: Partial<Task> = {}): Task {
     directive_id: null,
     external_source: null,
     external_id: null,
+    review_branch: null,
+    review_commit_sha: null,
+    review_sync_status: null,
+    review_sync_error: null,
     repository_url: null,
-    repository_urls: null,
-    pr_urls: null,
+    settings_overrides: null,
     started_at: null,
     completed_at: null,
+    last_heartbeat_at: null,
     auto_respawn_count: 0,
     created_at: 1,
     updated_at: 1,
@@ -51,7 +52,7 @@ describe("getTaskRevisionUi", () => {
   it("returns implementation plan banner when a refinement plan is ready with no revision request", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
-        refinement_plan: "---REFINEMENT PLAN---\nPlan\n---END REFINEMENT---",
+        refinement_completed_at: 1000,
       })),
       {
         revisionBadge: null,
@@ -66,7 +67,7 @@ describe("getTaskRevisionUi", () => {
   it("returns revising status when a revision has been requested and is still pending", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
-        refinement_plan: "---REFINEMENT PLAN---\nPlan\n---END REFINEMENT---",
+        refinement_completed_at: 1000,
         refinement_revision_requested_at: 2_000,
       })),
       {
@@ -86,7 +87,7 @@ describe("getTaskRevisionUi", () => {
   it("returns revised status when the latest revision has completed", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
-        refinement_plan: "---REFINEMENT PLAN---\nPlan\n---END REFINEMENT---",
+        refinement_completed_at: 1000,
         refinement_revision_requested_at: 2_000,
         refinement_revision_completed_at: 3_000,
       })),

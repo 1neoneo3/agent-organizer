@@ -17,7 +17,6 @@ export function mountRoutes(ctx: RuntimeContext): Router {
     res.json({
       status: "ok",
       uptime: process.uptime(),
-      cache: ctx.cache.isConnected ? "connected" : "disconnected",
     });
   });
 

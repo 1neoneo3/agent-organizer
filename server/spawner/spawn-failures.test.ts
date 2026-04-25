@@ -94,68 +94,6 @@ describe("handleSpawnFailure", () => {
     assert.equal(task.status, "in_progress");
   });
 
-  it("invalidates per-status cache for both prev and target status on promotion to human_review (#82126 Test D)", async () => {
-    const db = createDb();
-    seedTaskAndAgent(db, "inbox");
-    const ws = createWs();
-
-    // Mock cache service that captures every del() invocation as a flat key list.
-    const deletedKeys: string[] = [];
-    const cache = {
-      get: async () => null,
-      set: async () => undefined,
-      del: async (keys: string | string[]) => {
-        if (Array.isArray(keys)) deletedKeys.push(...keys);
-        else deletedKeys.push(keys);
-      },
-      invalidatePattern: async (_pattern: string) => undefined,
-      // dispose hooks not exercised by handleSpawnFailure
-    };
-
-    const result = handleSpawnFailure(
-      db,
-      ws as never,
-      "task-1",
-      createHookFailureFromCommands(["pnpm install"]),
-      { source: "Auto dispatch", cache: cache as never },
-    );
-
-    // Allow the fire-and-forget `void invalidateTaskAndAgents(...)` microtask
-    // chain to settle before asserting against `deletedKeys`.
-    await new Promise((resolve) => setImmediate(resolve));
-
-    assert.equal(result.handled, true);
-
-    // The previous status (`inbox`) must be invalidated alongside the new
-    // status (`human_review`) so the per-status cache for both buckets is
-    // refreshed on the next read. This is the regression guard against
-    // re-introducing a single-status invalidation path that would leave
-    // the inbox bucket stale and re-dispatch the failed task.
-    assert.ok(
-      deletedKeys.includes("tasks:status:inbox"),
-      `expected del(["tasks:status:inbox", ...]) but got ${JSON.stringify(deletedKeys)}`,
-    );
-    assert.ok(
-      deletedKeys.includes("tasks:status:human_review"),
-      `expected del(["tasks:status:human_review", ...]) but got ${JSON.stringify(deletedKeys)}`,
-    );
-    assert.ok(
-      deletedKeys.includes("tasks:all"),
-      `expected del(["tasks:all", ...]) but got ${JSON.stringify(deletedKeys)}`,
-    );
-    assert.ok(
-      deletedKeys.includes("agents:all"),
-      `expected del(["agents:all", ...]) but got ${JSON.stringify(deletedKeys)}`,
-    );
-
-    // Targeted invalidation must not fall back to the broad `KEYS tasks:*`
-    // wipe — that pattern was the perf regression #470 set out to remove.
-    // Other un-related status buckets must remain in cache.
-    assert.ok(
-      !deletedKeys.includes("tasks:status:done"),
-      `unexpected wipe of unrelated status bucket: ${JSON.stringify(deletedKeys)}`,
-    );
-  });
 });
 
 describe("classifyRuntimeFailure", () => {

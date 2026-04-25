@@ -57,7 +57,7 @@ export function createWebhooksRouter(ctx: RuntimeContext): Router {
         // were waiting on this one start without waiting for the next
         // 60s polling tick.
         onCompletion: () => {
-          dispatchAutoStartableTasks(ctx.db, ctx.ws, { cache: ctx.cache });
+          dispatchAutoStartableTasks(ctx.db, ctx.ws);
         },
       });
 

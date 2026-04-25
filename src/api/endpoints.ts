@@ -1,5 +1,5 @@
 import { api } from "./index.js";
-import type { Agent, Task, TaskLog, Message, Settings, CliStatus, Directive } from "../types/index.js";
+import type { Agent, Task, TaskSummary, TaskLog, Message, Settings, CliStatus, Directive } from "../types/index.js";
 
 // Agents
 export const fetchAgents = () => api.get<Agent[]>("/agents");
@@ -9,7 +9,7 @@ export const deleteAgent = (id: string) => api.delete<{ deleted: boolean }>(`/ag
 
 // Tasks
 export const fetchTasks = (status?: string) =>
-  api.get<Task[]>(status ? `/tasks?status=${status}` : "/tasks");
+  api.get<TaskSummary[]>(status ? `/tasks?status=${status}` : "/tasks");
 export const fetchTask = (id: string) => api.get<Task>(`/tasks/${id}`);
 export const createTask = (data: Partial<Task>) => api.post<Task>("/tasks", data);
 export const updateTask = (id: string, data: Partial<Task>) => api.put<Task>(`/tasks/${id}`, data);

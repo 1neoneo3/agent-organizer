@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
-import type { CacheService } from "../cache/cache-service.js";
 import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
 import { handleSpawnFailure } from "./spawn-failures.js";
 
@@ -17,7 +16,6 @@ export async function triggerAutoQa(
   db: DatabaseSync,
   ws: WsHub,
   task: Task,
-  cache?: CacheService,
 ): Promise<void> {
   const existingTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
   if (!existingTask) {
@@ -56,9 +54,8 @@ export async function triggerAutoQa(
 
   // Lazy import to break circular dependency (auto-qa <-> process-manager)
   const { spawnAgent } = await import("./process-manager.js");
-  spawnAgent(db, ws, tester, currentTask, { cache }).catch((err) => {
+  spawnAgent(db, ws, tester, currentTask, {}).catch((err) => {
     const handled = handleSpawnFailure(db, ws, currentTask.id, err, {
-      cache,
       source: "Auto QA",
     });
     if (handled.handled) {

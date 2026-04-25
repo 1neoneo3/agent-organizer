@@ -2,7 +2,7 @@ import { memo, useState, useRef, useEffect } from "react";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
 import { sendTaskFeedback, sendInteractiveResponse, approveTask, rejectTask } from "../../api/endpoints.js";
 import { useSfx } from "../../hooks/useSfx.js";
-import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
+import type { TaskSummary, Agent, InteractivePrompt } from "../../types/index.js";
 import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-time.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
@@ -40,7 +40,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 interface TaskCardProps {
-  task: Task;
+  task: TaskSummary;
   assignedAgent?: Agent;
   idleAgents: Agent[];
   roleLabelByAgentId: Map<string, string>;
@@ -168,40 +168,20 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
-          {/* Parent/child relationship + dependency display */}
-          {(() => {
-            const lines: Array<{ label: string; color: string; values: string[] }> = [];
-            // Child → show parent
-            const parentMatch = task.description?.match(/^Step \d+ of (#\d+)/);
-            if (parentMatch) {
-              lines.push({ label: "Parent", color: "var(--status-refinement)", values: [parentMatch[1]] });
-            }
-            // Parent → show children
-            const childMatch = task.result?.match(/^Split into (#[\d, #]+)/);
-            if (childMatch) {
-              const children = childMatch[1].split(", ").map(s => s.trim());
-              lines.push({ label: "Children", color: "var(--status-refinement)", values: children });
-            }
-            // Blocked by
-            if (task.depends_on) {
-              try {
-                const deps = JSON.parse(task.depends_on) as string[];
-                if (deps.length > 0) lines.push({ label: "Blocked by", color: "var(--status-cancelled)", values: deps });
-              } catch { /* ignore */ }
-            }
-            if (lines.length === 0) return null;
-            return (
-              <div style={{ marginTop: "2px", display: "flex", flexDirection: "column", gap: "1px" }}>
-                {lines.map((line) => (
-                  <div key={line.label} style={{ fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
-                    <span style={{ color: line.color, fontWeight: 600 }}>{line.label}</span>
-                    {line.values.map((v) => (
-                      <span key={v} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v}</span>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            );
+          {/* Dependency display */}
+          {task.depends_on && (() => {
+            try {
+              const deps = JSON.parse(task.depends_on) as string[];
+              if (deps.length === 0) return null;
+              return (
+                <div style={{ marginTop: "2px", fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
+                  <span style={{ color: "var(--status-cancelled)", fontWeight: 600 }}>Blocked by</span>
+                  {deps.map((v) => (
+                    <span key={v} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v}</span>
+                  ))}
+                </div>
+              );
+            } catch { return null; }
           })()}
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", flexWrap: "wrap" }}>

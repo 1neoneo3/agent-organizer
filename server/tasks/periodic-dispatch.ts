@@ -1,5 +1,4 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { CacheService } from "../cache/cache-service.js";
 import type { WsHub } from "../ws/hub.js";
 import { spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import { autoDispatchTask } from "./auto-dispatch.js";
@@ -7,7 +6,6 @@ import { autoDispatchTask } from "./auto-dispatch.js";
 interface PeriodicDispatchOptions {
   autoAssign: boolean;
   autoRun: boolean;
-  cache?: CacheService;
   spawnAgent?: typeof defaultSpawnAgent;
 }
 

@@ -1,6 +1,4 @@
 import type { DatabaseSync } from "node:sqlite";
-import type { CacheService } from "../cache/cache-service.js";
-import { invalidateTaskAndAgents } from "../cache/invalidation.js";
 import type { Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
@@ -122,7 +120,6 @@ export function classifySpawnFailure(error: unknown): SpawnFailureError | null {
 
 
 export interface HandleSpawnFailureOptions {
-  cache?: CacheService;
   source: string;
 }
 
@@ -191,7 +188,6 @@ export function handleSpawnFailure(
     "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
   ).run(task.id, logMessage);
 
-  void invalidateTaskAndAgents(options.cache, task.status, "human_review");
   ws.broadcast(
     "task_update",
     pickTaskUpdate(

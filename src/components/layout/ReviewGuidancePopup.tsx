@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Task } from "../../types/index.js";
+import type { TaskSummary } from "../../types/index.js";
 import { collectReviewTransitions, type ReviewTransition } from "../../hooks/state-updates.js";
 
-type ReviewTask = Pick<Task, "id" | "title" | "status" | "updated_at">;
+type ReviewTask = Pick<TaskSummary, "id" | "title" | "status" | "updated_at">;
 
 interface ReviewGuidancePopupProps {
   tasks: ReviewTask[];
@@ -29,11 +29,10 @@ interface QueueItem extends ReviewTransition {
   key: string;
 }
 
-function toReviewTask(task: ReviewTask): Task {
+function toReviewTask(task: ReviewTask): TaskSummary {
   return {
     id: task.id,
     title: task.title,
-    description: null,
     assigned_agent_id: null,
     project_path: null,
     status: task.status,
@@ -41,18 +40,20 @@ function toReviewTask(task: ReviewTask): Task {
     task_size: "small",
     task_number: null,
     depends_on: null,
-    result: null,
-    refinement_plan: null,
     pr_url: null,
     review_count: 0,
     directive_id: null,
     external_source: null,
     external_id: null,
+    review_branch: null,
+    review_commit_sha: null,
+    review_sync_status: null,
+    review_sync_error: null,
     repository_url: null,
-    repository_urls: null,
-    pr_urls: null,
+    settings_overrides: null,
     started_at: null,
     completed_at: null,
+    last_heartbeat_at: null,
     auto_respawn_count: 0,
     created_at: 0,
     updated_at: task.updated_at,
@@ -63,7 +64,7 @@ export function ReviewGuidancePopup({ tasks, onNavigateToTask }: ReviewGuidanceP
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [seenKeys, setSeenKeys] = useState<Set<string>>(new Set());
   const hasHydrated = useRef(false);
-  const previousTasksRef = useRef<Task[]>([]);
+  const previousTasksRef = useRef<TaskSummary[]>([]);
   const normalizedTasks = useMemo(() => tasks.map(toReviewTask), [tasks]);
 
   useEffect(() => {

@@ -1,12 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
-import type { CacheService } from "../cache/cache-service.js";
 import type { TaskStatus } from "../domain/task-status.js";
 
 export interface RuntimeContext {
   db: DatabaseSync;
   ws: WsHub;
-  cache: CacheService;
 }
 
 export interface Agent {

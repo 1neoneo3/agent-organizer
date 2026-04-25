@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
-import type { CacheService } from "../cache/cache-service.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
@@ -10,7 +9,6 @@ import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-ru
 interface AutoDispatchOptions {
   autoAssign: boolean;
   autoRun: boolean;
-  cache?: CacheService;
   spawnAgent?: typeof defaultSpawnAgent;
 }
 
@@ -66,11 +64,10 @@ export function autoDispatchTask(
   // Fire-and-forget: spawnAgent is async (awaits the Explore Phase) but
   // autoDispatchTask returns synchronously so callers can read the updated
   // task row immediately.
-  const spawnResult = spawnAgent(db, ws, agent, task, { cache: options.cache });
+  const spawnResult = spawnAgent(db, ws, agent, task);
   if (spawnResult && typeof (spawnResult as Promise<unknown>).catch === "function") {
     (spawnResult as Promise<unknown>).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
-        cache: options.cache,
         source: "Auto dispatch",
       });
       if (handled.handled) {

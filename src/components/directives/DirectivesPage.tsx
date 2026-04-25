@@ -2,7 +2,7 @@ import { useState } from "react";
 import { CreateDirectiveModal } from "./CreateDirectiveModal.js";
 import { DirectiveDetailModal } from "./DirectiveDetailModal.js";
 import { createDirective } from "../../api/endpoints.js";
-import type { Directive, Task } from "../../types/index.js";
+import type { Directive, TaskSummary } from "../../types/index.js";
 
 const STATUS_STYLES: Record<string, { label: string; color: string }> = {
   pending: { label: "Pending", color: "var(--status-inbox)" },
@@ -27,7 +27,7 @@ type WsOnFn = (type: WSEventType, fn: (payload: unknown) => void) => () => void;
 
 interface DirectivesPageProps {
   directives: Directive[];
-  tasks: Task[];
+  tasks: TaskSummary[];
   onReload: () => void;
   onWsEvent: WsOnFn;
 }

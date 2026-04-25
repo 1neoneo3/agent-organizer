@@ -7,7 +7,6 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { initializeDb } from "./db/runtime.js";
 import { reconcileAllAoWorktrees } from "./workflow/workspace-manager.js";
 import { createWsHub } from "./ws/hub.js";
-import { createRedisClient, createCacheService } from "./cache/index.js";
 import { mountRoutes } from "./routes/index.js";
 import { createWebhooksRouter } from "./routes/webhooks.js";
 import { mountStatic } from "./static-handlers.js";
@@ -32,10 +31,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Bootstrap
 const db = initializeDb();
 const wsHub = createWsHub();
-const redis = createRedisClient();
-const cache = createCacheService(redis);
 const logBatchWriter = initLogBatchWriter(db);
-const ctx = { db, ws: wsHub, cache };
+const ctx = { db, ws: wsHub };
 
 const app = express();
 
@@ -115,9 +112,9 @@ wss.on("connection", (ws: WebSocket) => {
 restorePendingInteractivePrompts(db);
 const heartbeatManager = initHeartbeatManager(db);
 heartbeatManager.start();
-startOrphanRecovery(db, wsHub, cache);
-startGithubIssueSync(db, wsHub, cache);
-startAutoDispatchScheduler(db, wsHub, cache);
+startOrphanRecovery(db, wsHub);
+startGithubIssueSync(db, wsHub);
+startAutoDispatchScheduler(db, wsHub);
 
 // Graceful shutdown: flush pending log writes before the process exits.
 function shutdownLogWriter(): boolean {

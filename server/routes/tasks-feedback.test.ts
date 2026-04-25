@@ -7,23 +7,8 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { CacheService } from "../cache/cache-service.js";
 import { createTasksRouter } from "./tasks.js";
 import { initializeDb } from "../db/runtime.js";
-
-function createCache(): CacheService {
-  return {
-    async get() {
-      return null;
-    },
-    async set() {},
-    async del() {},
-    async invalidatePattern() {},
-    get isConnected() {
-      return false;
-    },
-  };
-}
 
 function createWsRecorder() {
   const events: Array<{ type: string; payload: unknown; options?: unknown }> = [];
@@ -48,7 +33,7 @@ async function startServer(
   const { ws, events } = createWsRecorder();
   const app = express();
   app.use(express.json());
-  app.use(createTasksRouter({ db, ws: ws as never, cache: createCache() }, deps));
+  app.use(createTasksRouter({ db, ws: ws as never }, deps));
 
   const server = createServer(app);
   await new Promise<void>((resolve) => {

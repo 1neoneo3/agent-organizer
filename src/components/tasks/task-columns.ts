@@ -1,4 +1,4 @@
-import type { Task } from "../../types/index.js";
+import type { TaskSummary } from "../../types/index.js";
 
 export const TASK_BOARD_COLUMNS = [
   { key: "inbox", label: "INBOX", town: "Inbox", accentColor: "var(--status-inbox)" },
@@ -11,15 +11,15 @@ export const TASK_BOARD_COLUMNS = [
   { key: "done", label: "DONE", town: "Done", accentColor: "var(--status-done)" },
   { key: "cancelled", label: "CANCELLED", town: "Cancelled", accentColor: "var(--status-cancelled)" },
 ] as const satisfies ReadonlyArray<{
-  key: Task["status"];
+  key: TaskSummary["status"];
   label: string;
   town: string;
   accentColor: string;
 }>;
 
-const COLUMN_KEYS = TASK_BOARD_COLUMNS.map((column) => column.key) as ReadonlyArray<Task["status"]>;
+const COLUMN_KEYS = TASK_BOARD_COLUMNS.map((column) => column.key) as ReadonlyArray<TaskSummary["status"]>;
 
-export type TaskColumns = Record<(typeof COLUMN_KEYS)[number], Task[]>;
+export type TaskColumns = Record<(typeof COLUMN_KEYS)[number], TaskSummary[]>;
 export const TASK_PRIORITY_BUCKETS = ["high", "medium", "low"] as const;
 
 export type TaskPriorityBucket = (typeof TASK_PRIORITY_BUCKETS)[number];
@@ -46,7 +46,7 @@ export function createEmptyTaskColumns(): TaskColumns {
   };
 }
 
-export function getTaskPriorityBucket(priority: Task["priority"]): TaskPriorityBucket {
+export function getTaskPriorityBucket(priority: TaskSummary["priority"]): TaskPriorityBucket {
   if (priority >= 8) {
     return "high";
   }
@@ -58,7 +58,7 @@ export function getTaskPriorityBucket(priority: Task["priority"]): TaskPriorityB
   return "low";
 }
 
-export function summarizeTaskColumn(tasks: readonly Task[]): TaskColumnSummary {
+export function summarizeTaskColumn(tasks: readonly TaskSummary[]): TaskColumnSummary {
   const priorityBreakdown = tasks.reduce<TaskPriorityBreakdown>((counts, task) => {
     const bucket = getTaskPriorityBucket(task.priority);
 
@@ -88,7 +88,7 @@ export function summarizeTaskColumns(columns: TaskColumns): TaskColumnSummaries 
   };
 }
 
-export function groupTasksByStatusStable(tasks: Task[], previous?: TaskColumns): TaskColumns {
+export function groupTasksByStatusStable(tasks: TaskSummary[], previous?: TaskColumns): TaskColumns {
   const next = createEmptyTaskColumns();
 
   for (const task of tasks) {
@@ -114,11 +114,11 @@ export function groupTasksByStatusStable(tasks: Task[], previous?: TaskColumns):
   return next;
 }
 
-function isColumnStatus(status: Task["status"]): status is keyof TaskColumns {
+function isColumnStatus(status: TaskSummary["status"]): status is keyof TaskColumns {
   return status in createEmptyTaskColumns();
 }
 
-function sameTaskList(previous: Task[], next: Task[]): boolean {
+function sameTaskList(previous: TaskSummary[], next: TaskSummary[]): boolean {
   if (previous.length !== next.length) {
     return false;
   }
@@ -132,7 +132,7 @@ function sameTaskList(previous: Task[], next: Task[]): boolean {
   return true;
 }
 
-function sortTasksByCreatedAtDesc(tasks: Task[]): Task[] {
+function sortTasksByCreatedAtDesc(tasks: TaskSummary[]): TaskSummary[] {
   return tasks
     .map((task, index) => ({ task, index }))
     .sort((left, right) => {
