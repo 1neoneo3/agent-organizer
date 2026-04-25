@@ -43,6 +43,7 @@ import { recordDbLogInsertMs, recordStdoutChunkMs } from "../perf/metrics.js";
 import { getHeartbeatManager } from "./heartbeat-manager.js";
 import { getLogBatchWriter } from "../db/log-batch-writer.js";
 import type { CacheService } from "../cache/cache-service.js";
+import { invalidateTaskAndAgents } from "../cache/invalidation-helpers.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode, tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 import {
@@ -250,11 +251,6 @@ export function queueFeedbackAndRestart(taskId: string, message: string, previou
   return true;
 }
 
-function invalidateCaches(cache?: CacheService): void {
-  if (!cache) return;
-  cache.invalidatePattern("tasks:*");
-  cache.del("agents:all");
-}
 
 /**
  * Extract executed shell commands from task logs for PR verification section.
@@ -1065,7 +1061,7 @@ export async function spawnAgent(
       throw new Error(`spawnAgent aborted: agent ${agent.id} is not idle`);
     }
 
-    invalidateCaches(cache);
+    invalidateTaskAndAgents(cache);
     ws.broadcast(
       "task_update",
       pickTaskUpdate(startUpdate, ["status", "assigned_agent_id", "started_at", "completed_at", "updated_at"]),
@@ -1212,7 +1208,7 @@ export async function spawnAgent(
       agent.id,
     );
 
-    invalidateCaches(cache);
+    invalidateTaskAndAgents(cache);
     ws.broadcast(
       "task_update",
       pickTaskUpdate(
@@ -1566,7 +1562,7 @@ export async function spawnAgent(
     // trigger fallback stamp 'cancelled'.
     insertLogStmt.run(task.id, "system", `Process spawn failed: ${message}`, spawnStage, agent.id);
 
-    invalidateCaches(cache);
+    invalidateTaskAndAgents(cache);
     ws.broadcast(
       "task_update",
       pickTaskUpdate(
@@ -1628,7 +1624,7 @@ export async function spawnAgent(
       db.prepare(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
       ).run(finishTime, agent.id);
-      invalidateCaches(cache);
+      invalidateTaskAndAgents(cache);
       ws.broadcast("agent_status", {
         id: agent.id,
         status: "idle",
@@ -1645,7 +1641,7 @@ export async function spawnAgent(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
       ).run(finishTime, agent.id);
       insertLogStmt.run(task.id, "system", "Agent awaiting user input (interactive prompt). Task remains in_progress.", spawnStage, agent.id);
-      invalidateCaches(cache);
+      invalidateTaskAndAgents(cache);
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -1699,7 +1695,7 @@ export async function spawnAgent(
           "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
         ).run(finishTime, agent.id);
 
-        invalidateCaches(cache);
+        invalidateTaskAndAgents(cache);
         ws.broadcast(
           "task_update",
           pickTaskUpdate(
@@ -1741,7 +1737,7 @@ export async function spawnAgent(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
       ).run(finishTime, agent.id);
 
-      invalidateCaches(cache);
+      invalidateTaskAndAgents(cache);
       ws.broadcast(
         "task_update",
         pickTaskUpdate(
@@ -1760,7 +1756,7 @@ export async function spawnAgent(
         "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?"
       ).run(finishTime, agent.id);
       insertLogStmt.run(task.id, "system", "Process exited after external cancellation.", spawnStage, agent.id);
-      invalidateCaches(cache);
+      invalidateTaskAndAgents(cache);
       ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
       return;
     }
@@ -1808,7 +1804,7 @@ export async function spawnAgent(
       // trigger fallback can't stamp the post-transition stage.
       insertLogStmt.run(task.id, "system", `Feedback response complete. Restored status: ${restoreStatus}`, spawnStage, agent.id);
 
-      invalidateCaches(cache);
+      invalidateTaskAndAgents(cache);
       ws.broadcast(
         "task_update",
         pickTaskUpdate(
@@ -2003,7 +1999,7 @@ export async function spawnAgent(
       );
     }
 
-    invalidateCaches(cache);
+    invalidateTaskAndAgents(cache);
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
     ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
@@ -2240,7 +2236,7 @@ export function spawnSecondaryReviewer(
   // Mark agent as working
   const now = Date.now();
   db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?").run(task.id, now, agent.id);
-  invalidateCaches(cache);
+  invalidateTaskAndAgents(cache);
   ws.broadcast("agent_status", { id: agent.id, status: "working", current_task_id: task.id });
 
   // Secondary reviewers always run during the pr_review stage. Tag their
@@ -2352,7 +2348,7 @@ export function spawnSecondaryReviewer(
 
     const finishTime = Date.now();
     db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(finishTime, agent.id);
-    invalidateCaches(cache);
+    invalidateTaskAndAgents(cache);
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
     // If primary already finished and we're the last secondary, run deferred finalization
@@ -2372,7 +2368,7 @@ export function spawnSecondaryReviewer(
     db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(finishTime, agent.id);
     insertLogStmt.run(task.id, "system", `Secondary reviewer (${role}) exited with code ${code}.`, secondaryStage, agent.id);
 
-    invalidateCaches(cache);
+    invalidateTaskAndAgents(cache);
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 
     // If primary already finished and we're the last secondary, run deferred finalization

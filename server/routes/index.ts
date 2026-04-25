@@ -18,6 +18,7 @@ export function mountRoutes(ctx: RuntimeContext): Router {
       status: "ok",
       uptime: process.uptime(),
       cache: ctx.cache.isConnected ? "connected" : "disconnected",
+      cacheStats: ctx.cache.getStats(),
     });
   });
 

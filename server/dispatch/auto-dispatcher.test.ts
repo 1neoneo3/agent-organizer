@@ -302,30 +302,26 @@ describe("dispatchAutoStartableTasks", () => {
     );
   });
 
-  it("Layer 2: catches errors that escape the inner try (cache.invalidatePattern throws)", () => {
+  it("Layer 2: catches errors that escape the inner try (cache.del throws)", () => {
     // Reproduces a Layer-2-only scenario: the throw originates from
-    // `invalidateCaches(cache)` at line 379 (between assignTaskToAgent
-    // and the inner try around startTask). That call sits OUTSIDE
-    // every inner try/catch in the dispatcher, so without the outer
-    // iteration guard the throw would bubble to setInterval and
-    // crash the dispatcher process.
-    //
-    // Layer 1's try/catch in writeDispatchLog only swallows FK 787 —
-    // the cache exception is rethrown unchanged. Net result: only
-    // Layer 2 can catch it.
+    // invalidateTaskAndAgents(cache) which calls cache.del() between
+    // assignTaskToAgent and the inner try around startTask.  That call
+    // sits OUTSIDE every inner try/catch in the dispatcher, so without
+    // the outer iteration guard the throw would bubble to setInterval
+    // and crash the dispatcher process.
     const db = createDb();
     const ws = createWs();
     insertSetting(db, "auto_dispatch_mode", "all_inbox");
     insertAgent(db, { name: "Available", role: "lead_engineer" });
-    insertTask(db, { title: "Will trip cache.invalidatePattern" });
+    insertTask(db, { title: "Will trip cache.del" });
 
     const explodingCache = {
       async get() { return null; },
       async set() {},
-      async del() {},
-      invalidatePattern() {
+      del() {
         throw new Error("synthetic cache failure (Layer 2 trigger)");
       },
+      async invalidatePattern() {},
       getStats() { return { hits: 0, misses: 0, get hitRatio() { return 0; } }; },
       resetStats() {},
       get isConnected() { return false; },
@@ -336,7 +332,7 @@ describe("dispatchAutoStartableTasks", () => {
       result = dispatchAutoStartableTasks(db, ws as never, {
         cache: explodingCache as never,
         startTask() {
-          throw new Error("should not be reached — invalidateCaches throws first");
+          throw new Error("should not be reached — cache.del throws first");
         },
       });
     });
