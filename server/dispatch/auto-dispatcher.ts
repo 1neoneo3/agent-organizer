@@ -202,21 +202,49 @@ function chooseBestAgent(task: Task, agents: Agent[]): Agent | undefined {
   })[0];
 }
 
+/**
+ * SQLite extended error code for FOREIGN KEY constraint violations.
+ * Surfaces as `errcode: 787` on the thrown DatabaseError.
+ */
+const SQLITE_CONSTRAINT_FOREIGNKEY = 787;
+
+function isForeignKeyViolation(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { errcode?: unknown }).errcode;
+  return code === SQLITE_CONSTRAINT_FOREIGNKEY;
+}
+
 function writeDispatchLog(db: DatabaseSync, task: Task, message: string, cache?: CacheService): void {
   const fullMessage = `${AUTO_DISPATCH_LOG_PREFIX} ${message}`;
-  const lastLog = db.prepare(
-    "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC LIMIT 1"
-  ).get(task.id) as { message: string } | undefined;
 
-  if (lastLog?.message === fullMessage) {
-    return;
+  try {
+    const lastLog = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC LIMIT 1"
+    ).get(task.id) as { message: string } | undefined;
+
+    if (lastLog?.message === fullMessage) {
+      return;
+    }
+
+    const now = Date.now();
+    db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)")
+      .run(task.id, fullMessage);
+    db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, task.id);
+    invalidateCaches(cache);
+  } catch (error) {
+    // The task may have been deleted (UI delete, github-sync close,
+    // dependency cascade, manual SQL cleanup) between the inbox
+    // snapshot at the top of the dispatch tick and this log write.
+    // FK 787 on the task_logs INSERT is the canonical signal of that
+    // race. Swallow it: crashing the whole dispatcher into systemd
+    // would only delay the next tick by RestartSec while spamming the
+    // journal, and the task we were trying to log against is already
+    // gone — no actor remains to inform.
+    if (isForeignKeyViolation(error)) {
+      return;
+    }
+    throw error;
   }
-
-  const now = Date.now();
-  db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)")
-    .run(task.id, fullMessage);
-  db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, task.id);
-  invalidateCaches(cache);
 }
 
 function assignTaskToAgent(db: DatabaseSync, task: Task, agent: Agent): Task {
@@ -283,6 +311,7 @@ export function dispatchAutoStartableTasks(
   const inboxTasks = getInboxTasks(db);
 
   for (const task of inboxTasks) {
+    try {
     // Combined gate: declared depends_on chain AND static file-overlap
     // (planned_files intersection with any other actively-editing task).
     // A dependency in `in_progress` / `refinement` / `pr_review` / … is
@@ -365,6 +394,24 @@ export function dispatchAutoStartableTasks(
       summary.skipped += 1;
       const message = error instanceof Error ? error.message : String(error);
       writeDispatchLog(db, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`, options?.cache);
+    }
+    } catch (iterationError) {
+      // Defensive outer guard: any unexpected error from the iteration
+      // body (sqlite race, missing agent row, workflow loader hiccup,
+      // ...) must NOT bubble up to the setInterval callback, where it
+      // would surface as `uncaughtException` and crash the whole
+      // server. Log + skip + move on. `writeDispatchLog`'s own FK guard
+      // means we can still emit a record against any task that still
+      // exists; we wrap that call too because the same race can affect
+      // it indirectly via the agents table.
+      summary.skipped += 1;
+      const message = iterationError instanceof Error ? iterationError.message : String(iterationError);
+      console.warn(`[auto-dispatcher] iteration failed for task ${task.id}: ${message}`);
+      try {
+        writeDispatchLog(db, task, `iteration aborted: ${message}`, options?.cache);
+      } catch {
+        // Already best-effort; nothing else to do.
+      }
     }
   }
 

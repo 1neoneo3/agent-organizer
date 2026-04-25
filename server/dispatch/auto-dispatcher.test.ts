@@ -246,4 +246,101 @@ describe("dispatchAutoStartableTasks", () => {
     assert.equal(logs.length, 1);
     assert.match(logs[0].message, /github-synced tasks only/i);
   });
+
+  it("does not throw when startTask deletes the task before writeDispatchLog runs (FK 787 race)", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertAgent(db, { name: "Available", role: "lead_engineer" });
+    const task = insertTask(db, { title: "Vanishes mid-tick" });
+
+    // Reproduces the race that crashed the server during zombie
+    // cleanup: startTask transitions the task out of inbox AND deletes
+    // the row, then the dispatcher's failure branch tries to log
+    // against the now-missing task and hits FK 787 on
+    // INSERT INTO task_logs.
+    assert.doesNotThrow(() => {
+      const result = dispatchAutoStartableTasks(db, ws as never, {
+        startTask(taskToStart) {
+          db.prepare("DELETE FROM tasks WHERE id = ?").run(taskToStart.id);
+          throw new Error("synthetic spawn failure after deletion");
+        },
+      });
+      assert.equal(result.started, 0);
+      assert.equal(result.skipped, 1);
+    });
+  });
+
+  it("reports skipped via the existing inner catch when startTask throws", () => {
+    // This test exercises the *inner* try/catch around startTask
+    // (lines 381-396 of auto-dispatcher.ts), which has been there
+    // long before Layer 2. Documenting it explicitly because the
+    // FK-race fix added a Layer 2 outer guard, and we want to keep
+    // the inner guard's behavior pinned to avoid accidental removal.
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertAgent(db, { name: "Available", role: "lead_engineer" });
+    const task = insertTask(db, { title: "Will explode" });
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask() {
+        throw new Error("synthetic boom");
+      },
+    });
+
+    assert.equal(result.skipped, 1);
+    assert.equal(result.started, 0);
+
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC",
+    ).all(task.id) as Array<{ message: string }>;
+    assert.ok(logs.length >= 1, "at least one dispatch log should survive");
+    assert.ok(
+      logs.some((l) => l.message.includes("synthetic boom") || l.message.includes("failed to start")),
+      "the synthetic failure must appear in task_logs",
+    );
+  });
+
+  it("Layer 2: catches errors that escape the inner try (cache.invalidatePattern throws)", () => {
+    // Reproduces a Layer-2-only scenario: the throw originates from
+    // `invalidateCaches(cache)` at line 379 (between assignTaskToAgent
+    // and the inner try around startTask). That call sits OUTSIDE
+    // every inner try/catch in the dispatcher, so without the outer
+    // iteration guard the throw would bubble to setInterval and
+    // crash the dispatcher process.
+    //
+    // Layer 1's try/catch in writeDispatchLog only swallows FK 787 —
+    // the cache exception is rethrown unchanged. Net result: only
+    // Layer 2 can catch it.
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertAgent(db, { name: "Available", role: "lead_engineer" });
+    insertTask(db, { title: "Will trip cache.invalidatePattern" });
+
+    const explodingCache = {
+      async get() { return null; },
+      async set() {},
+      async del() {},
+      invalidatePattern() {
+        throw new Error("synthetic cache failure (Layer 2 trigger)");
+      },
+      get isConnected() { return false; },
+    };
+
+    let result: ReturnType<typeof dispatchAutoStartableTasks> | undefined;
+    assert.doesNotThrow(() => {
+      result = dispatchAutoStartableTasks(db, ws as never, {
+        cache: explodingCache as never,
+        startTask() {
+          throw new Error("should not be reached — invalidateCaches throws first");
+        },
+      });
+    });
+
+    assert.ok(result, "dispatch must return a summary, not propagate the throw");
+    assert.ok(result!.skipped >= 1, `expected skipped >= 1, got ${result!.skipped}`);
+    assert.equal(result!.started, 0);
+  });
 });
