@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
-import { prepareTaskWorkspace, removeTaskWorkspace, resolveWorkspaceMode } from "./workspace-manager.js";
+import { prepareTaskWorkspace, reconcileAllAoWorktrees, reconcileAoWorktrees, removeTaskWorkspace, resolveWorkspaceMode } from "./workspace-manager.js";
+import { SCHEMA_SQL } from "../db/schema.js";
+import { randomUUID } from "node:crypto";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf-8" }).trim();
@@ -752,5 +754,245 @@ describe("removeTaskWorkspace", () => {
       new RegExp(branchName),
       "branch must remain so unpushed work can be recovered",
     );
+  });
+});
+
+describe("reconcileAoWorktrees", () => {
+  const buildWorkflow = () => ({
+    body: "",
+    codexSandboxMode: "workspace-write" as const,
+    codexApprovalPolicy: "on-request" as const,
+    e2eExecution: "host" as const,
+    e2eCommand: null,
+    gitWorkflow: "default" as const,
+    workspaceMode: "git-worktree" as const,
+    branchPrefix: "issue",
+    beforeRun: [],
+    afterRun: [],
+    includeTask: true,
+    includeReview: true,
+    includeDecompose: true,
+    enableRefinement: null,
+    enableTestGeneration: false,
+    enableHumanReview: false,
+    projectType: "generic" as const,
+    checkTypesCmd: null,
+    checkLintCmd: null,
+    checkTestsCmd: null,
+    checkE2eCmd: null,
+  });
+
+  function createDb(): DatabaseSync {
+    const db = new DatabaseSync(":memory:");
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec(SCHEMA_SQL);
+    return db;
+  }
+
+  function insertTaskRow(
+    db: DatabaseSync,
+    id: string,
+    status: string,
+    title = "Some task",
+    taskNumber: string | null = null,
+  ): void {
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, assigned_agent_id, project_path, status,
+        priority, task_size, task_number, depends_on, result, review_count,
+        started_at, completed_at, created_at, updated_at,
+        directive_id, pr_url, external_source, external_id, interactive_prompt_data,
+        review_branch, review_commit_sha, review_sync_status, review_sync_error
+      ) VALUES (?, ?, NULL, NULL, NULL, ?, 0, 'medium', ?, NULL, NULL, 0,
+                NULL, NULL, 1000, 1000,
+                NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, 'pending', NULL)`,
+    ).run(id, title, status, taskNumber);
+  }
+
+  it("removes worktrees for done tasks and orphans, keeps active tasks", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const db = createDb();
+
+    const doneId = randomUUID();
+    const orphanId = randomUUID();
+    const activeId = randomUUID();
+    const inboxId = randomUUID();
+
+    insertTaskRow(db, doneId, "done", "Finished work", "#1");
+    // orphan: intentionally NOT inserted into DB
+    insertTaskRow(db, activeId, "in_progress", "Running work", "#2");
+    insertTaskRow(db, inboxId, "inbox", "Pending work", "#3");
+
+    // Create worktrees for all four (orphan needs a fake task object)
+    prepareTaskWorkspace({ id: doneId, title: "Finished work", task_number: "#1", project_path: repo } as never, workflow);
+    prepareTaskWorkspace({ id: orphanId, title: "Orphan work", task_number: "#9", project_path: repo } as never, workflow);
+    prepareTaskWorkspace({ id: activeId, title: "Running work", task_number: "#2", project_path: repo } as never, workflow);
+    prepareTaskWorkspace({ id: inboxId, title: "Pending work", task_number: "#3", project_path: repo } as never, workflow);
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+
+    assert.equal(result.scanned, 4);
+    assert.equal(result.removed.length, 2);
+    assert.equal(result.kept.length, 2);
+    assert.equal(result.preserved.length, 0);
+
+    const removedIds = result.removed.map((r) => r.taskId).sort();
+    assert.deepEqual(removedIds, [doneId, orphanId].sort());
+    assert.deepEqual(
+      result.removed.map((r) => r.reason).sort(),
+      ["done", "orphan"],
+    );
+
+    assert.deepEqual(
+      result.kept.map((k) => k.status).sort(),
+      ["in_progress", "inbox"].sort(),
+    );
+
+    assert.equal(existsSync(join(repo, ".ao-worktrees", doneId)), false);
+    assert.equal(existsSync(join(repo, ".ao-worktrees", orphanId)), false);
+    assert.equal(existsSync(join(repo, ".ao-worktrees", activeId)), true);
+    assert.equal(existsSync(join(repo, ".ao-worktrees", inboxId)), true);
+  });
+
+  it("keeps cancelled worktrees by default", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const db = createDb();
+    const id = randomUUID();
+    insertTaskRow(db, id, "cancelled", "Stopped work", "#10");
+    prepareTaskWorkspace({ id, title: "Stopped work", task_number: "#10", project_path: repo } as never, workflow);
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+    assert.equal(result.removed.length, 0);
+    assert.equal(result.kept.length, 1);
+    assert.equal(result.kept[0]?.status, "cancelled");
+    assert.equal(existsSync(join(repo, ".ao-worktrees", id)), true);
+  });
+
+  it("removes cancelled worktrees when removeCancelled is true", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const db = createDb();
+    const id = randomUUID();
+    insertTaskRow(db, id, "cancelled", "Stopped work", "#11");
+    prepareTaskWorkspace({ id, title: "Stopped work", task_number: "#11", project_path: repo } as never, workflow);
+
+    const result = reconcileAoWorktrees(db, { cwd: repo, removeCancelled: true });
+    assert.equal(result.removed.length, 1);
+    assert.equal(result.removed[0]?.reason, "cancelled");
+    assert.equal(existsSync(join(repo, ".ao-worktrees", id)), false);
+  });
+
+  it("preserves a stale worktree whose branch holds unpushed commits", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const db = createDb();
+
+    const id = randomUUID();
+    insertTaskRow(db, id, "done", "Has unpushed wip", "#5");
+    const ws = prepareTaskWorkspace(
+      { id, title: "Has unpushed wip", task_number: "#5", project_path: repo } as never,
+      workflow,
+    );
+
+    writeFileSync(join(ws.cwd, "WIP.md"), "in progress\n");
+    git(ws.cwd, "add", "WIP.md");
+    git(ws.cwd, "commit", "-m", "wip");
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+
+    assert.equal(result.scanned, 1);
+    assert.equal(result.removed.length, 0);
+    assert.equal(result.preserved.length, 1);
+    assert.equal(result.preserved[0]?.reason, "unpushed-commits");
+    assert.equal(existsSync(ws.cwd), true, "worktree must remain so the unpushed commit can be recovered");
+  });
+
+  it("returns an empty result when .ao-worktrees does not exist", () => {
+    const repo = initRepo();
+    const db = createDb();
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+
+    assert.equal(result.scanned, 0);
+    assert.equal(result.removed.length, 0);
+    assert.equal(result.kept.length, 0);
+    assert.equal(result.preserved.length, 0);
+  });
+
+  it("returns an empty result when cwd is not a git repository", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "ao-reconcile-non-git-"));
+    const db = createDb();
+
+    const result = reconcileAoWorktrees(db, { cwd: tempDir });
+
+    assert.equal(result.scanned, 0);
+    assert.equal(result.removed.length, 0);
+  });
+
+  it("dedupes project_paths that resolve to the same repo root (symlink / subdir)", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const db = createDb();
+
+    const doneId = randomUUID();
+    insertTaskRow(db, doneId, "done", "Finished work", "#1");
+    db.prepare("UPDATE tasks SET project_path = ? WHERE id = ?").run(repo, doneId);
+    prepareTaskWorkspace({ id: doneId, title: "Finished work", task_number: "#1", project_path: repo } as never, workflow);
+
+    // Insert a second task whose project_path points to a subdirectory
+    // inside the same repo. `git rev-parse --show-toplevel` resolves it
+    // back to `repo`, so without dedup the same worktree would be
+    // counted twice.
+    const subdir = join(repo, ".ao-worktrees");
+    const otherId = randomUUID();
+    insertTaskRow(db, otherId, "in_progress", "Active work", "#2");
+    db.prepare("UPDATE tasks SET project_path = ? WHERE id = ?").run(subdir, otherId);
+
+    const result = reconcileAllAoWorktrees(db);
+
+    assert.equal(result.projects, 1, "the same repo must only be visited once");
+    assert.equal(result.scanned, 1);
+    assert.equal(result.removed.length, 1);
+  });
+
+  it("aggregates reconcile across every distinct project_path in the tasks table", () => {
+    const repoA = initRepo();
+    const repoB = initRepo();
+    const workflow = buildWorkflow();
+    const db = createDb();
+
+    // repoA has one done task → expect removal
+    const doneA = randomUUID();
+    insertTaskRow(db, doneA, "done", "Finished A", "#1");
+    db.prepare("UPDATE tasks SET project_path = ? WHERE id = ?").run(repoA, doneA);
+    prepareTaskWorkspace({ id: doneA, title: "Finished A", task_number: "#1", project_path: repoA } as never, workflow);
+
+    // repoB has one active task → expect kept
+    const activeB = randomUUID();
+    insertTaskRow(db, activeB, "in_progress", "Working B", "#2");
+    db.prepare("UPDATE tasks SET project_path = ? WHERE id = ?").run(repoB, activeB);
+    prepareTaskWorkspace({ id: activeB, title: "Working B", task_number: "#2", project_path: repoB } as never, workflow);
+
+    // repoB also has an orphan worktree (DB row never inserted) → expect removal
+    const orphanB = randomUUID();
+    prepareTaskWorkspace({ id: orphanB, title: "Orphan B", task_number: "#9", project_path: repoB } as never, workflow);
+
+    const result = reconcileAllAoWorktrees(db);
+
+    assert.equal(result.projects, 2, "both repoA and repoB should be visited");
+    assert.equal(result.scanned, 3);
+    assert.equal(result.removed.length, 2);
+    assert.equal(result.kept.length, 1);
+    assert.equal(result.kept[0]?.taskId, activeB);
+
+    const removedIds = result.removed.map((r) => r.taskId).sort();
+    assert.deepEqual(removedIds, [doneA, orphanB].sort());
+
+    assert.equal(existsSync(join(repoA, ".ao-worktrees", doneA)), false);
+    assert.equal(existsSync(join(repoB, ".ao-worktrees", activeB)), true);
+    assert.equal(existsSync(join(repoB, ".ao-worktrees", orphanB)), false);
   });
 });

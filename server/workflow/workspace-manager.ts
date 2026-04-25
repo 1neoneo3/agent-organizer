@@ -429,3 +429,278 @@ export function tryCleanupCompletedTaskWorkspace(
   const workflow = loadProjectWorkflow(task.project_path);
   return removeTaskWorkspace(task, workflow, options);
 }
+
+/**
+ * Disposition for one worktree during reconcile.
+ *
+ * - `removed`: worktree (and optionally branch) was deleted
+ * - `kept`: task is still active in DB, worktree left intact
+ * - `preserved`: would have been removed but was protected (e.g.
+ *   the branch holds commits not yet on main, or git refused the
+ *   worktree-remove call)
+ * - `error`: unexpected failure during inspection or removal
+ */
+export interface ReconcileWorktreeEntry {
+  taskId: string;
+  branchName: string | null;
+  worktreePath: string;
+}
+
+export interface ReconcileWorktreesResult {
+  scanned: number;
+  removed: Array<ReconcileWorktreeEntry & { reason: "orphan" | "done" | "cancelled" }>;
+  kept: Array<ReconcileWorktreeEntry & { status: string }>;
+  preserved: Array<ReconcileWorktreeEntry & { reason: "unpushed-commits" | "remove-failed"; details?: string }>;
+  errors: Array<ReconcileWorktreeEntry & { error: string }>;
+}
+
+export interface ReconcileWorktreesOptions {
+  /**
+   * Repository root to inspect. Defaults to `process.cwd()` so the
+   * server boot sequence can call this with no args. Tests override.
+   */
+  cwd?: string;
+  /**
+   * Whether to also remove worktrees for tasks in `cancelled` status.
+   * Default false: cancelled tasks can be revived via /tasks/:id/resume,
+   * so removing the worktree would lose the rework starting point.
+   */
+  removeCancelled?: boolean;
+}
+
+interface RawWorktreeEntry {
+  path: string;
+  branchRef: string | null;
+}
+
+function listGitWorktrees(repoRoot: string): RawWorktreeEntry[] {
+  let output: string;
+  try {
+    output = runGit(repoRoot, ["worktree", "list", "--porcelain"]);
+  } catch {
+    return [];
+  }
+  const entries: RawWorktreeEntry[] = [];
+  let current: { path?: string; branchRef?: string | null } = {};
+  const flush = () => {
+    if (current.path) {
+      entries.push({ path: current.path, branchRef: current.branchRef ?? null });
+    }
+    current = {};
+  };
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      flush();
+      current.path = line.slice("worktree ".length);
+    } else if (line.startsWith("branch ")) {
+      current.branchRef = line.slice("branch ".length);
+    } else if (line === "") {
+      flush();
+    }
+  }
+  flush();
+  return entries;
+}
+
+const AO_WORKTREE_TASK_ID_RE = /\.ao-worktrees\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i;
+
+function extractAoTaskId(worktreePath: string): string | null {
+  const match = worktreePath.match(AO_WORKTREE_TASK_ID_RE);
+  return match ? match[1] : null;
+}
+
+/**
+ * Check whether a branch holds commits that are not reachable from main.
+ * Conservative: any failure to compare returns `true` so we err on the
+ * side of preserving potentially-valuable work.
+ */
+function branchHasUnpushedCommits(repoRoot: string, branchName: string): boolean {
+  try {
+    const base = resolveOriginMainBase(repoRoot);
+    const count = runGit(repoRoot, ["rev-list", "--count", `${base}..${branchName}`]);
+    return parseInt(count, 10) > 0;
+  } catch {
+    return true;
+  }
+}
+
+interface ReconcileTaskRow {
+  id: string;
+  status: string;
+}
+
+/**
+ * Sweep `.ao-worktrees/` for stale entries on server boot. Removes
+ * worktrees whose corresponding task either no longer exists in the DB
+ * (orphans, e.g. from a wiped or reset DB) or has reached `done`.
+ * Worktrees for active tasks (refinement / in_progress / pr_review /
+ * human_review / qa_testing / test_generation / inbox) are kept so
+ * resuming or post-merge cleanup proceeds normally.
+ *
+ * Branches with commits not yet on main are preserved (worktree
+ * directory removed but branch intact) so that unpushed work is
+ * recoverable. By default `cancelled` is also kept because /tasks/:id
+ * /resume can revive it; pass `removeCancelled: true` to override.
+ *
+ * Idempotent and side-effect-bounded: failures on individual worktrees
+ * do not abort the sweep, and the function never throws.
+ */
+export function reconcileAoWorktrees(
+  db: DatabaseSync,
+  options: ReconcileWorktreesOptions = {},
+): ReconcileWorktreesResult {
+  const cwd = options.cwd ?? process.cwd();
+  const result: ReconcileWorktreesResult = {
+    scanned: 0,
+    removed: [],
+    kept: [],
+    preserved: [],
+    errors: [],
+  };
+
+  let repoRoot: string;
+  try {
+    repoRoot = runGit(cwd, ["rev-parse", "--show-toplevel"]);
+  } catch {
+    return result;
+  }
+
+  const taskLookup = db.prepare("SELECT id, status FROM tasks WHERE id = ?");
+
+  for (const wt of listGitWorktrees(repoRoot)) {
+    const taskId = extractAoTaskId(wt.path);
+    if (!taskId) continue;
+    result.scanned += 1;
+
+    const branchName = wt.branchRef ? wt.branchRef.replace(/^refs\/heads\//, "") : null;
+    const entry: ReconcileWorktreeEntry = {
+      taskId,
+      branchName,
+      worktreePath: wt.path,
+    };
+
+    const row = taskLookup.get(taskId) as ReconcileTaskRow | undefined;
+
+    let removeReason: "orphan" | "done" | "cancelled" | null = null;
+    if (!row) removeReason = "orphan";
+    else if (row.status === "done") removeReason = "done";
+    else if (row.status === "cancelled" && options.removeCancelled) removeReason = "cancelled";
+
+    if (!removeReason) {
+      result.kept.push({ ...entry, status: row?.status ?? "unknown" });
+      continue;
+    }
+
+    if (branchName && branchHasUnpushedCommits(repoRoot, branchName)) {
+      result.preserved.push({ ...entry, reason: "unpushed-commits" });
+      continue;
+    }
+
+    try {
+      runGit(repoRoot, ["worktree", "remove", "--force", wt.path]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      result.preserved.push({ ...entry, reason: "remove-failed", details: message });
+      continue;
+    }
+
+    if (branchName) {
+      try {
+        runGit(repoRoot, ["branch", "-d", branchName]);
+      } catch {
+        // Branch survives. The worktree was already removed which is
+        // the goal — branch lifecycle is best-effort here.
+      }
+    }
+
+    // Trail a system log entry on the still-existing task row so the
+    // operator sees the worktree-removal in the Activity panel. Skip
+    // for orphan removals (no task row to log against — the FK would
+    // refuse the insert).
+    if (removeReason !== "orphan") {
+      try {
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+        ).run(taskId, `[Workspace] Reconciled worktree for ${removeReason} task on boot`);
+      } catch {
+        // Logging is best-effort; never block the sweep.
+      }
+    }
+
+    result.removed.push({ ...entry, reason: removeReason });
+  }
+
+  // Drop any stale `.git/worktrees/<id>` admin entries pointing to paths
+  // we just removed (or that were already missing). `git worktree prune`
+  // is idempotent and quick.
+  try {
+    runGit(repoRoot, ["worktree", "prune"]);
+  } catch {
+    // non-fatal
+  }
+
+  return result;
+}
+
+/**
+ * Run `reconcileAoWorktrees` once per distinct `project_path` recorded
+ * in the tasks table. AO worktrees live inside each project's own repo
+ * (`<project_path>/.ao-worktrees/<task.id>`), so a single sweep against
+ * one cwd would miss worktrees in any project other than the one the
+ * AO server itself runs from. Tasks without `project_path` are skipped
+ * — those tasks were never paired with a git repo.
+ *
+ * Aggregates the per-project results into one summary. Per-project
+ * failures are isolated: a non-git project_path or a missing directory
+ * yields an empty result for that project but does not abort the
+ * overall sweep.
+ */
+export function reconcileAllAoWorktrees(
+  db: DatabaseSync,
+  options: Omit<ReconcileWorktreesOptions, "cwd"> = {},
+): ReconcileWorktreesResult & { projects: number } {
+  const projectPaths = (
+    db.prepare("SELECT DISTINCT project_path FROM tasks WHERE project_path IS NOT NULL")
+      .all() as Array<{ project_path: string }>
+  )
+    .map((row) => row.project_path)
+    .filter((p): p is string => typeof p === "string" && p.length > 0);
+
+  // Multiple project_path values can resolve to the same git repoRoot —
+  // e.g. a symlink (`/home/mk/agent-organizer` → real path under
+  // `/home/mk/workspace/agent-organizer`) or a path pointing inside a
+  // subdirectory of an existing repo. Without deduping, the same
+  // worktree would be scanned (and counted) twice. Resolve each
+  // project_path to its canonical repoRoot and skip duplicates.
+  const seenRoots = new Set<string>();
+  const aggregate: ReconcileWorktreesResult & { projects: number } = {
+    scanned: 0,
+    removed: [],
+    kept: [],
+    preserved: [],
+    errors: [],
+    projects: 0,
+  };
+
+  for (const cwd of projectPaths) {
+    let repoRoot: string;
+    try {
+      repoRoot = runGit(cwd, ["rev-parse", "--show-toplevel"]);
+    } catch {
+      continue;
+    }
+    if (seenRoots.has(repoRoot)) continue;
+    seenRoots.add(repoRoot);
+
+    const sub = reconcileAoWorktrees(db, { ...options, cwd: repoRoot });
+    if (sub.scanned === 0) continue;
+    aggregate.projects += 1;
+    aggregate.scanned += sub.scanned;
+    aggregate.removed.push(...sub.removed);
+    aggregate.kept.push(...sub.kept);
+    aggregate.preserved.push(...sub.preserved);
+    aggregate.errors.push(...sub.errors);
+  }
+
+  return aggregate;
+}
