@@ -637,4 +637,57 @@ describe("mergeFetchedLogs", () => {
     const result = mergeFetchedLogs(existing, []);
     assert.equal(result, existing);
   });
+
+  it("replaces all existing entries when all are pending", () => {
+    const existing = [
+      { ...createLog(9999990, { message: "ws-1" }), pending: true as const },
+      { ...createLog(9999991, { message: "ws-2" }), pending: true as const },
+    ];
+    const incoming = [
+      createLog(50, { message: "ws-1" }),
+      createLog(51, { message: "ws-2" }),
+    ];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.length, 2);
+    assert.equal(result.filter((r) => r.pending).length, 0);
+    assert.deepEqual(result.map((r) => r.id), [50, 51]);
+  });
+
+  it("correctly interleaves incoming with existing by id", () => {
+    const existing = [createLog(1), createLog(3), createLog(5)];
+    const incoming = [createLog(2), createLog(4), createLog(6)];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.deepEqual(result.map((r) => r.id), [1, 2, 3, 4, 5, 6]);
+  });
+
+  it("prefers incoming over existing for same id", () => {
+    const existing = [createLog(1, { message: "old", kind: "stdout" })];
+    const incoming = [createLog(1, { message: "new", kind: "assistant" })];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.length, 1);
+    assert.equal(result[0]?.message, "new");
+    assert.equal(result[0]?.kind, "assistant");
+  });
+
+  it("handles large merge without losing entries", () => {
+    const existing = Array.from({ length: 100 }, (_, i) => createLog(i * 2));
+    const incoming = Array.from({ length: 100 }, (_, i) => createLog(i * 2 + 1));
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.length, 200);
+    for (let i = 1; i < result.length; i++) {
+      assert.ok(result[i]!.id > result[i - 1]!.id, "should maintain ASC order");
+    }
+  });
+
+  it("drops pending entries even when incoming has different messages", () => {
+    const existing = [
+      createLog(1, { message: "confirmed" }),
+      { ...createLog(8888888, { message: "pending-ws" }), pending: true as const },
+    ];
+    const incoming = [createLog(2, { message: "new-from-db" })];
+    const result = mergeFetchedLogs(existing, incoming);
+    assert.equal(result.length, 2);
+    assert.deepEqual(result.map((r) => r.id), [1, 2]);
+    assert.ok(result.every((r) => !r.pending));
+  });
 });
