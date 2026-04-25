@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { authenticate, cleanupTestData, apiCall } from "./helpers.js";
+import {
+  authenticate,
+  cleanupTestData,
+  apiCall,
+  TASK_TITLE_PLACEHOLDER,
+  TASK_DESCRIPTION_PLACEHOLDER,
+} from "./helpers.js";
 
 test.describe("Task CRUD", () => {
   test.beforeEach(async ({ page, request }) => {
@@ -19,8 +25,8 @@ test.describe("Task CRUD", () => {
     await page.click("button:has-text('+ NEW QUEST')");
 
     // Fill in the task form
-    await page.fill('input[placeholder="What needs to be done?"]', "E2E Test Task");
-    await page.fill('textarea[placeholder="What and why in 2-3 sentences. Implementation details go in the plan."]', "This is a test task created by E2E");
+    await page.fill(`input[placeholder="${TASK_TITLE_PLACEHOLDER}"]`, "E2E Test Task");
+    await page.fill(`textarea[placeholder="${TASK_DESCRIPTION_PLACEHOLDER}"]`, "This is a test task created by E2E");
 
     // Submit the form
     await page.click('button:has-text("Create Task")');

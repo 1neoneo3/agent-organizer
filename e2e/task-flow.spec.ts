@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { authenticate, cleanupTestData, apiCall } from "./helpers.js";
+import {
+  authenticate,
+  cleanupTestData,
+  apiCall,
+  TASK_TITLE_PLACEHOLDER,
+  TASK_DESCRIPTION_PLACEHOLDER,
+} from "./helpers.js";
 
 test.describe("Task Flow (Agent + Task integration)", () => {
   test.beforeEach(async ({ page, request }) => {
@@ -33,9 +39,9 @@ test.describe("Task Flow (Agent + Task integration)", () => {
 
     // 4. Create task via UI without explicitly assigning an agent
     await page.click("button:has-text('+ NEW QUEST')");
-    await page.waitForSelector('input[placeholder="What needs to be done?"]');
-    await page.fill('input[placeholder="What needs to be done?"]', "Auto assign and start task");
-    await page.fill('textarea[placeholder="What and why in 2-3 sentences. Implementation details go in the plan."]', "Verify task create auto-assigns and auto-starts");
+    await page.waitForSelector(`input[placeholder="${TASK_TITLE_PLACEHOLDER}"]`);
+    await page.fill(`input[placeholder="${TASK_TITLE_PLACEHOLDER}"]`, "Auto assign and start task");
+    await page.fill(`textarea[placeholder="${TASK_DESCRIPTION_PLACEHOLDER}"]`, "Verify task create auto-assigns and auto-starts");
 
     const createTaskResponsePromise = page.waitForResponse((response) =>
       response.url().endsWith("/api/tasks") && response.request().method() === "POST"
