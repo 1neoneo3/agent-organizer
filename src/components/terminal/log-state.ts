@@ -1,6 +1,10 @@
 import type { TaskLog } from "../../types/index.js";
 
-export const MAX_LIVE_LOGS = 500;
+// Capped to bound memory while still preserving the initial fetch (1000 rows)
+// even after WS-driven `appendLiveLogs` slicing kicks in. Without this headroom,
+// the first cli_output event after mount would trim the just-fetched history
+// back down to 500 rows and undo the past-stage visibility fix.
+export const MAX_LIVE_LOGS = 2000;
 
 export const STAGE_TRANSITION_PREFIX = "__STAGE_TRANSITION__:";
 
@@ -217,6 +221,34 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
 
   if (current) segments.push(current);
   return segments;
+}
+
+/**
+ * Merge older logs (fetched via load-more) in front of existing logs.
+ * Deduplicates by `id` — the server fold-ins all stage-transition markers
+ * into every page, so duplicates are expected.  Returns chronological order.
+ */
+export function mergeOlderLogs(existing: TaskLog[], older: TaskLog[]): TaskLog[] {
+  const seen = new Set(existing.map((l) => l.id));
+  const unique = older.filter((l) => !seen.has(l.id));
+  if (unique.length === 0) return existing;
+  return [...unique, ...existing].sort((a, b) => {
+    if (a.created_at !== b.created_at) return a.created_at - b.created_at;
+    return a.id - b.id;
+  });
+}
+
+/**
+ * The server applies LIMIT/OFFSET before folding stage-transition markers
+ * into the response, so a page can contain more rows than the paginated base
+ * query actually consumed. Keep advancing offsets by at most `pageSize` to
+ * avoid skipping older non-transition rows.
+ */
+export function inferFetchedBaseCount(pageLength: number, pageSize: number): number {
+  if (pageLength <= 0) {
+    return 0;
+  }
+  return pageLength >= pageSize ? pageSize : pageLength;
 }
 
 /**

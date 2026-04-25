@@ -31,8 +31,8 @@ export const toggleAcceptanceCriterion = (
     `/tasks/${id}/acceptance-criterion`,
     { index, checked },
   );
-export const fetchTaskLogs = (id: string, limit = 200) =>
-  api.get<TaskLog[]>(`/tasks/${id}/logs?limit=${limit}`);
+export const fetchTaskLogs = (id: string, limit = 200, offset = 0) =>
+  api.get<TaskLog[]>(`/tasks/${id}/logs?limit=${limit}&offset=${offset}`);
 
 // Messages
 export const fetchMessages = (taskId?: string, limit = 50) =>
