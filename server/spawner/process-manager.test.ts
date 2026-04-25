@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, it } from "node:test";
@@ -9,18 +9,23 @@ import {
   buildSpawnStartTaskUpdate,
   buildRefinementRevisionPrompt,
   clearPendingSpawn,
+  clearReviewerSession,
   createPlanBlockTracker,
   determineCompletionStatus,
   extractGithubArtifactsFromLogs,
   extractRefinementPlanFromLogs,
   getPendingSpawns,
+  initReviewerSession,
   isReviewRunTask,
   persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
   spawnAgent,
+  spawnSecondaryReviewer,
   tryStartPendingSpawn,
 } from "./process-manager.js";
 import type { Task } from "../types/runtime.js";
+
+const HAS_PROC_SELF_FD = platform() === "linux";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -242,61 +247,131 @@ describe("spawnAgent preflight cleanup", () => {
     }
   });
 
-  it("does not leak the per-task log stream when workspace preparation throws", async () => {
-    const db = createDb();
-    const tempProject = mkdtempSync(join(tmpdir(), "ao-fd-leak-"));
-    try {
-      insertAgent(db, { id: "agent-fdleak", status: "idle" });
-      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
-      const task = insertTask(db, {
-        id: "task-fdleak",
-        project_path: tempProject,
-        assigned_agent_id: "agent-fdleak",
-      });
+  it(
+    "does not leak the per-task log stream when workspace preparation throws",
+    { skip: !HAS_PROC_SELF_FD ? "requires /proc/self/fd (Linux)" : false },
+    async () => {
+      const db = createDb();
+      const tempProject = mkdtempSync(join(tmpdir(), "ao-fd-leak-"));
+      try {
+        insertAgent(db, { id: "agent-fdleak", status: "idle" });
+        db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+        const task = insertTask(db, {
+          id: "task-fdleak",
+          project_path: tempProject,
+          assigned_agent_id: "agent-fdleak",
+        });
 
-      const fdsBefore = readdirSync("/proc/self/fd").length;
+        const fdsBefore = readdirSync("/proc/self/fd").length;
 
-      // Repeatedly invoke spawnAgent against a project that cannot host a
-      // worktree — each call must throw via prepareTaskWorkspace and must
-      // close the log stream that was opened just before. Without the
-      // close-on-throw fix, fd count grows linearly with N.
-      const N = 5;
-      for (let i = 0; i < N; i += 1) {
-        await assert.rejects(
-          spawnAgent(db, { broadcast: () => undefined, clients: new Set(), addClient: () => undefined, removeClient: () => undefined, subscribeClientToTask: () => undefined, unsubscribeClientFromTask: () => undefined, dispose: () => undefined } as never, {
-            id: "agent-fdleak",
-            name: "Agent fdleak",
-            cli_provider: "claude",
-            cli_model: null,
-            cli_reasoning_level: null,
-            avatar_emoji: "A",
-            status: "idle",
-            current_task_id: null,
-            stats_tasks_done: 0,
-            created_at: 1_000,
-            updated_at: 1_000,
-            role: null,
-            agent_type: "worker",
-            sprite_id: null,
-            personality: null,
-          } as never, task),
+        // Repeatedly invoke spawnAgent against a project that cannot host a
+        // worktree — each call must throw via prepareTaskWorkspace and must
+        // close the log stream that was opened just before. Without the
+        // close-on-throw fix, fd count grows linearly with N. After the fix
+        // the only allowed growth is from node:test internals (typically 0).
+        const N = 10;
+        for (let i = 0; i < N; i += 1) {
+          await assert.rejects(
+            spawnAgent(db, { broadcast: () => undefined, clients: new Set(), addClient: () => undefined, removeClient: () => undefined, subscribeClientToTask: () => undefined, unsubscribeClientFromTask: () => undefined, dispose: () => undefined } as never, {
+              id: "agent-fdleak",
+              name: "Agent fdleak",
+              cli_provider: "claude",
+              cli_model: null,
+              cli_reasoning_level: null,
+              avatar_emoji: "A",
+              status: "idle",
+              current_task_id: null,
+              stats_tasks_done: 0,
+              created_at: 1_000,
+              updated_at: 1_000,
+              role: null,
+              agent_type: "worker",
+              sprite_id: null,
+              personality: null,
+            } as never, task),
+          );
+        }
+
+        // Allow the writable streams' internal queues to flush so `end()` can
+        // actually release the underlying file descriptor.
+        await new Promise((resolve) => setTimeout(resolve, 200));
+
+        const fdsAfter = readdirSync("/proc/self/fd").length;
+        // Allow ≤2 extra fds for node:test internals / gc-deferred close.
+        // Without the fix this grows by N (= 10).
+        assert.ok(
+          fdsAfter - fdsBefore <= 2,
+          `fd leak: opened ${fdsAfter - fdsBefore} extra descriptors over ${N} failed spawns (before=${fdsBefore} after=${fdsAfter})`,
         );
+      } finally {
+        rmSync(tempProject, { recursive: true, force: true });
+        db.close();
       }
+    },
+  );
+});
 
-      // Allow the writable streams' internal queues to flush so `end()` can
-      // actually release the underlying file descriptor.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+describe("spawnSecondaryReviewer fd-leak resilience", () => {
+  it(
+    "does not leak the per-task log stream when workspace preparation throws",
+    { skip: !HAS_PROC_SELF_FD ? "requires /proc/self/fd (Linux)" : false },
+    async () => {
+      const db = createDb();
+      const tempProject = mkdtempSync(join(tmpdir(), "ao-fd-leak-secondary-"));
+      try {
+        insertAgent(db, { id: "agent-secondary-fdleak", status: "idle" });
+        db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+        const task = insertTask(db, {
+          id: "task-secondary-fdleak",
+          project_path: tempProject,
+          assigned_agent_id: "agent-secondary-fdleak",
+        });
 
-      const fdsAfter = readdirSync("/proc/self/fd").length;
-      assert.ok(
-        fdsAfter - fdsBefore < N,
-        `fd leak: opened ${fdsAfter - fdsBefore} extra descriptors over ${N} failed spawns (before=${fdsBefore} after=${fdsAfter})`,
-      );
-    } finally {
-      rmSync(tempProject, { recursive: true, force: true });
-      db.close();
-    }
-  });
+        const fdsBefore = readdirSync("/proc/self/fd").length;
+
+        // spawnSecondaryReviewer requires an initialized reviewer session.
+        initReviewerSession(task.id, ["code", "security"]);
+
+        const N = 10;
+        try {
+          for (let i = 0; i < N; i += 1) {
+            assert.throws(() =>
+              spawnSecondaryReviewer(db, { broadcast: () => undefined, clients: new Set(), addClient: () => undefined, removeClient: () => undefined, subscribeClientToTask: () => undefined, unsubscribeClientFromTask: () => undefined, dispose: () => undefined } as never, {
+                id: "agent-secondary-fdleak",
+                name: "Agent secondary fdleak",
+                cli_provider: "claude",
+                cli_model: null,
+                cli_reasoning_level: null,
+                avatar_emoji: "A",
+                status: "idle",
+                current_task_id: null,
+                stats_tasks_done: 0,
+                created_at: 1_000,
+                updated_at: 1_000,
+                role: null,
+                agent_type: "worker",
+                sprite_id: null,
+                personality: null,
+              } as never, task, "security"),
+            );
+          }
+        } finally {
+          clearReviewerSession(task.id);
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 200));
+
+        const fdsAfter = readdirSync("/proc/self/fd").length;
+        assert.ok(
+          fdsAfter - fdsBefore <= 2,
+          `fd leak: opened ${fdsAfter - fdsBefore} extra descriptors over ${N} failed secondary spawns (before=${fdsBefore} after=${fdsAfter})`,
+        );
+      } finally {
+        rmSync(tempProject, { recursive: true, force: true });
+        db.close();
+      }
+    },
+  );
 });
 
 describe("extractGithubArtifactsFromLogs", () => {
