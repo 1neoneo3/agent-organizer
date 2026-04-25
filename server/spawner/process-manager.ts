@@ -895,7 +895,7 @@ export async function spawnAgent(
   let child!: ChildProcess;
   let outputLanguage: OutputLanguage = "ja";
   let prompt = "";
-  let logStream!: ReturnType<typeof createWriteStream>;
+  let logStream: ReturnType<typeof createWriteStream> | undefined;
   let workspace!: ReturnType<typeof prepareTaskWorkspace>;
   const hookCacheDir = join("data", "hook-cache");
   try {
@@ -998,6 +998,13 @@ export async function spawnAgent(
     });
 
     activeProcesses.set(task.id, child);
+  } catch (err) {
+    // logStream may have been opened (line above) before a downstream throw
+    // such as `prepareTaskWorkspace` worktree conflict, before_run hook
+    // failure, or `spawn()` itself failing. Close it here so we do not leak
+    // a file descriptor on every failed dispatch attempt.
+    try { logStream?.end(); } catch { /* already closed */ }
+    throw err;
   } finally {
     if (!isParallelTester && !isContinue) {
       clearPendingSpawn(task.id);
@@ -1322,7 +1329,7 @@ export async function spawnAgent(
     if (!text.trim()) return;
 
     // Log raw text to file
-    logStream.write(text);
+    logStream!.write(text);
 
     // Classify each line and collect entries
     const classified: Array<{ kind: TaskLogKind; message: string }> = [];
@@ -1464,7 +1471,7 @@ export async function spawnAgent(
   child.stderr?.on("data", (data: Buffer) => {
     const text = normalizeStreamChunk(data);
     if (!text.trim()) return;
-    logStream.write(`[stderr] ${text}`);
+    logStream!.write(`[stderr] ${text}`);
     const stderrBatchWriter = getLogBatchWriter();
     if (stderrBatchWriter) {
       stderrBatchWriter.enqueue({ taskId: task.id, kind: "stderr", message: text, stage: spawnStage, agentId: agent.id });
@@ -1483,7 +1490,7 @@ export async function spawnAgent(
         if (count >= LOOP_THRESHOLD) {
           loopDetected = true;
           const msg = `[Loop Detection] Same error repeated ${count} times, terminating process. Pattern: ${normalized.slice(0, 200)}`;
-          logStream.write(`${msg}\n`);
+          logStream!.write(`${msg}\n`);
           insertLogStmt.run(task.id, "system", msg, spawnStage, agent.id);
           ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: msg }], { taskId: task.id });
           child.kill("SIGTERM");
@@ -1505,11 +1512,11 @@ export async function spawnAgent(
     const message = error instanceof Error ? error.message : String(error);
 
     try {
-      logStream.write(`[spawn-error] ${message}\n`);
+      logStream!.write(`[spawn-error] ${message}\n`);
     } catch {
       // ignore secondary logging failures
     }
-    logStream.end();
+    logStream!.end();
 
     const runtimeFailure = classifyRuntimeFailure({
       code: null,
@@ -1569,7 +1576,7 @@ export async function spawnAgent(
     clearTimeout(hardTimer);
     getHeartbeatManager()?.unregisterTask(task.id);
     activeProcesses.delete(task.id);
-    logStream.end();
+    logStream!.end();
 
     // Flush any buffered log entries for this task before any close handler
     // logic reads task_logs. This covers all downstream consumers:
@@ -2163,15 +2170,24 @@ export function spawnSecondaryReviewer(
   cleanEnv.CI = "1";
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
-  const workspace = prepareTaskWorkspace(task, workflow, db);
-
-  const child = spawn(args[0], args.slice(1), {
-    cwd: workspace.cwd,
-    env: cleanEnv,
-    shell: process.platform === "win32",
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  let workspace: ReturnType<typeof prepareTaskWorkspace>;
+  let child: ChildProcess;
+  try {
+    workspace = prepareTaskWorkspace(task, workflow, db);
+    child = spawn(args[0], args.slice(1), {
+      cwd: workspace.cwd,
+      env: cleanEnv,
+      shell: process.platform === "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+  } catch (err) {
+    // Workspace preparation (e.g. `git worktree add` conflict) or spawn()
+    // can throw between createWriteStream and the child handlers below.
+    // Close the log stream so we do not leak a file descriptor per failure.
+    try { logStream.end(); } catch { /* already closed */ }
+    throw err;
+  }
 
   // Track in the reviewer session (not in activeProcesses — the primary
   // owns that slot for the task). killAgent will clean up via the session.
