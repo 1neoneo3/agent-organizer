@@ -249,6 +249,7 @@ const LogEntry = memo(function LogEntry({
 });
 
 const PAUSE_SCROLL_THRESHOLD = 50;
+const LOG_SYNC_INTERVAL_MS = 2500;
 
 function TerminalView({
   taskId,
@@ -273,8 +274,13 @@ function TerminalView({
   const [loadedBaseCount, setLoadedBaseCount] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const maxSeenIdRef = useRef<number | null>(null);
+  const fetchInFlightRef = useRef(false);
 
   const doFetch = useCallback(async () => {
+    if (fetchInFlightRef.current) {
+      return;
+    }
+    fetchInFlightRef.current = true;
     try {
       const sinceId = maxSeenIdRef.current ?? undefined;
 
@@ -300,18 +306,49 @@ function TerminalView({
       }
     } catch (err) {
       console.warn("[TerminalView] fetchTaskLogs failed", err);
+    } finally {
+      fetchInFlightRef.current = false;
     }
   }, [taskId]);
 
-  useEffect(() => {
     // Reset cursors and local cache when the rendered task changes so we
     // do not filter the new task's logs against the previous task's max id
     // (silent log loss) or replay stale entries from the previous mount.
-    maxSeenIdRef.current = null;
     setLogs([]);
+    setExpandedOverride({});
+    setFollow(true);
     setLoadedBaseCount(0);
     setHasMore(true);
+    maxSeenIdRef.current = null;
+    fetchInFlightRef.current = false;
+  }, [taskId]);
+
+  useEffect(() => {
     doFetch();
+  }, [doFetch]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void doFetch();
+    }, LOG_SYNC_INTERVAL_MS);
+
+    const handleWindowFocus = () => {
+      void doFetch();
+    };
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        void doFetch();
+      }
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [doFetch]);
 
   const handleLoadMore = useCallback(async () => {
@@ -349,6 +386,10 @@ function TerminalView({
   // opens a fresh segment immediately. The real DB row still exists and
   // will replace the synthetic one on the next mount-driven fetch.
   const prevStageRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    prevStageRef.current = undefined;
+  }, [taskId]);
+
   useEffect(() => {
     const prev = prevStageRef.current;
     const next = currentStage ?? null;

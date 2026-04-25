@@ -373,11 +373,17 @@ describe("tasks/:id/logs initial fetch and fold-in", () => {
     });
   });
 
-  it("folds stage transitions outside pagination window into response", async () => {
+  it("includes only the latest boundary transition outside the pagination window", async () => {
     const now = Date.now();
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'system', ?, 'refinement', ?)"
     ).run(taskId, "__STAGE_TRANSITION__:inbox→refinement", now);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'stdout', ?, 'refinement', ?)"
+    ).run(taskId, "planning", now + 1);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'system', ?, 'in_progress', ?)"
+    ).run(taskId, "__STAGE_TRANSITION__:refinement→in_progress", now + 2);
 
     for (let i = 1; i <= 10; i++) {
       db.prepare(
@@ -388,8 +394,10 @@ describe("tasks/:id/logs initial fetch and fold-in", () => {
     const res = await fetch(`${baseUrl}/tasks/${taskId}/logs?limit=5`);
     const logs = await res.json() as Array<{ id: number; message: string }>;
 
-    const hasTransition = logs.some((l) => l.message.includes("__STAGE_TRANSITION__:inbox→refinement"));
-    assert.ok(hasTransition, "stage transition should be folded in even outside pagination window");
+    const contextTransition = logs.find((l) => l.message.includes("__STAGE_TRANSITION__:refinement→in_progress"));
+    assert.ok(contextTransition, "latest boundary transition should be folded in for context");
+    const olderTransition = logs.find((l) => l.message.includes("__STAGE_TRANSITION__:inbox→refinement"));
+    assert.equal(olderTransition, undefined, "older transitions outside the window should not be folded in");
     assert.equal(logs.length, 6, "5 regular logs + 1 folded-in transition");
   });
 
@@ -427,23 +435,31 @@ describe("tasks/:id/logs initial fetch and fold-in", () => {
     assert.equal(offsetLogs[0]?.id, fullLogs[3]!.id, "offset=3 should skip the 3 newest logs");
   });
 
-  it("folds transitions even when offset pushes them out of the window", async () => {
+  it("adds only the nearest boundary transition when offset pushes transitions out of the window", async () => {
     const now = Date.now();
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'system', ?, 'refinement', ?)"
     ).run(taskId, "__STAGE_TRANSITION__:inbox→refinement", now);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'stdout', ?, 'refinement', ?)"
+    ).run(taskId, "planning", now + 1);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'system', ?, 'in_progress', ?)"
+    ).run(taskId, "__STAGE_TRANSITION__:refinement→in_progress", now + 2);
 
     for (let i = 1; i <= 8; i++) {
       db.prepare(
         "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'stdout', ?, 'in_progress', ?)"
-      ).run(taskId, `work-${i}`, now + i);
+      ).run(taskId, `work-${i}`, now + i + 2);
     }
 
     const res = await fetch(`${baseUrl}/tasks/${taskId}/logs?limit=3&offset=5`);
     const logs = await res.json() as Array<{ id: number; message: string }>;
 
-    const hasTransition = logs.some((l) => l.message.includes("__STAGE_TRANSITION__"));
-    assert.ok(hasTransition, "transitions should be folded in regardless of offset");
+    const boundaryTransition = logs.find((l) => l.message.includes("__STAGE_TRANSITION__:refinement→in_progress"));
+    assert.ok(boundaryTransition, "nearest boundary transition should be folded in");
+    const olderTransition = logs.find((l) => l.message.includes("__STAGE_TRANSITION__:inbox→refinement"));
+    assert.equal(olderTransition, undefined, "older transitions should stay out of the offset window");
   });
 });
 
