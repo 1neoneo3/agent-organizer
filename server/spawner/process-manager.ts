@@ -1767,6 +1767,7 @@ export async function spawnAgent(
       ).run(finishTime, agent.id);
 
       void invalidateTaskAndAgents(cache, runtimeStatus, "inbox");
+      runtimeStatus = "inbox";
       ws.broadcast(
         "task_update",
         pickTaskUpdate(
