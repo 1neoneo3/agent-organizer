@@ -288,6 +288,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       ? db.prepare("SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC").all(status)
       : db.prepare("SELECT * FROM tasks ORDER BY priority DESC, created_at DESC").all();
 
+    // Concurrent writers may occasionally miss a narrowly-targeted invalidation
+    // window, but the /tasks cache TTL is only 10s, so any stale list is
+    // self-healed quickly without needing broad pattern invalidation again.
     await cache.set(cacheKey, tasks, 10);
     sendMeasuredJson(res, "/tasks", t0, tasks);
   });

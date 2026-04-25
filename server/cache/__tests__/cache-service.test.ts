@@ -96,14 +96,14 @@ describe("CacheService", () => {
     });
 
     it("invalidatePattern removes matching keys", async () => {
-      await cache.set("tasks:all", "data1", 60);
-      await cache.set("tasks:status:inbox", "data2", 60);
+      await cache.set("test:all", "data1", 60);
+      await cache.set("test:status:inbox", "data2", 60);
       await cache.set("agents:all", "data3", 60);
 
-      await cache.invalidatePattern("tasks:*");
+      await cache.invalidatePattern("test:*");
 
-      assert.equal(await cache.get("tasks:all"), null);
-      assert.equal(await cache.get("tasks:status:inbox"), null);
+      assert.equal(await cache.get("test:all"), null);
+      assert.equal(await cache.get("test:status:inbox"), null);
       assert.equal(await cache.get("agents:all"), "data3");
     });
 
