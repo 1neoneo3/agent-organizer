@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { authenticate, cleanupTestData } from "./helpers.js";
+import {
+  authenticate,
+  cleanupTestData,
+  TASK_TITLE_PLACEHOLDER,
+  TASK_DESCRIPTION_PLACEHOLDER,
+} from "./helpers.js";
 
 test.describe("Task Create Performance", () => {
   test.beforeEach(async ({ page, request }) => {
@@ -22,8 +27,8 @@ test.describe("Task Create Performance", () => {
     const modalOpenedAt = Date.now();
 
     const taskTitle = `Perf Task ${Date.now()}`;
-    await page.getByPlaceholder("What needs to be done?").fill(taskTitle);
-    await page.getByPlaceholder("Detailed instructions...").fill("Measure create-task latency");
+    await page.getByPlaceholder(TASK_TITLE_PLACEHOLDER).fill(taskTitle);
+    await page.getByPlaceholder(TASK_DESCRIPTION_PLACEHOLDER).fill("Measure create-task latency");
 
     const submitStartedAt = Date.now();
     await page.getByRole("button", { name: "Create Task" }).click();

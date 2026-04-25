@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { authenticate, cleanupTestData, apiCall } from "./helpers.js";
+import {
+  authenticate,
+  cleanupTestData,
+  apiCall,
+  TASK_TITLE_PLACEHOLDER,
+  TASK_DESCRIPTION_PLACEHOLDER,
+} from "./helpers.js";
 
 async function measureSingleCreate(page: import("@playwright/test").Page, title: string) {
   const openStartedAt = Date.now();
@@ -7,8 +13,8 @@ async function measureSingleCreate(page: import("@playwright/test").Page, title:
   await expect(page.getByRole("heading", { name: "New Task" })).toBeVisible();
   const modalOpenedAt = Date.now();
 
-  await page.getByPlaceholder("What needs to be done?").fill(title);
-  await page.getByPlaceholder("Detailed instructions...").fill("Scenario performance test");
+  await page.getByPlaceholder(TASK_TITLE_PLACEHOLDER).fill(title);
+  await page.getByPlaceholder(TASK_DESCRIPTION_PLACEHOLDER).fill("Scenario performance test");
 
   const submitStartedAt = Date.now();
   await page.getByRole("button", { name: "Create Task" }).click();

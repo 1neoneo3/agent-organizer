@@ -3,6 +3,16 @@ import { type Page, type APIRequestContext } from "@playwright/test";
 const AUTH_TOKEN = "e2e-test-token";
 const BASE = "http://127.0.0.1:8792";
 
+/**
+ * Placeholder strings for `CreateTaskModal` form fields. Hoisted here so
+ * future copy tweaks only need to update one place — without this, every
+ * placeholder change cascades through 4 specs (task-crud, task-flow,
+ * task-create-performance, task-create-scenarios-performance).
+ */
+export const TASK_TITLE_PLACEHOLDER = "What needs to be done?";
+export const TASK_DESCRIPTION_PLACEHOLDER =
+  "What and why in 2-3 sentences. Implementation details go in the plan.";
+
 /** Authenticate via API and set session cookie + CSRF token */
 export async function authenticate(page: Page) {
   // Set auth cookie directly

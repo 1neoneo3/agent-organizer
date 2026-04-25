@@ -46,3 +46,25 @@ check_e2e_cmd:
 - Confirm the affected behavior with the smallest relevant test or verification step available.
 - If tests are not run, document that explicitly in the task result.
 - Review diffs for unintended changes before finishing.
+
+## Description vs Implementation Plan
+
+A task has two distinct text fields with separate responsibilities. Keep them
+disjoint to avoid duplication and to make each surface useful on its own.
+
+| Field | Purpose | Audience | Expected length |
+|-------|---------|----------|-----------------|
+| **Description** | High-level summary: what the task is and why it matters | Anyone scanning the task list / kanban card | 2–3 sentences (1 short paragraph) |
+| **Implementation Plan** | Technical specification: acceptance criteria, file lists, step-by-step approach, out-of-scope notes | The agent executing the task and reviewers | As long as needed (typically multi-section markdown) |
+
+### Guidelines
+
+- **Description** answers "what & why". It should never duplicate the plan's
+  acceptance criteria, file paths, or implementation steps. If a reader only
+  reads the Description, they should understand the goal but not necessarily
+  how it will be done.
+- **Implementation Plan** owns all technical detail. Acceptance criteria,
+  affected files, regression risk, and step-by-step instructions live here —
+  not in the Description.
+- When refining a task, update the plan rather than expanding the Description.
+  The decomposer pipeline produces brief Descriptions intentionally.
