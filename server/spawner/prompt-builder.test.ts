@@ -456,7 +456,7 @@ describe("output language directive", () => {
     assert.match(prompt, /## Business Requirements/);
     assert.match(prompt, /## Acceptance Criteria/);
     assert.match(prompt, /## Implementation Plan/);
-    assert.match(prompt, /## Updated Description/);
+    assert.doesNotMatch(prompt, /## Updated Description/);
     // Fence tokens are parser-critical — must be unchanged.
     assert.match(prompt, /---REFINEMENT PLAN---/);
     assert.match(prompt, /---END REFINEMENT---/);
@@ -466,7 +466,7 @@ describe("output language directive", () => {
     const prompt = buildRefinementPrompt(task);
     assert.match(prompt, /## 背景/);
     assert.match(prompt, /## 実装計画/);
-    assert.match(prompt, /## 更新されたタスク説明/);
+    assert.doesNotMatch(prompt, /## 更新されたタスク説明/);
     assert.match(prompt, /---REFINEMENT PLAN---/);
     assert.match(prompt, /---END REFINEMENT---/);
   });
@@ -633,7 +633,7 @@ describe("buildRefinementPrompt English section headers completeness", () => {
     assert.match(prompt, /## Business Requirements/);
     assert.match(prompt, /## Acceptance Criteria/);
     assert.match(prompt, /## Implementation Plan/);
-    assert.match(prompt, /## Updated Description/);
+    assert.doesNotMatch(prompt, /## Updated Description/);
   });
 
   it("Japanese mode emits all required Japanese headers", () => {
@@ -641,7 +641,7 @@ describe("buildRefinementPrompt English section headers completeness", () => {
 
     assert.match(prompt, /## 背景/);
     assert.match(prompt, /## 実装計画/);
-    assert.match(prompt, /## 更新されたタスク説明/);
+    assert.doesNotMatch(prompt, /## 更新されたタスク説明/);
   });
 });
 
