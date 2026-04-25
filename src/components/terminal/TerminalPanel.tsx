@@ -311,6 +311,7 @@ function TerminalView({
     }
   }, [taskId]);
 
+  useEffect(() => {
     // Reset cursors and local cache when the rendered task changes so we
     // do not filter the new task's logs against the previous task's max id
     // (silent log loss) or replay stale entries from the previous mount.

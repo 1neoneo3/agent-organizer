@@ -1070,6 +1070,16 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   });
 
   // Get task logs
+  //
+  // Query params:
+  //   - `limit` (default 200, max 1000)
+  //   - `since_id` (optional): incremental tail fetch — returns rows with
+  //     `id > since_id` ordered ASC, capped at `limit`. Stage-transition
+  //     fold-in is skipped on this path. Callers must loop until the
+  //     returned page length is `< limit` to fully drain a backlog.
+  //   - `offset` (default 0): legacy DESC-ordered pagination — returns the
+  //     newest `limit` rows skipping `offset`, plus a stage-transition
+  //     fold-in so the rendered timeline always opens with a stage marker.
   router.get("/tasks/:id/logs", (req, res) => {
     const t0 = performance.now();
     const limit = Math.min(Number(req.query.limit ?? 200), 1000);
