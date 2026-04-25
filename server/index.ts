@@ -5,6 +5,7 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer, type WebSocket } from "ws";
 import { initializeDb } from "./db/runtime.js";
+import { reconcileAllAoWorktrees } from "./workflow/workspace-manager.js";
 import { createWsHub } from "./ws/hub.js";
 import { createRedisClient, createCacheService } from "./cache/index.js";
 import { mountRoutes } from "./routes/index.js";
@@ -164,6 +165,31 @@ process.on("unhandledRejection", (reason) => {
 // Start
 server.listen(PORT, () => {
   console.log(`Agent Organizer running on http://localhost:${PORT}`);
+
+  // Reconcile stale AO worktrees on every boot, across every project
+  // path the tasks table knows about. Removes worktrees for tasks the
+  // DB no longer knows about (orphans) and for tasks that already
+  // reached `done`. Active tasks are left alone, and any branch
+  // carrying commits not yet on main is preserved so unpushed work is
+  // recoverable. See `reconcileAoWorktrees` for full semantics.
+  // Runs synchronously after listen() so the operator sees the result
+  // line in the boot log.
+  try {
+    const reconcile = reconcileAllAoWorktrees(db);
+    if (reconcile.scanned > 0) {
+      console.log(
+        `[worktree] reconcile: projects=${reconcile.projects} ` +
+          `scanned=${reconcile.scanned} ` +
+          `removed=${reconcile.removed.length} ` +
+          `kept=${reconcile.kept.length} ` +
+          `preserved=${reconcile.preserved.length}` +
+          (reconcile.errors.length ? ` errors=${reconcile.errors.length}` : ""),
+      );
+    }
+  } catch (error) {
+    console.warn(`[worktree] reconcile failed (non-fatal):`, error);
+  }
+
   startTelegramControlPoller();
   if (IS_DEV) {
     console.log(`Auth token: ${SESSION_AUTH_TOKEN}`);
