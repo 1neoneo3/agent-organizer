@@ -3,7 +3,7 @@ import { AgentForm, type AgentFormData } from "./AgentForm.js";
 import { getRoleLabel, getRoleColorClass } from "./roles.js";
 import { PixelAvatar } from "./PixelAvatar.js";
 import { createAgent, updateAgent, deleteAgent } from "../../api/endpoints.js";
-import type { Agent, Task } from "../../types/index.js";
+import type { Agent, TaskSummary } from "../../types/index.js";
 import { formatModelName } from "../../formatModelName.js";
 
 const ACTIVE_TASK_STATUSES = new Set([
@@ -13,7 +13,7 @@ const ACTIVE_TASK_STATUSES = new Set([
 
 interface AgentListProps {
   agents: Agent[];
-  tasks: Task[];
+  tasks: TaskSummary[];
   cliStatus: Record<string, boolean>;
   onReload: () => void;
 }

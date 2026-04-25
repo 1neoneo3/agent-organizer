@@ -4,27 +4,21 @@ import { TaskCard } from "./TaskCard.js";
 import { CreateTaskModal } from "./CreateTaskModal.js";
 import { TaskDetailModal, PINNED_PANEL_WIDTH_PX, type TaskDetailLayoutMode } from "./TaskDetailModal.js";
 import { TerminalPanel } from "../terminal/TerminalPanel.js";
-import { createTask, runTask, stopTask, resumeTask, updateTask, deleteTask, createAgent } from "../../api/endpoints.js";
+import { createTask, runTask, stopTask, resumeTask, updateTask, deleteTask, createAgent, fetchTask } from "../../api/endpoints.js";
 import { AgentForm, type AgentFormData } from "../agents/AgentForm.js";
 import { getRoleLabel } from "../agents/roles.js";
 import { PixelAvatar } from "../agents/PixelAvatar.js";
 import { useSfx } from "../../hooks/useSfx.js";
-import type { Task, Agent, InteractivePrompt, WSEventType } from "../../types/index.js";
+import type { Task, TaskSummary, Agent, InteractivePrompt, WSEventType } from "../../types/index.js";
 import { buildAgentViewState } from "./agent-view.js";
 import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
 
 interface TaskBoardProps {
-  tasks: Task[];
+  tasks: TaskSummary[];
   agents: Agent[];
   interactivePrompts: Map<string, InteractivePrompt>;
   onReload: () => void;
   onSubscribeTask?: (taskId: string) => () => void;
-  // `on` must come from the same WebSocket instance that `onSubscribeTask`
-  // binds to (both sourced from the shared hook in useAppData). Using a
-  // locally-instantiated useWebSocket() here would open a second socket
-  // whose subscriptions are never set — so cli_output events for the
-  // TaskDetailModal's Activity tab would silently miss until a page
-  // reload coincidentally realigns the two connections.
   onWsEvent: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
 }
 
@@ -32,7 +26,7 @@ interface TaskColumnProps {
   label: string;
   town: string;
   accentColor: string;
-  tasks: Task[];
+  tasks: TaskSummary[];
   assignedAgentById: Map<string, Agent>;
   idleAgents: Agent[];
   roleLabelByAgentId: Map<string, string>;
@@ -130,6 +124,8 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [detailTask, setDetailTask] = useState<Task | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [logTaskId, setLogTaskId] = useState<string | null>(null);
   const [detailLayoutMode, setDetailLayoutModeState] = useState<TaskDetailLayoutMode>(loadDetailLayoutMode);
 
@@ -155,17 +151,46 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
     }
   }, [searchParams, tasks, setSearchParams]);
 
-  // Drop the selection when the underlying task disappears (e.g. the user
-  // hit Del on the card while the detail modal was pinned open). Without
-  // this, `selectedTaskId` lingers with no matching task, TaskDetailModal
-  // renders null, but `pinnedPanelVisible` stays true — leaving the board
-  // padded by PINNED_PANEL_WIDTH_PX and the leftmost columns pushed
-  // off-screen with no visible panel to explain the gap.
+  // Drop the selection when the underlying task disappears
   useEffect(() => {
     if (selectedTaskId && !tasks.some((t) => t.id === selectedTaskId)) {
       setSelectedTaskId(null);
+      setDetailTask(null);
     }
   }, [selectedTaskId, tasks]);
+
+  // Fetch full task detail when selection changes
+  useEffect(() => {
+    if (!selectedTaskId) {
+      setDetailTask(null);
+      return;
+    }
+    let cancelled = false;
+    setDetailLoading(true);
+    fetchTask(selectedTaskId)
+      .then((task) => {
+        if (!cancelled) setDetailTask(task);
+      })
+      .catch(() => {
+        if (!cancelled) setDetailTask(null);
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedTaskId]);
+
+  // Refresh detail when the summary list updates (e.g. WS status change)
+  useEffect(() => {
+    if (!selectedTaskId || !detailTask) return;
+    const summary = tasks.find((t) => t.id === selectedTaskId);
+    if (!summary) return;
+    if (summary.updated_at !== detailTask.updated_at) {
+      fetchTask(selectedTaskId)
+        .then((task) => setDetailTask(task))
+        .catch(() => {});
+    }
+  }, [selectedTaskId, tasks, detailTask]);
 
   // Listen for sidebar button events
   useEffect(() => {
@@ -311,13 +336,30 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
 
       {/* Modals */}
       {selectedTaskId && (() => {
-        const selectedTask = tasks.find((t) => t.id === selectedTaskId);
-        if (!selectedTask) return null;
+        const summary = tasks.find((t) => t.id === selectedTaskId);
+        if (!summary) return null;
+        // Render the modal immediately with TaskSummary header fields
+        // (title / status / agent / dates) and let the heavy sections
+        // (Description / Implementation Plan / Result / Repos / PRs)
+        // render skeletons until `detailTask` arrives. Avoids the
+        // full-screen blackout that blocked list ↔ detail switching.
+        const taskForDisplay: Task = detailTask ?? {
+          ...summary,
+          description: null,
+          result: null,
+          refinement_plan: null,
+          planned_files: null,
+          interactive_prompt_data: null,
+          repository_urls: null,
+          pr_urls: null,
+          merged_pr_urls: null,
+        };
         return (
           <TaskDetailModal
-            task={selectedTask}
+            task={taskForDisplay}
+            isLoadingDetail={detailLoading && !detailTask}
             agents={agents}
-            interactivePrompt={interactivePrompts.get(selectedTask.id)}
+            interactivePrompt={interactivePrompts.get(taskForDisplay.id)}
             on={on}
             subscribeTask={onSubscribeTask}
             onClose={() => setSelectedTaskId(null)}

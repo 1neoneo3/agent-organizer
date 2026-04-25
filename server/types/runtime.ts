@@ -1,12 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
-import type { CacheService } from "../cache/cache-service.js";
 import type { TaskStatus } from "../domain/task-status.js";
 
 export interface RuntimeContext {
   db: DatabaseSync;
   ws: WsHub;
-  cache: CacheService;
 }
 
 export interface Agent {
@@ -60,6 +58,7 @@ export interface Task {
   settings_overrides: string | null;
   started_at: number | null;
   completed_at: number | null;
+  last_heartbeat_at?: number | null;
   auto_respawn_count: number;
   created_at: number;
   updated_at: number;

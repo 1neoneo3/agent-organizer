@@ -32,7 +32,7 @@ const UpdateSettingsSchema = z.record(z.string(), z.string());
 
 export function createSettingsRouter(ctx: RuntimeContext): Router {
   const router = Router();
-  const { db, cache } = ctx;
+  const { db } = ctx;
 
   function readAllSettings(): Record<string, string> {
     const rows = db.prepare("SELECT key, value FROM settings").all() as Array<{
@@ -46,16 +46,12 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
     return settings;
   }
 
-  router.get("/settings", async (_req, res) => {
-    const cached = await cache.get<Record<string, string>>("settings:all");
-    if (cached) return res.json(cached);
-
+  router.get("/settings", (_req, res) => {
     const settings = readAllSettings();
-    await cache.set("settings:all", settings, 300);
     res.json(settings);
   });
 
-  router.put("/settings", async (req, res) => {
+  router.put("/settings", (req, res) => {
     const parsed = UpdateSettingsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -84,7 +80,6 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
     }
 
     const settings = readAllSettings();
-    await cache.del("settings:all");
     res.json(settings);
   });
 

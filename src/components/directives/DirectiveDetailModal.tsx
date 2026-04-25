@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import type { Directive, Task, WSEventType } from "../../types/index.js";
+import type { Directive, TaskSummary, WSEventType } from "../../types/index.js";
 import { decomposeDirective as triggerDecompose, fetchDirectivePlan, fetchDecomposeLogs } from "../../api/endpoints.js";
 import type { DecomposeLogEntry } from "../../api/endpoints.js";
 
@@ -49,7 +49,7 @@ function parseDependsOn(raw: string | null): string[] {
   }
 }
 
-function sortByTaskNumber(tasks: Task[]): Task[] {
+function sortByTaskNumber(tasks: TaskSummary[]): TaskSummary[] {
   return [...tasks].sort((a, b) => {
     if (a.task_number && b.task_number) return a.task_number.localeCompare(b.task_number);
     if (a.task_number) return -1;
@@ -118,7 +118,7 @@ function DecomposeLogView({ directiveId, onWsEvent }: { directiveId: string; onW
 
 interface DirectiveDetailModalProps {
   directive: Directive;
-  tasks: Task[];
+  tasks: TaskSummary[];
   onClose: () => void;
   onReload: () => void;
   onWsEvent: WsOnFn;

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
 import { execFileSync } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
-import type { CacheService } from "../cache/cache-service.js";
+import type { Task } from "../types/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import {
@@ -50,12 +51,6 @@ function buildDescription(issue: GitHubIssue): string {
   return parts.join("\n");
 }
 
-function invalidateCaches(cache?: CacheService): void {
-  if (!cache) return;
-  void cache.invalidatePattern("tasks:*");
-  void cache.del("agents:all");
-}
-
 export function resolveGitHubSyncToken(
   envToken: string,
   readGhToken: () => string = () => execFileSync("gh", ["auth", "token"], {
@@ -80,14 +75,12 @@ export function syncGithubIssues(
   issues: GitHubIssue[],
   options?: {
     projectPath?: string;
-    cache?: CacheService;
     autoAssign?: boolean;
     autoRun?: boolean;
     spawnAgent?: typeof spawnAgent;
   },
 ): { created: number; updated: number; cancelled: number } {
   const projectPath = options?.projectPath ?? GITHUB_SYNC_PROJECT_PATH;
-  const cache = options?.cache;
   const autoAssign = options?.autoAssign ?? AUTO_ASSIGN_TASK_ON_CREATE;
   const autoRun = options?.autoRun ?? AUTO_RUN_TASK_ON_CREATE;
   const taskSpawner = options?.spawnAgent ?? spawnAgent;
@@ -111,8 +104,8 @@ export function syncGithubIssues(
       db.prepare(
         "UPDATE tasks SET title = ?, description = ?, project_path = ?, updated_at = ? WHERE id = ?"
       ).run(title, description, projectPath, now, existing.id);
-      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(existing.id);
-      ws.broadcast("task_update", task);
+      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(existing.id) as Task | undefined;
+      if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
       updated++;
       continue;
     }
@@ -126,12 +119,11 @@ export function syncGithubIssues(
       ) VALUES (?, ?, ?, NULL, ?, 'inbox', ?, 'medium', ?, NULL, NULL, 0, NULL, NULL, 'github', ?, NULL, NULL, ?, ?)`
     ).run(id, title, description, projectPath, priorityFromLabels(issue), nextTaskNumber(db), externalId, now, now);
 
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-    ws.broadcast("task_update", task);
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
+    if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
     autoDispatchTask(db, ws, id, {
       autoAssign,
       autoRun,
-      cache,
       spawnAgent: taskSpawner,
     });
     created++;
@@ -151,7 +143,6 @@ export function syncGithubIssues(
     cancelled++;
   }
 
-  invalidateCaches(cache);
   return { created, updated, cancelled };
 }
 
@@ -174,7 +165,6 @@ export async function fetchGitHubIssues(repo: string, token: string): Promise<Gi
 export function startGithubIssueSync(
   db: DatabaseSync,
   ws: WsHub,
-  cache?: CacheService,
   fetcher: (repo: string, token: string) => Promise<GitHubIssue[]> = fetchGitHubIssues,
 ): ReturnType<typeof setInterval> | null {
   const token = resolveGitHubSyncToken(GITHUB_SYNC_TOKEN);
@@ -193,7 +183,7 @@ export function startGithubIssueSync(
   const run = async () => {
     try {
       const issues = await fetcher(GITHUB_SYNC_REPO, token);
-      syncGithubIssues(db, ws, issues, { projectPath: GITHUB_SYNC_PROJECT_PATH, cache });
+      syncGithubIssues(db, ws, issues, { projectPath: GITHUB_SYNC_PROJECT_PATH });
     } catch (error) {
       console.error("[github-sync]", error);
     }

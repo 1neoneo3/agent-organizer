@@ -9,20 +9,6 @@ import type { DatabaseSync } from "node:sqlite";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "ao-update-")), "agent-organizer.db");
 
-function createCache() {
-  return {
-    async get() {
-      return null;
-    },
-    async set() {},
-    async del() {},
-    async invalidatePattern() {},
-    get isConnected() {
-      return false;
-    },
-  };
-}
-
 function createWs() {
   return {
     broadcast() {},
@@ -42,7 +28,7 @@ async function setupServer(): Promise<{
   app.use(express.json());
   app.use(
     createTasksRouter(
-      { db, ws: createWs() as never, cache: createCache() as never },
+      { db, ws: createWs() as never },
       { spawnAgent: async () => ({ pid: 0 }) as never },
     ),
   );

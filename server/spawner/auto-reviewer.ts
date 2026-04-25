@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
-import type { CacheService } from "../cache/cache-service.js";
 import type { ReviewerRole } from "./prompt-builder.js";
 import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
 import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
@@ -38,7 +37,6 @@ export async function triggerAutoReview(
   db: DatabaseSync,
   ws: WsHub,
   task: Task,
-  cache?: CacheService,
 ): Promise<void> {
   const existingTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
   if (!existingTask) {
@@ -144,18 +142,16 @@ export async function triggerAutoReview(
   }
 
   spawnAgent(db, ws, primary.agent, freshTask, {
-    cache,
     reviewerRole: primary.role,
   }).then(() => {
     for (const secondary of secondaries) {
-      spawnSecondaryReviewer(db, ws, secondary.agent, freshTask, secondary.role, cache);
+      spawnSecondaryReviewer(db, ws, secondary.agent, freshTask, secondary.role);
     }
   }).catch((err) => {
     if (secondaries.length > 0) {
       clearReviewerSession(freshTask.id);
     }
     const handled = handleSpawnFailure(db, ws, freshTask.id, err, {
-      cache,
       source: "Auto reviewer",
     });
     if (handled.handled) {

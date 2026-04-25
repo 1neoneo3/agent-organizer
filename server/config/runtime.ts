@@ -74,9 +74,6 @@ export const DEFAULT_CLI_MODELS: Record<string, string> = {
   gemini: "gemini-2.5-pro",
 };
 
-export const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
-export const REDIS_ENABLED = process.env.REDIS_ENABLED !== "false";
-export const CACHE_KEY_PREFIX = "ao:";
 export const GITHUB_SYNC_ENABLED = process.env.GITHUB_SYNC_ENABLED === "true";
 
 function resolveGithubSyncRepo(): string {

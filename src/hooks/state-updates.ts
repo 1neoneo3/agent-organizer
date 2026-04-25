@@ -1,7 +1,7 @@
-import type { Agent, Directive, Task } from "../types/index.js";
+import type { Agent, Directive, Task, TaskSummary } from "../types/index.js";
 
 type EntityWithId = { id: string };
-type ReviewStatus = Extract<Task["status"], "pr_review">;
+type ReviewStatus = Extract<TaskSummary["status"], "pr_review">;
 
 export interface ReviewTransition {
   taskId: string;
@@ -28,7 +28,7 @@ export function mergeEntityUpdate<T extends EntityWithId>(
   return { next, found };
 }
 
-export function mergeTaskUpdate(tasks: Task[], update: Partial<Task> & { id: string }) {
+export function mergeTaskUpdate(tasks: TaskSummary[], update: Partial<TaskSummary> & { id: string }) {
   return mergeEntityUpdate(tasks, update);
 }
 
@@ -44,7 +44,7 @@ function isReviewStatus(status: Task["status"]): status is ReviewStatus {
   return status === "pr_review";
 }
 
-export function collectReviewTransitions(previousTasks: Task[], nextTasks: Task[]): ReviewTransition[] {
+export function collectReviewTransitions(previousTasks: TaskSummary[], nextTasks: TaskSummary[]): ReviewTransition[] {
   const previousById = new Map(previousTasks.map((task) => [task.id, task]));
 
   return nextTasks.flatMap((task) => {

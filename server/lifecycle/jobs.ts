@@ -2,11 +2,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
-import type { CacheService } from "../cache/cache-service.js";
 import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
 import type { Agent, Task } from "../types/runtime.js";
+import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 const pendingOrphanRespawns = new Set<string>();
@@ -44,7 +44,6 @@ interface AutoStageRow {
 export function startOrphanRecovery(
   db: DatabaseSync,
   ws: WsHub,
-  cache?: CacheService,
   intervalMs = 60_000,
 ): ReturnType<typeof setInterval> {
   const startedAt = Date.now();
@@ -53,8 +52,8 @@ export function startOrphanRecovery(
     const active = getActiveProcesses();
     const pending = getPendingSpawns();
 
-    recoverInProgressOrphans(db, ws, cache, active, { pending });
-    recoverStuckAutoStages(db, ws, cache, active, startedAt, pending);
+    recoverInProgressOrphans(db, ws, active, { pending });
+    recoverStuckAutoStages(db, ws, active, startedAt, pending);
   }, intervalMs);
 }
 
@@ -67,7 +66,6 @@ export interface RecoverInProgressOrphansOptions {
 export function recoverInProgressOrphans(
   db: DatabaseSync,
   ws: WsHub,
-  cache: CacheService | undefined,
   active: Map<string, unknown> | Set<string>,
   options: RecoverInProgressOrphansOptions = {},
 ): void {
@@ -136,9 +134,8 @@ export function recoverInProgressOrphans(
         ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
       }
 
-      if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
-      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id);
-      ws.broadcast("task_update", freshTask ?? { id: task.id, status: "refinement", completed_at: now });
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+      ws.broadcast("task_update", freshTask ? buildTaskSummaryUpdate(freshTask) : { id: task.id, status: "refinement" as const, completed_at: now });
       continue;
     }
 
@@ -180,15 +177,12 @@ export function recoverInProgressOrphans(
           task.id,
           `Orphan recovery: auto-respawn attempt ${nextCount}/${maxAutoRespawn} with agent "${respawnDecision.agent.name}".`,
         );
-        if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
-
         const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
         // Fire-and-forget: spawnAgent is async (it awaits Explore Phase
         // before spawning the main CLI process). Failures are logged so
         // the next orphan-recovery tick retries.
-        spawnAgent(db, ws, respawnDecision.agent, freshTask, { cache }).catch((error) => {
+        spawnAgent(db, ws, respawnDecision.agent, freshTask).catch((error) => {
           const handled = handleSpawnFailure(db, ws, task.id, error, {
-            cache,
             source: "Orphan recovery auto-respawn",
           });
           if (handled.handled) {
@@ -234,7 +228,6 @@ export function recoverInProgressOrphans(
       db.prepare(
         "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
       ).run(task.id, parkReason);
-      if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
       continue;
     }
 
@@ -256,7 +249,6 @@ export function recoverInProgressOrphans(
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
-    if (cache) { cache.invalidatePattern("tasks:*"); cache.del("agents:all"); }
     ws.broadcast("task_update", { id: task.id, status: "inbox" });
   }
 }
@@ -268,7 +260,6 @@ export function __resetPendingOrphanRespawnsForTests(): void {
 export function recoverStuckAutoStages(
   db: DatabaseSync,
   ws: WsHub,
-  cache: CacheService | undefined,
   active: Map<string, unknown> | Set<string>,
   startedAt: number,
   pendingSpawns?: ReadonlySet<string>,
@@ -317,10 +308,6 @@ export function recoverStuckAutoStages(
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
 
-    if (cache) {
-      cache.invalidatePattern("tasks:*");
-      cache.del("agents:all");
-    }
     ws.broadcast("task_update", { id: task.id, status: "human_review" });
   }
 }

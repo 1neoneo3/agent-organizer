@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchAgent, fetchAgents, fetchTask, fetchTasks, fetchSettings, fetchCliStatus, fetchDirective, fetchDirectives, fetchInteractivePrompts } from "../api/endpoints.js";
 import { useWebSocket } from "./useWebSocket.js";
-import type { Agent, Task, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
+import type { Agent, TaskSummary, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
 import { mergeAgentUpdate, mergeDirectiveUpdate, mergeTaskUpdate } from "./state-updates.js";
 
 export function useAppData() {
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [directives, setDirectives] = useState<Directive[]>([]);
   const [settings, setSettings] = useState<Settings>({});
   const [cliStatus, setCliStatus] = useState<CliStatus>({});
@@ -61,14 +61,12 @@ export function useAppData() {
   useEffect(() => {
     const unsubs = [
       on("task_update", (payload) => {
-        const update = payload as Partial<Task> & { id: string };
+        const update = payload as Partial<TaskSummary> & { id: string };
         setTasks((prev) => {
           const result = mergeTaskUpdate(prev, update);
           if (!result.found) {
-            void fetchTask(update.id)
-              .then((task) => {
-                setTasks((current) => current.some((entry) => entry.id === task.id) ? current : [task, ...current]);
-              })
+            void fetchTasks()
+              .then((fresh) => setTasks(fresh))
               .catch(() => void reload());
           }
           return result.next;

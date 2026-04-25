@@ -1,7 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
-import type { CacheService } from "../cache/cache-service.js";
 
 /**
  * AO Phase 3: parallel implementer + tester orchestration.
@@ -102,11 +101,10 @@ export type SpawnAgentFn = (
   ws: WsHub,
   agent: Agent,
   task: Task,
-  options?: { cache?: CacheService; parallelTester?: boolean },
+  options?: { parallelTester?: boolean },
 ) => Promise<{ pid: number }>;
 
 export interface TriggerParallelTesterOptions {
-  cache?: CacheService;
   /** Override the spawner (for tests). Defaults to the real `spawnAgent`. */
   spawnAgent?: SpawnAgentFn;
 }
@@ -174,11 +172,9 @@ export async function triggerParallelTester(
   const { handleSpawnFailure } = await import("../spawner/spawn-failures.js");
 
   spawnAgent(db, ws, tester, task, {
-    cache: options.cache,
     parallelTester: true,
   }).catch((err) => {
     const handled = handleSpawnFailure(db, ws, task.id, err, {
-      cache: options.cache,
       source: "Parallel tester",
     });
     if (handled.handled) {

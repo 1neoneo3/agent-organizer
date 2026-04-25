@@ -15,35 +15,58 @@ export interface Agent {
   updated_at: number;
 }
 
-export interface Task {
+export type TaskStatus = "inbox" | "refinement" | "in_progress" | "test_generation" | "qa_testing" | "pr_review" | "human_review" | "done" | "cancelled";
+
+export interface TaskSummary {
   id: string;
   title: string;
-  description: string | null;
   assigned_agent_id: string | null;
   project_path: string | null;
-  status: "inbox" | "refinement" | "in_progress" | "test_generation" | "qa_testing" | "pr_review" | "human_review" | "done" | "cancelled";
+  status: TaskStatus;
   priority: number;
   task_size: "small" | "medium" | "large";
   task_number: string | null;
   depends_on: string | null;
-  result: string | null;
-  refinement_plan: string | null;
   refinement_completed_at?: number | null;
   refinement_revision_requested_at?: number | null;
   refinement_revision_completed_at?: number | null;
-  pr_url: string | null;
   review_count: number;
   directive_id: string | null;
+  pr_url: string | null;
   external_source: string | null;
   external_id: string | null;
+  review_branch: string | null;
+  review_commit_sha: string | null;
+  review_sync_status: string | null;
+  review_sync_error: string | null;
   repository_url: string | null;
-  repository_urls: string | null;
-  pr_urls: string | null;
+  settings_overrides: string | null;
   started_at: number | null;
   completed_at: number | null;
+  last_heartbeat_at: number | null;
   auto_respawn_count: number;
   created_at: number;
   updated_at: number;
+
+  // Server-derived summary fields. Populated by the GET /tasks handler
+  // and the WebSocket task_update broadcast (see
+  // server/domain/task-derived-fields.ts). Lets the kanban render
+  // parent/child relationships and "has plan" state without fetching
+  // the heavy description / result / refinement_plan columns.
+  parent_task_number: string | null;
+  child_task_numbers: string[] | null;
+  has_refinement_plan: boolean;
+}
+
+export interface Task extends TaskSummary {
+  description: string | null;
+  result: string | null;
+  refinement_plan: string | null;
+  planned_files: string | null;
+  interactive_prompt_data: string | null;
+  repository_urls: string | null;
+  pr_urls: string | null;
+  merged_pr_urls: string | null;
 }
 
 export interface TaskLog {

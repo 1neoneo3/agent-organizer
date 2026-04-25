@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Task } from "../types/runtime.js";
-import type { CacheService } from "../cache/cache-service.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
 import { prepareTaskWorkspace } from "../workflow/workspace-manager.js";
 
@@ -242,7 +241,6 @@ export function triggerAutoChecks(
   db: DatabaseSync,
   ws: WsHub,
   task: Task,
-  cache?: CacheService,
 ): void {
   // Guard against double-trigger races. If another pr_review cycle is
   // still running auto-checks for this task (for example because the
@@ -343,7 +341,7 @@ export function triggerAutoChecks(
 
   // Kick off the actual run and register the promise so the review
   // finalizer can await it.
-  const runPromise = runChecksAndRecord(db, ws, task, specs, cwd, cache);
+  const runPromise = runChecksAndRecord(db, ws, task, specs, cwd);
   activeCheckRuns.set(task.id, runPromise);
 }
 
@@ -358,7 +356,6 @@ async function runChecksAndRecord(
   task: Task,
   specs: CheckSpec[],
   cwd: string,
-  _cache?: CacheService,
 ): Promise<CheckResult[]> {
   try {
     const results = await runChecks(specs, cwd);

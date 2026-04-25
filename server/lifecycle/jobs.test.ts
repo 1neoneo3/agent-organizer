@@ -105,7 +105,7 @@ describe("recoverInProgressOrphans", () => {
     insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
     const ws = createFakeWs();
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+    recoverInProgressOrphans(db, ws as never, new Set());
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
     // Must NOT regress past in_progress.
@@ -136,7 +136,7 @@ describe("recoverInProgressOrphans", () => {
     insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
     const ws = createFakeWs();
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(["t1"]));
+    recoverInProgressOrphans(db, ws as never, new Set(["t1"]));
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
     assert.equal(row.status, "in_progress");
@@ -156,7 +156,7 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: 12345 });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     assert.equal(spawnCalls.length, 1, "spawnAgent should be called exactly once");
     assert.equal(spawnCalls[0].taskId, "t1");
@@ -192,7 +192,7 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: 1 });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     assert.equal(spawnCalls, 0, "must not spawn after budget exhausted");
 
@@ -222,9 +222,9 @@ describe("recoverInProgressOrphans", () => {
     const ws = createFakeWs();
     const fakeSpawn = (() => Promise.resolve({ pid: 1 })) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     const parkLogs = db
       .prepare(
@@ -246,7 +246,7 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: 1 });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     assert.equal(spawnCalls, 0);
     const row = db.prepare("SELECT auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
@@ -264,7 +264,7 @@ describe("recoverInProgressOrphans", () => {
       createHookFailureFromCommands(["pnpm install"]),
     )) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
     await Promise.resolve();
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
@@ -293,7 +293,7 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: 1 });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     assert.equal(spawnCalls, 0, "must not respawn a code_reviewer as implementer");
     const row = db.prepare("SELECT status, auto_respawn_count FROM tasks WHERE id = 't-rework'").get() as {
@@ -323,7 +323,7 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: 1 });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     assert.equal(spawnCalls, 0, "must not respawn a security_reviewer as implementer");
   });
@@ -345,7 +345,7 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: 1 });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     assert.equal(spawnCalls.length, 1, "must auto-respawn with a replacement implementer");
     assert.equal(spawnCalls[0].agentId, "impl-1");
@@ -365,7 +365,7 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: 1 });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
+    recoverInProgressOrphans(db, ws as never, new Set(), { spawnAgent: fakeSpawn, maxAutoRespawn: 3 });
 
     assert.equal(spawnCalls.length, 1, "should respawn lead_engineer as implementer");
     assert.equal(spawnCalls[0].agentId, "impl-1");
@@ -378,7 +378,7 @@ describe("recoverInProgressOrphans", () => {
     insertTask(db, { id: "t2", status: "refinement", assigned_agent_id: "agent-1" });
     const ws = createFakeWs();
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+    recoverInProgressOrphans(db, ws as never, new Set());
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't2'").get() as { status: string };
     assert.equal(row.status, "inbox");
@@ -401,7 +401,7 @@ describe("recoverInProgressOrphans", () => {
     }) as never;
 
     const pending = new Set(["t1"]);
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
       pending,
@@ -432,7 +432,7 @@ describe("recoverInProgressOrphans", () => {
 
     // Simulate 5 orphan-recovery ticks while task is in preflight
     for (let i = 0; i < 5; i++) {
-      recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+      recoverInProgressOrphans(db, ws as never, new Set(), {
         spawnAgent: fakeSpawn,
         maxAutoRespawn: 3,
         pending,
@@ -460,15 +460,15 @@ describe("recoverInProgressOrphans", () => {
       });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
     });
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
     });
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
     });
@@ -509,11 +509,11 @@ describe("recoverInProgressOrphans", () => {
       return Promise.resolve({ pid: spawnCalls });
     }) as never;
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
     });
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
     });
@@ -527,7 +527,7 @@ describe("recoverInProgressOrphans", () => {
     finishFirstSpawn();
     await new Promise((resolve) => setImmediate(resolve));
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
     });
@@ -560,7 +560,7 @@ describe("recoverInProgressOrphans", () => {
 
     // t1 is in pendingSpawns (preflight), t2 is a genuine orphan
     const pending = new Set(["t1"]);
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
       pending,
@@ -575,7 +575,7 @@ describe("recoverInProgressOrphans", () => {
     const ws = createFakeWs();
 
     const pending = new Set(["t1"]);
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { pending });
+    recoverInProgressOrphans(db, ws as never, new Set(), { pending });
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 't1'").get() as { status: string };
     assert.equal(row.status, "refinement", "must not bounce to inbox during preflight");
@@ -596,7 +596,7 @@ describe("recoverInProgressOrphans", () => {
     const pending = new Set(["t1"]);
 
     // Tick 1: task in preflight → skipped
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
       pending,
@@ -607,7 +607,7 @@ describe("recoverInProgressOrphans", () => {
     pending.delete("t1");
 
     // Tick 2: task is now a genuine orphan → respawned
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
       pending,
@@ -626,7 +626,7 @@ describe("recoverInProgressOrphans", () => {
     const ws = createFakeWs();
 
     const pending = new Set(["t1"]);
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), {
+    recoverInProgressOrphans(db, ws as never, new Set(), {
       spawnAgent: (() => Promise.resolve({ pid: 1 })) as never,
       maxAutoRespawn: 3,
       pending,
@@ -642,7 +642,7 @@ describe("recoverInProgressOrphans", () => {
     const ws = createFakeWs();
 
     const pending = new Set(["t1"]);
-    recoverInProgressOrphans(db, ws as never, undefined, new Set(), { pending });
+    recoverInProgressOrphans(db, ws as never, new Set(), { pending });
 
     const row = db.prepare("SELECT status, completed_at FROM tasks WHERE id = 't1'").get() as {
       status: string;
@@ -675,7 +675,7 @@ describe("recoverInProgressOrphans", () => {
 
     const active = new Set(["t-active"]);
     const pending = new Set(["t-pending"]);
-    recoverInProgressOrphans(db, ws as never, undefined, active, {
+    recoverInProgressOrphans(db, ws as never, active, {
       spawnAgent: fakeSpawn,
       maxAutoRespawn: 3,
       pending,
@@ -687,17 +687,22 @@ describe("recoverInProgressOrphans", () => {
     assert.equal(spawnedTasks.length, 1, "exactly one task respawned");
   });
 
-  it("broadcasts full task row for refinement orphan with plan", () => {
+  it("broadcasts task summary update with has_refinement_plan flag for refinement orphan with plan", () => {
     insertTask(db, { id: "t3", status: "refinement", assigned_agent_id: "agent-1" });
     db.prepare("UPDATE tasks SET refinement_plan = 'the plan' WHERE id = 't3'").run();
     const ws = createFakeWs();
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+    recoverInProgressOrphans(db, ws as never, new Set());
 
     const taskUpdate = ws.events.find((e) => e.type === "task_update");
     assert.ok(taskUpdate, "expected task_update broadcast");
     const payload = taskUpdate!.payload as Record<string, unknown>;
-    assert.equal(payload.refinement_plan, "the plan", "broadcast must include refinement_plan");
+    // After cache 撤去 + /tasks summary 化 (#82130), WS broadcasts no
+    // longer ship full Task rows. Heavy fields like `refinement_plan`
+    // are excluded; the `has_refinement_plan` derived flag carries the
+    // "plan exists" signal needed by the kanban Plan banner.
+    assert.equal(payload.refinement_plan, undefined, "broadcast must NOT include refinement_plan body");
+    assert.equal(payload.has_refinement_plan, true, "broadcast must include has_refinement_plan: true");
     assert.ok(payload.completed_at, "broadcast must include completed_at");
     assert.equal(payload.status, "refinement");
   });
@@ -710,7 +715,7 @@ describe("recoverInProgressOrphans", () => {
     ).run(requestedAt);
     const ws = createFakeWs();
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+    recoverInProgressOrphans(db, ws as never, new Set());
 
     const row = db.prepare(
       "SELECT refinement_revision_completed_at FROM tasks WHERE id = 't4'",
@@ -730,7 +735,7 @@ describe("recoverInProgressOrphans", () => {
     ).run();
     const ws = createFakeWs();
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+    recoverInProgressOrphans(db, ws as never, new Set());
 
     const row = db.prepare(
       "SELECT refinement_revision_completed_at FROM tasks WHERE id = 't5'",
@@ -746,7 +751,7 @@ describe("recoverInProgressOrphans", () => {
     ).run(alreadyCompleted);
     const ws = createFakeWs();
 
-    recoverInProgressOrphans(db, ws as never, undefined, new Set());
+    recoverInProgressOrphans(db, ws as never, new Set());
 
     const row = db.prepare(
       "SELECT completed_at FROM tasks WHERE id = 't6'",
@@ -781,7 +786,7 @@ describe("recoverStuckAutoStages", () => {
     });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START);
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'stuck'").get() as { status: string };
     assert.equal(row.status, "human_review");
@@ -798,7 +803,7 @@ describe("recoverStuckAutoStages", () => {
     }
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START);
 
     const rows = db.prepare("SELECT id, status FROM tasks WHERE id IN ('qa','tg')").all() as Array<{
       id: string;
@@ -817,7 +822,7 @@ describe("recoverStuckAutoStages", () => {
     });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START);
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'fresh'").get() as { status: string };
     assert.equal(row.status, "pr_review");
@@ -834,7 +839,7 @@ describe("recoverStuckAutoStages", () => {
     });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START);
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'legacy'").get() as { status: string };
     assert.equal(row.status, "human_review");
@@ -850,7 +855,7 @@ describe("recoverStuckAutoStages", () => {
     const ws = createFakeWs();
 
     // Server just started (now) — within the 2-minute grace window
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), Date.now());
+    recoverStuckAutoStages(db, ws as never, new Set(), Date.now());
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'stuck'").get() as { status: string };
     assert.equal(row.status, "pr_review", "should not promote during grace window");
@@ -867,7 +872,7 @@ describe("recoverStuckAutoStages", () => {
     });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(["alive"]), PAST_START);
+    recoverStuckAutoStages(db, ws as never, new Set(["alive"]), PAST_START);
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'alive'").get() as { status: string };
     assert.equal(row.status, "pr_review");
@@ -880,7 +885,7 @@ describe("recoverStuckAutoStages", () => {
     insertTask(db, { id: "human-old", status: "human_review", updated_at: elevenMinutesAgo });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START);
 
     const rows = db
       .prepare("SELECT id, status FROM tasks WHERE id IN ('inbox-old','done-old','human-old')")
@@ -900,7 +905,7 @@ describe("recoverStuckAutoStages", () => {
     });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START);
 
     const log = db
       .prepare("SELECT message FROM task_logs WHERE task_id = 'stuck' AND kind = 'system' ORDER BY id DESC LIMIT 1")
@@ -919,7 +924,7 @@ describe("recoverStuckAutoStages", () => {
     });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, new Set(["preflight"]));
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START, new Set(["preflight"]));
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'preflight'").get() as { status: string };
     assert.equal(row.status, "pr_review", "must not promote a task in pendingSpawns");
@@ -947,7 +952,7 @@ describe("recoverStuckAutoStages", () => {
     });
     const ws = createFakeWs();
 
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, new Set(["pending-task"]));
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START, new Set(["pending-task"]));
 
     const pendingRow = db.prepare("SELECT status FROM tasks WHERE id = 'pending-task'").get() as { status: string };
     assert.equal(pendingRow.status, "pr_review", "pending task stays in pr_review");
@@ -968,7 +973,7 @@ describe("recoverStuckAutoStages", () => {
 
     const pending = new Set(["preflight"]);
     for (let i = 0; i < 5; i++) {
-      recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, pending);
+      recoverStuckAutoStages(db, ws as never, new Set(), PAST_START, pending);
     }
 
     const row = db.prepare("SELECT status FROM tasks WHERE id = 'preflight'").get() as { status: string };
@@ -991,7 +996,7 @@ describe("recoverStuckAutoStages", () => {
     const pending = new Set(["lifecycle"]);
 
     // Tick 1: task in preflight → skipped
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, pending);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START, pending);
     const before = db.prepare("SELECT status FROM tasks WHERE id = 'lifecycle'").get() as { status: string };
     assert.equal(before.status, "pr_review", "skipped during preflight");
 
@@ -999,7 +1004,7 @@ describe("recoverStuckAutoStages", () => {
     pending.delete("lifecycle");
 
     // Tick 2: task is now genuinely stuck → promoted
-    recoverStuckAutoStages(db, ws as never, undefined, new Set(), PAST_START, pending);
+    recoverStuckAutoStages(db, ws as never, new Set(), PAST_START, pending);
     const after = db.prepare("SELECT status FROM tasks WHERE id = 'lifecycle'").get() as { status: string };
     assert.equal(after.status, "human_review", "promoted after preflight completed");
   });

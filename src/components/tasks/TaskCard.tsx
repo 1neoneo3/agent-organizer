@@ -2,7 +2,7 @@ import { memo, useState, useRef, useEffect } from "react";
 import { PixelAvatar } from "../../components/agents/PixelAvatar.js";
 import { sendTaskFeedback, sendInteractiveResponse, approveTask, rejectTask } from "../../api/endpoints.js";
 import { useSfx } from "../../hooks/useSfx.js";
-import type { Task, Agent, InteractivePrompt } from "../../types/index.js";
+import type { TaskSummary, Agent, InteractivePrompt } from "../../types/index.js";
 import { formatRelativeTaskTime, formatTaskTimestamp } from "./task-relative-time.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
@@ -40,7 +40,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 interface TaskCardProps {
-  task: Task;
+  task: TaskSummary;
   assignedAgent?: Agent;
   idleAgents: Agent[];
   roleLabelByAgentId: Map<string, string>;
@@ -168,21 +168,20 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
-          {/* Parent/child relationship + dependency display */}
+          {/* Parent/child relationship + dependency display.
+              parent_task_number / child_task_numbers are server-derived
+              fields populated from description/result heads — the
+              regex extraction lives in server/domain/task-derived-fields.ts
+              so the kanban does not need the full description/result
+              columns shipped to the client. */}
           {(() => {
             const lines: Array<{ label: string; color: string; values: string[] }> = [];
-            // Child → show parent
-            const parentMatch = task.description?.match(/^Step \d+ of (#\d+)/);
-            if (parentMatch) {
-              lines.push({ label: "Parent", color: "var(--status-refinement)", values: [parentMatch[1]] });
+            if (task.parent_task_number) {
+              lines.push({ label: "Parent", color: "var(--status-refinement)", values: [task.parent_task_number] });
             }
-            // Parent → show children
-            const childMatch = task.result?.match(/^Split into (#[\d, #]+)/);
-            if (childMatch) {
-              const children = childMatch[1].split(", ").map(s => s.trim());
-              lines.push({ label: "Children", color: "var(--status-refinement)", values: children });
+            if (task.child_task_numbers && task.child_task_numbers.length > 0) {
+              lines.push({ label: "Children", color: "var(--status-refinement)", values: task.child_task_numbers });
             }
-            // Blocked by
             if (task.depends_on) {
               try {
                 const deps = JSON.parse(task.depends_on) as string[];

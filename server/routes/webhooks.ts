@@ -1,5 +1,6 @@
 import express, { Router } from "express";
-import type { RuntimeContext } from "../types/runtime.js";
+import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
+import type { RuntimeContext, Task } from "../types/runtime.js";
 import { GITHUB_WEBHOOK_SECRET } from "../config/runtime.js";
 import { dispatchAutoStartableTasks } from "../dispatch/auto-dispatcher.js";
 import {
@@ -50,14 +51,14 @@ export function createWebhooksRouter(ctx: RuntimeContext): Router {
             .run(taskId, message);
         },
         broadcastTaskUpdate: (taskId) => {
-          const task = ctx.db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId);
-          if (task) ctx.ws.broadcast("task_update", task);
+          const task = ctx.db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
+          if (task) ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task));
         },
         // Fire the auto-dispatcher immediately so downstream tasks that
         // were waiting on this one start without waiting for the next
         // 60s polling tick.
         onCompletion: () => {
-          dispatchAutoStartableTasks(ctx.db, ctx.ws, { cache: ctx.cache });
+          dispatchAutoStartableTasks(ctx.db, ctx.ws);
         },
       });
 

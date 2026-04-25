@@ -1,10 +1,10 @@
-import type { Task } from "../../types/index.js";
+import type { TaskSummary } from "../../types/index.js";
 
 export type RefinementRevisionState = "not_requested" | "pending" | "completed";
 
 export function getRefinementRevisionState(
   task: Pick<
-    Task,
+    TaskSummary,
     "refinement_revision_requested_at" | "refinement_revision_completed_at"
   >,
 ): RefinementRevisionState {

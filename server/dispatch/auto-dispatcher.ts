@@ -1,6 +1,5 @@
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { CacheService } from "../cache/cache-service.js";
 import { AUTO_DISPATCH_INTERVAL_MS } from "../config/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
@@ -24,7 +23,6 @@ export interface AutoDispatchSummary {
 }
 
 interface DispatchOptions {
-  cache?: CacheService;
   startTask?: (task: Task, agent: Agent) => void;
 }
 
@@ -40,12 +38,6 @@ const ROLE_HINTS: Record<string, string[]> = {
   planner: ["plan", "planning", "roadmap", "breakdown", "spec"],
   lead_engineer: ["fix", "bug", "implement", "feature", "refactor", "api", "backend", "frontend", "typescript", "react", "node"],
 };
-
-function invalidateCaches(cache?: CacheService): void {
-  if (!cache) return;
-  void cache.invalidatePattern("tasks:*");
-  void cache.del("agents:all");
-}
 
 function getSetting(db: DatabaseSync, key: string): string | undefined {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
@@ -214,7 +206,7 @@ function isForeignKeyViolation(error: unknown): boolean {
   return code === SQLITE_CONSTRAINT_FOREIGNKEY;
 }
 
-function writeDispatchLog(db: DatabaseSync, task: Task, message: string, cache?: CacheService): void {
+function writeDispatchLog(db: DatabaseSync, task: Task, message: string): void {
   const fullMessage = `${AUTO_DISPATCH_LOG_PREFIX} ${message}`;
 
   try {
@@ -230,7 +222,6 @@ function writeDispatchLog(db: DatabaseSync, task: Task, message: string, cache?:
     db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)")
       .run(task.id, fullMessage);
     db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, task.id);
-    invalidateCaches(cache);
   } catch (error) {
     // The task may have been deleted (UI delete, github-sync close,
     // dependency cascade, manual SQL cleanup) between the inbox
@@ -261,12 +252,10 @@ function assignTaskToAgent(db: DatabaseSync, task: Task, agent: Agent): Task {
 function createDefaultTaskStarter(
   db: DatabaseSync,
   ws: WsHub,
-  cache?: CacheService,
 ): (task: Task, agent: Agent) => void {
   return (task, agent) => {
-    spawnAgent(db, ws, agent, task, { cache }).catch((err) => {
+    spawnAgent(db, ws, agent, task).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
-        cache,
         source: "Auto dispatcher",
       });
       if (handled.handled) {
@@ -305,7 +294,7 @@ export function dispatchAutoStartableTasks(
     return summary;
   }
 
-  const startTask = options?.startTask ?? createDefaultTaskStarter(db, ws, options?.cache);
+  const startTask = options?.startTask ?? createDefaultTaskStarter(db, ws);
   const idleWorkers = getIdleWorkers(db);
   const availableAgents = new Map(idleWorkers.map((agent) => [agent.id, agent]));
   const inboxTasks = getInboxTasks(db);
@@ -320,14 +309,14 @@ export function dispatchAutoStartableTasks(
     const blockers = collectAllBlockers(db, task);
     if (isBlocked(blockers)) {
       summary.skipped += 1;
-      writeDispatchLog(db, task, `blocked (${formatAllBlockers(blockers)})`, options?.cache);
+      writeDispatchLog(db, task, `blocked (${formatAllBlockers(blockers)})`);
       continue;
     }
 
     const skipReason = getEligibilitySkipReason(task, mode);
     if (skipReason) {
       summary.skipped += 1;
-      writeDispatchLog(db, task, skipReason, options?.cache);
+      writeDispatchLog(db, task, skipReason);
       continue;
     }
 
@@ -335,12 +324,12 @@ export function dispatchAutoStartableTasks(
       const assignedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
       if (!assignedAgent) {
         summary.skipped += 1;
-        writeDispatchLog(db, task, `skipped: assigned agent "${task.assigned_agent_id}" was not found`, options?.cache);
+        writeDispatchLog(db, task, `skipped: assigned agent "${task.assigned_agent_id}" was not found`);
         continue;
       }
       if (assignedAgent.status !== "idle") {
         summary.skipped += 1;
-        writeDispatchLog(db, task, `skipped: assigned agent is not idle (${assignedAgent.name})`, options?.cache);
+        writeDispatchLog(db, task, `skipped: assigned agent is not idle (${assignedAgent.name})`);
         continue;
       }
 
@@ -349,7 +338,6 @@ export function dispatchAutoStartableTasks(
           db,
           task,
           `starting with assigned agent "${assignedAgent.name}"${assignedAgent.role ? ` [${assignedAgent.role}]` : ""}`,
-          options?.cache,
         );
         startTask(task, assignedAgent);
         availableAgents.delete(assignedAgent.id);
@@ -357,7 +345,7 @@ export function dispatchAutoStartableTasks(
       } catch (error) {
         summary.skipped += 1;
         const message = error instanceof Error ? error.message : String(error);
-        writeDispatchLog(db, task, `failed to start with assigned agent "${assignedAgent.name}": ${message}`, options?.cache);
+        writeDispatchLog(db, task, `failed to start with assigned agent "${assignedAgent.name}": ${message}`);
       }
       continue;
     }
@@ -372,19 +360,17 @@ export function dispatchAutoStartableTasks(
     const selectedAgent = refinementOverride ?? chooseBestAgent(task, [...availableAgents.values()]);
     if (!selectedAgent) {
       summary.skipped += 1;
-      writeDispatchLog(db, task, "skipped: no idle worker agent is available", options?.cache);
+      writeDispatchLog(db, task, "skipped: no idle worker agent is available");
       continue;
     }
 
     const assignedTask = assignTaskToAgent(db, task, selectedAgent);
-    invalidateCaches(options?.cache);
 
     try {
       writeDispatchLog(
         db,
         assignedTask,
         `assigned "${selectedAgent.name}"${selectedAgent.role ? ` [${selectedAgent.role}]` : ""} and starting task`,
-        options?.cache,
       );
       startTask(assignedTask, selectedAgent);
       availableAgents.delete(selectedAgent.id);
@@ -393,7 +379,7 @@ export function dispatchAutoStartableTasks(
     } catch (error) {
       summary.skipped += 1;
       const message = error instanceof Error ? error.message : String(error);
-      writeDispatchLog(db, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`, options?.cache);
+      writeDispatchLog(db, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`);
     }
     } catch (iterationError) {
       // Defensive outer guard: any unexpected error from the iteration
@@ -408,7 +394,7 @@ export function dispatchAutoStartableTasks(
       const message = iterationError instanceof Error ? iterationError.message : String(iterationError);
       console.warn(`[auto-dispatcher] iteration failed for task ${task.id}: ${message}`);
       try {
-        writeDispatchLog(db, task, `iteration aborted: ${message}`, options?.cache);
+        writeDispatchLog(db, task, `iteration aborted: ${message}`);
       } catch {
         // Already best-effort; nothing else to do.
       }
@@ -421,14 +407,13 @@ export function dispatchAutoStartableTasks(
 export function startAutoDispatchScheduler(
   db: DatabaseSync,
   ws: WsHub,
-  cache?: CacheService,
 ): ReturnType<typeof setInterval> | null {
   if (AUTO_DISPATCH_INTERVAL_MS <= 0) {
     return null;
   }
 
   const run = () => {
-    dispatchAutoStartableTasks(db, ws, { cache });
+    dispatchAutoStartableTasks(db, ws);
   };
 
   run();
