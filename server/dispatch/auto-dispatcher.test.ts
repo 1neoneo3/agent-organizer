@@ -246,4 +246,66 @@ describe("dispatchAutoStartableTasks", () => {
     assert.equal(logs.length, 1);
     assert.match(logs[0].message, /github-synced tasks only/i);
   });
+
+  it("does not throw when startTask deletes the task before writeDispatchLog runs (FK 787 race)", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertAgent(db, { name: "Available", role: "lead_engineer" });
+    const task = insertTask(db, { title: "Vanishes mid-tick" });
+
+    // Reproduces the race that crashed the server during zombie
+    // cleanup: startTask transitions the task out of inbox AND deletes
+    // the row, then the dispatcher's failure branch tries to log
+    // against the now-missing task and hits FK 787 on
+    // INSERT INTO task_logs.
+    assert.doesNotThrow(() => {
+      const result = dispatchAutoStartableTasks(db, ws as never, {
+        startTask(taskToStart) {
+          db.prepare("DELETE FROM tasks WHERE id = ?").run(taskToStart.id);
+          throw new Error("synthetic spawn failure after deletion");
+        },
+      });
+      assert.equal(result.started, 0);
+      assert.equal(result.skipped, 1);
+    });
+  });
+
+  it("does not crash the dispatcher when an iteration body throws unexpectedly", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertAgent(db, { name: "Available", role: "lead_engineer" });
+    const task = insertTask(db, { title: "Will explode" });
+
+    // startTask synchronously throws — without the outer iteration
+    // guard this would propagate up to the setInterval timer and
+    // surface as `uncaughtException`. With the guard the next tick
+    // simply records a `skipped`.
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask() {
+        // The startTask callsite already has a try/catch in the
+        // assigned-agent branch, but we want to assert that a
+        // non-recoverable throw on the unassigned branch is also
+        // caught by the outer guard. Force the unassigned path by
+        // throwing from within the chosen-agent branch.
+        throw new Error("synthetic boom");
+      },
+    });
+
+    // The iteration was caught: skipped count incremented, dispatch
+    // did not throw, and a log entry survives on the still-existing
+    // task row.
+    assert.equal(result.skipped, 1);
+    assert.equal(result.started, 0);
+
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC",
+    ).all(task.id) as Array<{ message: string }>;
+    assert.ok(logs.length >= 1, "at least one dispatch log should survive");
+    assert.ok(
+      logs.some((l) => l.message.includes("synthetic boom") || l.message.includes("failed to start")),
+      "the synthetic failure must appear in task_logs",
+    );
+  });
 });
