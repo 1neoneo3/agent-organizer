@@ -500,6 +500,119 @@ What do you want next?
     const result = detectTextInteractivePrompt(text, { strictMode: true });
     assert.notStrictEqual(result, null, "explicit English options prompt must fire in strict mode");
   });
+
+  // Self-reference guard: agents quoting prompt-like strings in their own
+  // QA reports / documentation / test output must not trigger detection.
+  // The mask covers code blocks, inline code, 「...」「『...』」, [PASS]/[FAIL]
+  // lines, and markdown task-list lines.
+
+  it("self-ref: ignores 「」-quoted prompt in QA report narrative", () => {
+    const text = `全ての検証が完了しました。テスト結果は以下のとおりです。
+[PASS] 「対象を再指定してください」 → 検知
+[PASS] 「確認をお願いします」 → 検知
+レポート完了です。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(
+      result,
+      null,
+      "QA report quoting positive test cases must not self-trigger",
+    );
+  });
+
+  it("self-ref: ignores 『』-quoted prompt", () => {
+    const text = `テストパターン 『ファイルを指定してください』 を確認しました。問題なく動作しています。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null, "『...』 quotation must be masked");
+  });
+
+  it("self-ref: ignores prompt inside fenced code block", () => {
+    const text = `Test cases:
+\`\`\`
+Input: 確認が必要です。続行してよろしいですか？
+Expected: detected
+\`\`\`
+All tests pass.`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null, "fenced code block must be masked");
+  });
+
+  it("self-ref: ignores prompt inside inline code span", () => {
+    const text = `regex を \`/(?:確認)(?:してください)/\` から \`/(?:確認)(?:をお願い)/\` に変更しました。テスト 1041 件 pass。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null, "inline code span must be masked");
+  });
+
+  it("self-ref: ignores [PASS]/[FAIL] structured report lines", () => {
+    const text = `## QA Report
+
+[PASS] regex #1: 確認をお願いします → 検知
+[PASS] regex #2: 確認が必要です → 検知
+[FAIL] none
+[WARN] none
+
+レポート完了。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(
+      result,
+      null,
+      "structured [PASS]/[FAIL]/[WARN] report lines must be masked",
+    );
+  });
+
+  it("self-ref: ignores acceptance-criterion task-list lines", () => {
+    const text = `Implementation summary:
+
+- [x] 対象を再指定してください という入力で検知が発火
+- [x] 追加情報を提供してください でも検知
+- [ ] 残課題: 翻訳
+
+OK to merge.`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(
+      result,
+      null,
+      "markdown task-list lines must be masked",
+    );
+  });
+
+  it("self-ref: still detects real prompts when narration also contains quotes", () => {
+    // Mixed: a quoted sample (should be masked) + a real trailing
+    // prompt (must still fire). Matters when an agent reports test
+    // results AND then asks the user a real question.
+    const text = `テストでは 「対象を再指定してください」 が検知されました。
+さて、次にどう進めるか確認してください。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.notStrictEqual(
+      result,
+      null,
+      "real trailing prompt outside the quote must still fire",
+    );
+  });
+
+  it("self-ref: still detects unquoted real prompt", () => {
+    // Sanity check: unquoted prompt remains detected.
+    const text = `タスクの概要を確認しました。続けるためには対象を再指定してください。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.notStrictEqual(
+      result,
+      null,
+      "unquoted real prompt must still be detected",
+    );
+  });
+
+  it("self-ref: detectedText preserves original (pre-mask) context", () => {
+    // The masked version is internal to matching only — the UI must
+    // see the surrounding context so the user can judge what
+    // triggered the prompt.
+    const text = `タスクの概要を確認しました。続けるためには対象を再指定してください。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(
+      result!.detectedText,
+      text,
+      "detectedText must be the original (post-strip, pre-mask) text",
+    );
+  });
 });
 
 describe("parseInteractivePrompt", () => {
