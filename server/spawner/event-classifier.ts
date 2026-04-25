@@ -88,10 +88,10 @@ function extractFromToolUse(block: Record<string, unknown>): InteractivePromptDa
 // Patterns that strongly indicate the agent is requesting user input.
 // These are checked against classified "assistant" text output.
 const TEXT_PROMPT_PATTERNS_JA: RegExp[] = [
-  /(?:指定|入力|提供|教えて|貼って|選択して|返答して|回答して)(?:ください|して(?:ほしい|もらえ))/,
-  /(?:再指定|追加情報|追加入力|確認が必要)/,
+  /(?:指定|入力|提供|教えて|貼って|選択して|返答して|回答して|確認)(?:ください|して(?:ください|ほしい|もらえ)|をお願い|か[？?])/,
+  /確認が必要(?:です|である|でしょうか|か[？?])/,
   /(?:どちらにしますか|どうしますか|どれを選びますか)/,
-  /(?:コマンドを|パスを|ファイルを|ディレクトリを)(?:教えて|指定して|入力して|貼って)/,
+  /(?:コマンドを|パスを|ファイルを|ディレクトリを)(?:教えて|指定して|入力して|貼って)(?:ください|ほしい|もらえ)/,
   /(?:完了条件|対象|作業ディレクトリ)を[^。]{0,30}(?:指定|教えて|入力)(?:して|ください)/,
 ];
 

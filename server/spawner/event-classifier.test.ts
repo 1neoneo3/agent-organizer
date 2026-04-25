@@ -34,8 +34,56 @@ describe("detectTextInteractivePrompt", () => {
     assert.strictEqual(result!.promptType, "text_input_request");
   });
 
-  it("detects Japanese input request: 追加情報", () => {
-    const result = detectTextInteractivePrompt("タスクを進めるには追加情報が必要です");
+  it("detects Japanese input request: 確認をお願い", () => {
+    const result = detectTextInteractivePrompt("確認をお願いします。この変更で問題ないか教えてください。");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: 確認が必要です", () => {
+    const result = detectTextInteractivePrompt("確認が必要です。このまま続行してよろしいですか？");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: 確認が必要でしょうか", () => {
+    const result = detectTextInteractivePrompt("この設定で確認が必要でしょうか？");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: どうしますか", () => {
+    const result = detectTextInteractivePrompt("どうしますか？次のステップを選んでください。");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: ファイルを指定して", () => {
+    const result = detectTextInteractivePrompt("ファイルを指定してください。複数指定可能です。");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: 対象を再指定して (via pattern #4)", () => {
+    const result = detectTextInteractivePrompt("対象を再指定してください。パスが見つかりませんでした。");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: 追加情報を提供してください (via regex #1 してください)", () => {
+    const result = detectTextInteractivePrompt("追加情報を提供してください。データベースのスキーマが必要です。");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: 値を入力してください (via regex #1 してください)", () => {
+    const result = detectTextInteractivePrompt("値を入力してください。数値で指定可能です。");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects Japanese input request: 確認してください (via regex #1 してください)", () => {
+    const result = detectTextInteractivePrompt("設定内容を確認してください。問題なければ続行します。");
     assert.notStrictEqual(result, null);
     assert.strictEqual(result!.promptType, "text_input_request");
   });
@@ -116,6 +164,46 @@ describe("detectTextInteractivePrompt", () => {
     const text = "レビュー対象の実装差分と作業ディレクトリをまず確定します。指定どおり `agent-organizer` の実リポジトリ root を特定し、その上で変更差分・タスクログ・ビルドゲートを順に確認します。";
     const result = detectTextInteractivePrompt(text);
     assert.strictEqual(result, null, "agent narration with adverbial 指定どおり must not trigger detection");
+  });
+
+  it("does not flag agent narration: 追加で確認が必要な箇所を直接読みます", () => {
+    const result = detectTextInteractivePrompt("調査結果を受け取りました。追加で確認が必要な箇所を直接読みます。");
+    assert.strictEqual(result, null, "agent narration about reading more should not trigger");
+  });
+
+  it("does not flag agent narration: 確認が必要かもしれません", () => {
+    const result = detectTextInteractivePrompt("ここは確認が必要かもしれません。引き続き調査します。");
+    assert.strictEqual(result, null, "agent hedging about confirmation should not trigger");
+  });
+
+  it("does not flag agent narration: 再指定する処理を実装", () => {
+    const result = detectTextInteractivePrompt("再指定する処理を実装します。コードを書きます。");
+    assert.strictEqual(result, null, "agent narration about implementing re-specification should not trigger");
+  });
+
+  it("does not flag agent narration: 追加情報を取得します", () => {
+    const result = detectTextInteractivePrompt("追加情報を取得してDBに保存する処理を確認中です。");
+    assert.strictEqual(result, null, "agent narration about fetching additional info should not trigger");
+  });
+
+  it("does not flag agent narration: 追加入力フィールドを実装", () => {
+    const result = detectTextInteractivePrompt("追加入力フィールドのバリデーションを実装します。");
+    assert.strictEqual(result, null, "agent narration about implementing input fields should not trigger");
+  });
+
+  it("does not flag agent narration: タスクを進めるには追加情報が必要です", () => {
+    const result = detectTextInteractivePrompt("タスクを進めるには追加情報が必要です");
+    assert.strictEqual(result, null, "naked 追加情報 without actionable predicate should not trigger");
+  });
+
+  it("does not flag agent narration: ファイルを指定して読み込み処理を行います", () => {
+    const result = detectTextInteractivePrompt("ファイルを指定して読み込み処理を行います。結果を確認します。");
+    assert.strictEqual(result, null, "agent narration about specifying a file for processing should not trigger");
+  });
+
+  it("does not flag agent narration: パスを入力して実行します", () => {
+    const result = detectTextInteractivePrompt("パスを入力して実行コマンドを構築します。自動で処理します。");
+    assert.strictEqual(result, null, "agent narration about entering a path for execution should not trigger");
   });
 
   it("does not detect review summaries that quote user-input examples", () => {
