@@ -1,13 +1,13 @@
 import type { RefinementRevisionState } from "./task-refinement-state.js";
 
 export interface RevisionBadge {
-  label: string;
+  label: "Revising" | "Revised";
   color: string;
   background: string;
 }
 
 export interface PlanBanner {
-  label: string;
+  label: "Revision Requested" | "Revised Plan Ready" | "Implementation Plan Ready";
   color: string;
 }
 

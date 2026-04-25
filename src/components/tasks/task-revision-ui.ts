@@ -1,16 +1,14 @@
 import type { Task } from "../../types/index.js";
 import { getRefinementRevisionState } from "./task-refinement-state.js";
+import {
+  getPlanBanner,
+  getRevisionBadge,
+  type PlanBanner,
+  type RevisionBadge,
+} from "./task-card-badges.js";
 
-export interface TaskRevisionBadgeUi {
-  label: "Revising" | "Revised";
-  color: string;
-  background: string;
-}
-
-export interface TaskPlanBannerUi {
-  label: "Revision Requested" | "Revised Plan Ready" | "Implementation Plan Ready";
-  color: string;
-}
+export type TaskRevisionBadgeUi = RevisionBadge;
+export type TaskPlanBannerUi = PlanBanner;
 
 export function getTaskRevisionUi(
   task: Pick<
@@ -21,47 +19,9 @@ export function getTaskRevisionUi(
   revisionBadge: TaskRevisionBadgeUi | null;
   planBanner: TaskPlanBannerUi | null;
 } {
-  if (task.status !== "refinement") {
-    return {
-      revisionBadge: null,
-      planBanner: null,
-    };
-  }
-
-  const refinementRevisionState = getRefinementRevisionState(task);
-  const revisionBadge =
-    refinementRevisionState === "not_requested"
-      ? null
-      : refinementRevisionState === "completed"
-        ? {
-            label: "Revised" as const,
-            color: "var(--status-done)",
-            background: "var(--bg-tertiary)",
-          }
-        : {
-            label: "Revising" as const,
-            color: "var(--status-progress)",
-            background: "var(--bg-tertiary)",
-          };
-
-  const planBanner =
-    refinementRevisionState === "pending"
-      ? { label: "Revision Requested" as const, color: "var(--status-progress)" }
-      : task.refinement_plan
-        ? {
-            label:
-              refinementRevisionState === "completed"
-                ? "Revised Plan Ready" as const
-                : "Implementation Plan Ready" as const,
-            color:
-              refinementRevisionState === "completed"
-                ? "var(--status-done)"
-                : "var(--status-refinement)",
-          }
-        : null;
-
+  const revisionState = getRefinementRevisionState(task);
   return {
-    revisionBadge,
-    planBanner,
+    revisionBadge: getRevisionBadge(task.status, revisionState),
+    planBanner: getPlanBanner(task.status, revisionState, Boolean(task.refinement_plan)),
   };
 }
