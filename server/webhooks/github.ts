@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
+import type { Task } from "../types/runtime.js";
 
 /**
  * GitHub webhook handling.
@@ -163,6 +165,12 @@ export function recordMergeAndMaybeComplete(
            updated_at = ?
        WHERE id = ? AND status NOT IN ('done', 'cancelled')`,
     ).run(JSON.stringify(mergedList), nextResult, now, now, task.id);
+
+    // Best-effort: prune the per-task worktree once all PRs are merged.
+    // The branch deletion step uses safe `-d`, so unpushed work-in-progress
+    // is preserved.
+    try { tryCleanupCompletedTaskWorkspace(task as Task); } catch { /* non-fatal */ }
+
     return {
       task_id: task.id,
       task_number: task.task_number,

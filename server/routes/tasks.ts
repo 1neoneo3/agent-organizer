@@ -13,6 +13,7 @@ import { triggerAutoQa } from "../spawner/auto-qa.js";
 import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
 import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransition } from "../workflow/stage-pipeline.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
+import { tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
 import { prettyStreamJson } from "../spawner/pretty-stream-json.js";
 import { readLastLines } from "../utils/read-last-lines.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE, isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
@@ -976,6 +977,11 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       planPath,
     }).result;
     db.prepare("UPDATE tasks SET status = 'done', result = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(result, now, now, task.id);
+
+    // Best-effort: drop the per-task worktree now that the task is
+    // terminal. See `tryCleanupCompletedTaskWorkspace` for safety
+    // semantics (preserves branches with unpushed commits).
+    try { tryCleanupCompletedTaskWorkspace(task); } catch { /* non-fatal */ }
 
     // Release agent if assigned
     if (task.assigned_agent_id) {

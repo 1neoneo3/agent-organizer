@@ -3,7 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { Task } from "../types/runtime.js";
-import type { ProjectWorkflow } from "./loader.js";
+import { loadProjectWorkflow, type ProjectWorkflow } from "./loader.js";
 import { SETTINGS_DEFAULTS, isWorkspaceMode, type WorkspaceMode } from "../config/runtime.js";
 
 export interface TaskWorkspace {
@@ -326,4 +326,106 @@ export function prepareTaskWorkspace(
     branchName,
     rootPath: repoRoot,
   };
+}
+
+export interface RemoveTaskWorkspaceOptions {
+  /**
+   * When true, also delete the per-task git branch. Default: true.
+   * Set to false to keep the branch around (e.g. so a follow-up rerun can
+   * cherry-pick from it). The branch is only force-deleted; if it still
+   * holds unpushed commits not on the remote, deletion will silently
+   * fail and the branch is preserved.
+   */
+  deleteBranch?: boolean;
+}
+
+export interface RemoveTaskWorkspaceResult {
+  removed: boolean;
+  branchDeleted: boolean;
+  reason?: string;
+}
+
+/**
+ * Remove the per-task `.ao-worktrees/<task.id>` directory and (optionally)
+ * delete the corresponding branch. Designed to be called when a task
+ * reaches a terminal status (done / cancelled) so completed worktrees do
+ * not pile up and create branch-name conflicts on auto-dispatch.
+ *
+ * Safe to call when the worktree does not exist or the project is not a
+ * git repo — both return `{ removed: false }` with a reason and never
+ * throw. Callers should treat this as best-effort cleanup.
+ *
+ * Branch deletion uses `git branch -d` (safe delete), which refuses to
+ * drop branches holding commits not reachable from HEAD. After worktree
+ * removal the repo HEAD is on main, so a task branch whose commits
+ * landed on main (typical for `done` after PR merge) deletes cleanly,
+ * while a branch with local-only commits survives — preserving any
+ * unpushed work-in-progress that a `cancelled` transition might
+ * otherwise discard silently.
+ */
+export function removeTaskWorkspace(
+  task: Task,
+  workflow: ProjectWorkflow | null,
+  options: RemoveTaskWorkspaceOptions = {},
+): RemoveTaskWorkspaceResult {
+  const { deleteBranch = true } = options;
+  const projectPath = task.project_path ?? process.cwd();
+
+  let repoRoot: string;
+  try {
+    repoRoot = runGit(projectPath, ["rev-parse", "--show-toplevel"]);
+  } catch {
+    return { removed: false, branchDeleted: false, reason: "not-a-git-repo" };
+  }
+
+  const worktreePath = join(repoRoot, ".ao-worktrees", task.id);
+  if (!existsSync(worktreePath)) {
+    return { removed: false, branchDeleted: false, reason: "worktree-not-found" };
+  }
+
+  // --force discards any uncommitted state in the worktree. The agent
+  // process owning it must already be terminated by the time a task
+  // reaches done/cancelled, so there is nothing to preserve.
+  try {
+    runGit(repoRoot, ["worktree", "remove", "--force", worktreePath]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { removed: false, branchDeleted: false, reason: `worktree-remove-failed: ${message}` };
+  }
+
+  if (!deleteBranch) {
+    return { removed: true, branchDeleted: false };
+  }
+
+  const branchPrefix = workflow?.branchPrefix ?? "ao";
+  const branchName = buildBranchName(task, branchPrefix);
+  let branchDeleted = false;
+  try {
+    runGit(repoRoot, ["branch", "-d", branchName]);
+    branchDeleted = true;
+  } catch {
+    // Branch may already be gone, or it may hold commits not yet on
+    // main. Either way the worktree itself was removed; the branch
+    // survives so the user can recover unpushed work.
+  }
+
+  return { removed: true, branchDeleted };
+}
+
+/**
+ * Convenience wrapper for sites that have a `Task` but not yet loaded a
+ * `ProjectWorkflow`. Resolves the workflow from `task.project_path` and
+ * delegates to `removeTaskWorkspace`. Returns `{ removed: false }` with
+ * a reason for tasks that have no `project_path` (the workspace mode
+ * cannot be inferred without one).
+ */
+export function tryCleanupCompletedTaskWorkspace(
+  task: Task,
+  options: RemoveTaskWorkspaceOptions = {},
+): RemoveTaskWorkspaceResult {
+  if (!task.project_path) {
+    return { removed: false, branchDeleted: false, reason: "no-project-path" };
+  }
+  const workflow = loadProjectWorkflow(task.project_path);
+  return removeTaskWorkspace(task, workflow, options);
 }
