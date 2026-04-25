@@ -964,12 +964,6 @@ export function buildRefinementPrompt(
     );
     parts.push("- If it can run in parallel, write `No conflicts`");
     parts.push("");
-    parts.push("## Updated Description");
-    parts.push("");
-    parts.push(
-      "A refined, detailed, and unambiguous task description based on the analysis above.",
-    );
-    parts.push("");
     parts.push("---END REFINEMENT---");
     parts.push("");
     parts.push(
@@ -1092,10 +1086,6 @@ export function buildRefinementPrompt(
     parts.push("- このタスクの前に完了すべきタスク（依存先）があれば `Blocked by #XX: 理由` で記載");
     parts.push("- 同じファイルを変更するタスクがあれば `Conflicts with #XX: 対象ファイルと競合内容` で記載");
     parts.push("- 並行実行可能な場合は `No conflicts` と記載");
-    parts.push("");
-    parts.push("## 更新されたタスク説明");
-    parts.push("");
-    parts.push("上記を踏まえた、より詳細で明確なタスク説明文。");
     parts.push("");
     parts.push("---END REFINEMENT---");
     parts.push("");
@@ -1799,7 +1789,10 @@ export function buildDecomposePrompt(
     );
     parts.push("");
     parts.push(
-      "**SECTION 1**: JSON array of tasks (no markdown fences, no extra text before or after the JSON):",
+      "**SECTION 1**: JSON array of tasks (no markdown fences, no extra text before or after the JSON).",
+    );
+    parts.push(
+      "The `description` field is a **brief summary only** (1-2 paragraphs): WHAT and WHY. Do NOT include acceptance criteria, file lists, or implementation details — those belong in the refinement plan.",
     );
     parts.push("```");
     parts.push(
@@ -1808,7 +1801,7 @@ export function buildDecomposePrompt(
           {
             task_id: "T01",
             title: "Set up database schema",
-            description: "Detailed description of what to do",
+            description: "Brief summary of what this task does and why it is needed.",
             task_size: "small",
             priority: 10,
             depends_on: [],
@@ -1816,7 +1809,7 @@ export function buildDecomposePrompt(
           {
             task_id: "T02",
             title: "Implement API endpoints",
-            description: "Detailed description",
+            description: "Brief summary of what this task does and why it is needed.",
             task_size: "medium",
             priority: 8,
             depends_on: ["T01"],
@@ -1875,7 +1868,10 @@ export function buildDecomposePrompt(
     parts.push("");
     parts.push("必ず `---PLAN---` の行で区切られた2つのセクションで回答してください:");
     parts.push("");
-    parts.push("**SECTION 1**: タスクの JSON 配列（Markdown のフェンス禁止、JSON の前後に余計な文章を入れない）:");
+    parts.push("**SECTION 1**: タスクの JSON 配列（Markdown のフェンス禁止、JSON の前後に余計な文章を入れない）。");
+    parts.push(
+      "`description` は**概要のみ**（1-2段落）: 何を・なぜ。受け入れ条件・ファイル一覧・実装詳細は書かない（refinement plan で策定する）。",
+    );
     parts.push("```");
     parts.push(
       JSON.stringify(
@@ -1883,7 +1879,7 @@ export function buildDecomposePrompt(
           {
             task_id: "T01",
             title: "データベーススキーマを準備する",
-            description: "実施内容の詳細説明",
+            description: "このタスクで何を行い、なぜ必要かの簡潔な概要。",
             task_size: "small",
             priority: 10,
             depends_on: [],
@@ -1891,7 +1887,7 @@ export function buildDecomposePrompt(
           {
             task_id: "T02",
             title: "API エンドポイントを実装する",
-            description: "実施内容の詳細説明",
+            description: "このタスクで何を行い、なぜ必要かの簡潔な概要。",
             task_size: "medium",
             priority: 8,
             depends_on: ["T01"],
