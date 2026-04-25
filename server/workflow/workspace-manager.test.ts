@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
-import { prepareTaskWorkspace, resolveWorkspaceMode } from "./workspace-manager.js";
+import { prepareTaskWorkspace, removeTaskWorkspace, resolveWorkspaceMode } from "./workspace-manager.js";
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf-8" }).trim();
@@ -608,5 +608,149 @@ describe("prepareTaskWorkspace — origin/main enforcement", () => {
     const worktreeHead = git(workspace.cwd, "rev-parse", "HEAD");
     assert.equal(worktreeHead, localMainHead);
     assert.equal(existsSync(join(workspace.cwd, "LOCAL_ONLY.md")), false);
+  });
+});
+
+describe("removeTaskWorkspace", () => {
+  const buildWorkflow = () => ({
+    body: "",
+    codexSandboxMode: "workspace-write" as const,
+    codexApprovalPolicy: "on-request" as const,
+    e2eExecution: "host" as const,
+    e2eCommand: null,
+    gitWorkflow: "default" as const,
+    workspaceMode: "git-worktree" as const,
+    branchPrefix: "issue",
+    beforeRun: [],
+    afterRun: [],
+    includeTask: true,
+    includeReview: true,
+    includeDecompose: true,
+    enableRefinement: null,
+    enableTestGeneration: false,
+    enableHumanReview: false,
+    projectType: "generic" as const,
+    checkTypesCmd: null,
+    checkLintCmd: null,
+    checkTestsCmd: null,
+    checkE2eCmd: null,
+  });
+
+  it("removes the worktree directory and deletes the branch when both exist", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const task = {
+      id: "task-remove-1",
+      title: "Cleanup task",
+      task_number: "#42",
+      project_path: repo,
+    } as never;
+
+    const workspace = prepareTaskWorkspace(task, workflow);
+    assert.equal(existsSync(workspace.cwd), true, "precondition: worktree exists");
+    const branchName = workspace.branchName!;
+    assert.match(
+      git(repo, "branch", "--list", branchName),
+      new RegExp(branchName),
+      "precondition: branch exists",
+    );
+
+    const result = removeTaskWorkspace(task, workflow);
+
+    assert.equal(result.removed, true);
+    assert.equal(result.branchDeleted, true);
+    assert.equal(existsSync(workspace.cwd), false, "worktree directory should be gone");
+    assert.equal(
+      git(repo, "branch", "--list", branchName),
+      "",
+      "branch should be deleted",
+    );
+  });
+
+  it("returns not-a-git-repo when the project_path is not a git repository", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "ao-remove-non-git-"));
+    const result = removeTaskWorkspace(
+      {
+        id: "task-no-git",
+        title: "X",
+        task_number: "#1",
+        project_path: tempDir,
+      } as never,
+      buildWorkflow(),
+    );
+    assert.equal(result.removed, false);
+    assert.equal(result.reason, "not-a-git-repo");
+  });
+
+  it("returns worktree-not-found when no .ao-worktrees entry exists for the task", () => {
+    const repo = initRepo();
+    const result = removeTaskWorkspace(
+      {
+        id: "task-never-prepared",
+        title: "X",
+        task_number: "#1",
+        project_path: repo,
+      } as never,
+      buildWorkflow(),
+    );
+    assert.equal(result.removed, false);
+    assert.equal(result.reason, "worktree-not-found");
+  });
+
+  it("preserves the branch when deleteBranch is false", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const task = {
+      id: "task-keep-branch",
+      title: "Cleanup task",
+      task_number: "#7",
+      project_path: repo,
+    } as never;
+
+    const workspace = prepareTaskWorkspace(task, workflow);
+    const branchName = workspace.branchName!;
+
+    const result = removeTaskWorkspace(task, workflow, { deleteBranch: false });
+
+    assert.equal(result.removed, true);
+    assert.equal(result.branchDeleted, false);
+    assert.equal(existsSync(workspace.cwd), false);
+    assert.match(
+      git(repo, "branch", "--list", branchName),
+      new RegExp(branchName),
+      "branch should still exist",
+    );
+  });
+
+  it("preserves a branch with unpushed commits even when deleteBranch is true", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const task = {
+      id: "task-unpushed",
+      title: "Has unpushed work",
+      task_number: "#9",
+      project_path: repo,
+    } as never;
+
+    const workspace = prepareTaskWorkspace(task, workflow);
+    const branchName = workspace.branchName!;
+
+    // Create a commit on the task branch — main has no remote tracking
+    // counterpart, so `git branch -D` will refuse to drop a branch
+    // holding commits not reachable from upstream.
+    writeFileSync(join(workspace.cwd, "WORK.md"), "in progress\n");
+    git(workspace.cwd, "add", "WORK.md");
+    git(workspace.cwd, "commit", "-m", "wip");
+
+    const result = removeTaskWorkspace(task, workflow);
+
+    assert.equal(result.removed, true, "worktree directory must still be removed");
+    assert.equal(result.branchDeleted, false, "branch with unpushed work is preserved");
+    assert.equal(existsSync(workspace.cwd), false);
+    assert.match(
+      git(repo, "branch", "--list", branchName),
+      new RegExp(branchName),
+      "branch must remain so unpushed work can be recovered",
+    );
   });
 });

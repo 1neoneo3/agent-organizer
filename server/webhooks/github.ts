@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
+import type { Task } from "../types/runtime.js";
 
 /**
  * GitHub webhook handling.
@@ -86,6 +88,11 @@ interface TaskRow {
   pr_urls: string | null;
   merged_pr_urls: string | null;
   result: string | null;
+  // Fields required for tryCleanupCompletedTaskWorkspace on done.
+  // `title` feeds branch-name reconstruction; `project_path` resolves
+  // the repo root.
+  title: string;
+  project_path: string | null;
 }
 
 /**
@@ -112,7 +119,7 @@ export function findTasksByPrUrl(db: DatabaseSync, prUrl: string): TaskRow[] {
   const like = `%${prUrl}%`;
   const rows = db
     .prepare(
-      `SELECT id, task_number, status, pr_url, pr_urls, merged_pr_urls, result
+      `SELECT id, task_number, status, pr_url, pr_urls, merged_pr_urls, result, title, project_path
        FROM tasks
        WHERE status NOT IN ('done', 'cancelled')
          AND (pr_url = ? OR pr_urls LIKE ?)`,
@@ -163,6 +170,12 @@ export function recordMergeAndMaybeComplete(
            updated_at = ?
        WHERE id = ? AND status NOT IN ('done', 'cancelled')`,
     ).run(JSON.stringify(mergedList), nextResult, now, now, task.id);
+
+    // Best-effort: prune the per-task worktree once all PRs are merged.
+    // The branch deletion step uses safe `-d`, so unpushed work-in-progress
+    // is preserved.
+    try { tryCleanupCompletedTaskWorkspace(task as Task); } catch { /* non-fatal */ }
+
     return {
       task_id: task.id,
       task_number: task.task_number,

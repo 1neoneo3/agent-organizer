@@ -43,7 +43,7 @@ import { recordDbLogInsertMs, recordStdoutChunkMs } from "../perf/metrics.js";
 import { getHeartbeatManager } from "./heartbeat-manager.js";
 import { getLogBatchWriter } from "../db/log-batch-writer.js";
 import type { CacheService } from "../cache/cache-service.js";
-import { prepareTaskWorkspace, resolveWorkspaceMode } from "../workflow/workspace-manager.js";
+import { prepareTaskWorkspace, resolveWorkspaceMode, tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
 import {
   runWorkflowHooks,
@@ -2026,6 +2026,35 @@ export async function spawnAgent(
     }
 
     // human_review: no agent trigger — waits for human approval via API
+
+    // Terminal-status worktree cleanup. Only `done` is treated as
+    // truly terminal here — `cancelled` is reachable from /tasks/:id/stop
+    // and can be revived via /tasks/:id/resume, so its worktree must
+    // survive a stop/resume round-trip. Done tasks have already had
+    // their commits pushed (via promoteTaskReviewArtifact in earlier
+    // stages), so the per-task worktree under `.ao-worktrees/<task.id>`
+    // is no longer needed. Dropping it here prevents the
+    // stale-worktree pile-up that previously caused auto-dispatch
+    // branch-name collisions and starved the log-file fd pool.
+    // Best-effort: failures are swallowed because the task transition
+    // itself already succeeded.
+    if (finalStatus === "done") {
+      try {
+        const result = tryCleanupCompletedTaskWorkspace(completionTask);
+        if (result.removed) {
+          insertLogStmt.run(
+            task.id,
+            "system",
+            `[Workspace] Removed worktree for done task` +
+              (result.branchDeleted ? " (branch deleted)" : " (branch preserved)"),
+            spawnStage,
+            agent.id,
+          );
+        }
+      } catch {
+        // Cleanup failures must not block status finalization.
+      }
+    }
   }
 
   function persistRefinementPlanFromCurrentRun(extraAssistantLogs?: string[]): void {
