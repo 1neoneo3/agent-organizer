@@ -1,7 +1,7 @@
 import { type Page, type APIRequestContext } from "@playwright/test";
 
 const AUTH_TOKEN = "e2e-test-token";
-const BASE = "http://localhost:8792";
+const BASE = "http://127.0.0.1:8792";
 
 /** Authenticate via API and set session cookie + CSRF token */
 export async function authenticate(page: Page) {

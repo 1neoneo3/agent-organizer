@@ -1119,7 +1119,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
-    const schema = z.object({ content: z.string().min(1) });
+    const schema = z.object({ content: z.string().trim().min(1) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
