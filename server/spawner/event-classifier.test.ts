@@ -78,6 +78,18 @@ describe("detectTextInteractivePrompt", () => {
     assert.strictEqual(result!.detectedText, text);
   });
 
+  it("detects pattern #4: 対象を指定してください", () => {
+    const result = detectTextInteractivePrompt("対象を指定してください");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("detects pattern #4: 完了条件を教えてください", () => {
+    const result = detectTextInteractivePrompt("完了条件を教えてください");
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
   // --- True Negatives (should NOT detect) ---
 
   it("does not detect short messages", () => {
@@ -98,6 +110,12 @@ describe("detectTextInteractivePrompt", () => {
   it("does not detect tool call descriptions", () => {
     const result = detectTextInteractivePrompt("Tool: Read(/src/index.ts)");
     assert.strictEqual(result, null);
+  });
+
+  it("does not flag agent narration with '指定どおり' adverbial phrase", () => {
+    const text = "レビュー対象の実装差分と作業ディレクトリをまず確定します。指定どおり `agent-organizer` の実リポジトリ root を特定し、その上で変更差分・タスクログ・ビルドゲートを順に確認します。";
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null, "agent narration with adverbial 指定どおり must not trigger detection");
   });
 
   it("does not detect review summaries that quote user-input examples", () => {
@@ -309,6 +327,90 @@ What do you want next?
       null,
       "explicit options prompt must be detected",
     );
+  });
+
+  // --- SPRINT CONTRACT false-positive prevention (regression for #469) ---
+
+  it("does not detect SPRINT CONTRACT block as input request", () => {
+    const text = `実装を開始します。
+
+---SPRINT CONTRACT---
+**成果物:**
+1. server/routes/tasks.ts — \`/tasks/:id/logs\` の incremental 取得をサポート
+2. server/routes/tasks.ts — 関連テスト追加
+
+**受け入れ基準:**
+- [ ] \`/tasks/:id/logs?since=<timestamp>\` で incremental 取得可能
+- [ ] 既存テストが green
+- [ ] 新規テスト追加
+
+**スコープ外:**
+- 他のルートの変更
+---END CONTRACT---`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null, "SPRINT CONTRACT should not trigger detection");
+  });
+
+  it("does not detect partial SPRINT CONTRACT (start marker only)", () => {
+    const text = `実装を開始します。
+
+---SPRINT CONTRACT---
+**成果物:**
+1. server/routes/tasks.ts — logs endpoint
+2. server/spawner/process-manager.ts — streaming fix
+
+**受け入れ基準:**
+- [ ] 確認が必要な項目をクリア`;
+    const result = detectTextInteractivePrompt(text);
+    assert.strictEqual(result, null, "partial SPRINT CONTRACT should not trigger detection");
+  });
+
+  it("detects trailing prompt after complete SPRINT CONTRACT", () => {
+    const text = `---SPRINT CONTRACT---
+**成果物:**
+1. A file
+---END CONTRACT---
+
+対象ファイルのパスを指定してください。`;
+    const result = detectTextInteractivePrompt(text);
+    assert.notStrictEqual(result, null, "trailing prompt after contract must be detected");
+    assert.ok(
+      !result!.detectedText!.includes("---SPRINT CONTRACT---"),
+      "detectedText should not contain contract block",
+    );
+  });
+
+  // --- strictMode: only explicit options prompt fires ---
+
+  it("strictMode: suppresses weak JA patterns", () => {
+    const text = "作業ディレクトリを指定してください";
+    const result = detectTextInteractivePrompt(text, { strictMode: true });
+    assert.strictEqual(result, null, "weak JA pattern should be suppressed in strict mode");
+  });
+
+  it("strictMode: suppresses weak EN patterns", () => {
+    const text = "Please provide the target directory path for the build output.";
+    const result = detectTextInteractivePrompt(text, { strictMode: true });
+    assert.strictEqual(result, null, "weak EN pattern should be suppressed in strict mode");
+  });
+
+  it("strictMode: still detects explicit options prompt", () => {
+    const text = `次のどちらにしますか？
+
+1. 実装を続行
+2. 計画を見直す`;
+    const result = detectTextInteractivePrompt(text, { strictMode: true });
+    assert.notStrictEqual(result, null, "explicit options prompt must fire even in strict mode");
+    assert.strictEqual(result!.promptType, "text_input_request");
+  });
+
+  it("strictMode: still detects English options prompt", () => {
+    const text = `What do you want to do next?
+1. Continue implementation
+2. Review the plan
+3. Stop here`;
+    const result = detectTextInteractivePrompt(text, { strictMode: true });
+    assert.notStrictEqual(result, null, "explicit English options prompt must fire in strict mode");
   });
 });
 
