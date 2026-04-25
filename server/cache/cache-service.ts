@@ -5,6 +5,8 @@ export interface CacheService {
   get<T>(key: string): Promise<T | null>;
   set(key: string, value: unknown, ttlSeconds: number): Promise<void>;
   del(key: string): Promise<void>;
+  del(keys: string[]): Promise<void>;
+  /** @deprecated Internal callers should use targeted invalidation helpers from cache/invalidation.ts */
   invalidatePattern(pattern: string): Promise<void>;
   readonly isConnected: boolean;
 }
@@ -34,10 +36,12 @@ export function createCacheService(redis: Redis | null): CacheService {
     }
   }
 
-  async function del(key: string): Promise<void> {
+  async function del(keyOrKeys: string | string[]): Promise<void> {
     if (!redis) return;
     try {
-      await redis.del(prefixed(key));
+      const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
+      if (keys.length === 0) return;
+      await redis.del(...keys.map(prefixed));
     } catch {
       // silently degrade
     }
