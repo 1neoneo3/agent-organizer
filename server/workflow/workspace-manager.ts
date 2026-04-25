@@ -613,6 +613,20 @@ export function reconcileAoWorktrees(
       }
     }
 
+    // Trail a system log entry on the still-existing task row so the
+    // operator sees the worktree-removal in the Activity panel. Skip
+    // for orphan removals (no task row to log against — the FK would
+    // refuse the insert).
+    if (removeReason !== "orphan") {
+      try {
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+        ).run(taskId, `[Workspace] Reconciled worktree for ${removeReason} task on boot`);
+      } catch {
+        // Logging is best-effort; never block the sweep.
+      }
+    }
+
     result.removed.push({ ...entry, reason: removeReason });
   }
 
@@ -652,6 +666,13 @@ export function reconcileAllAoWorktrees(
     .map((row) => row.project_path)
     .filter((p): p is string => typeof p === "string" && p.length > 0);
 
+  // Multiple project_path values can resolve to the same git repoRoot —
+  // e.g. a symlink (`/home/mk/agent-organizer` → real path under
+  // `/home/mk/workspace/agent-organizer`) or a path pointing inside a
+  // subdirectory of an existing repo. Without deduping, the same
+  // worktree would be scanned (and counted) twice. Resolve each
+  // project_path to its canonical repoRoot and skip duplicates.
+  const seenRoots = new Set<string>();
   const aggregate: ReconcileWorktreesResult & { projects: number } = {
     scanned: 0,
     removed: [],
@@ -662,7 +683,16 @@ export function reconcileAllAoWorktrees(
   };
 
   for (const cwd of projectPaths) {
-    const sub = reconcileAoWorktrees(db, { ...options, cwd });
+    let repoRoot: string;
+    try {
+      repoRoot = runGit(cwd, ["rev-parse", "--show-toplevel"]);
+    } catch {
+      continue;
+    }
+    if (seenRoots.has(repoRoot)) continue;
+    seenRoots.add(repoRoot);
+
+    const sub = reconcileAoWorktrees(db, { ...options, cwd: repoRoot });
     if (sub.scanned === 0) continue;
     aggregate.projects += 1;
     aggregate.scanned += sub.scanned;

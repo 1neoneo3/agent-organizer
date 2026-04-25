@@ -932,6 +932,32 @@ describe("reconcileAoWorktrees", () => {
     assert.equal(result.removed.length, 0);
   });
 
+  it("dedupes project_paths that resolve to the same repo root (symlink / subdir)", () => {
+    const repo = initRepo();
+    const workflow = buildWorkflow();
+    const db = createDb();
+
+    const doneId = randomUUID();
+    insertTaskRow(db, doneId, "done", "Finished work", "#1");
+    db.prepare("UPDATE tasks SET project_path = ? WHERE id = ?").run(repo, doneId);
+    prepareTaskWorkspace({ id: doneId, title: "Finished work", task_number: "#1", project_path: repo } as never, workflow);
+
+    // Insert a second task whose project_path points to a subdirectory
+    // inside the same repo. `git rev-parse --show-toplevel` resolves it
+    // back to `repo`, so without dedup the same worktree would be
+    // counted twice.
+    const subdir = join(repo, ".ao-worktrees");
+    const otherId = randomUUID();
+    insertTaskRow(db, otherId, "in_progress", "Active work", "#2");
+    db.prepare("UPDATE tasks SET project_path = ? WHERE id = ?").run(subdir, otherId);
+
+    const result = reconcileAllAoWorktrees(db);
+
+    assert.equal(result.projects, 1, "the same repo must only be visited once");
+    assert.equal(result.scanned, 1);
+    assert.equal(result.removed.length, 1);
+  });
+
   it("aggregates reconcile across every distinct project_path in the tasks table", () => {
     const repoA = initRepo();
     const repoB = initRepo();
