@@ -998,6 +998,16 @@ export async function spawnAgent(
     });
 
     activeProcesses.set(task.id, child);
+  } catch (err) {
+    // logStream may have been opened (line above) before a downstream throw
+    // such as `prepareTaskWorkspace` worktree conflict, before_run hook
+    // failure, or `spawn()` itself failing. Close it here so we do not leak
+    // a file descriptor on every failed dispatch attempt.
+    const stream = logStream as ReturnType<typeof createWriteStream> | undefined;
+    if (stream) {
+      try { stream.end(); } catch { /* already closed */ }
+    }
+    throw err;
   } finally {
     if (!isParallelTester && !isContinue) {
       clearPendingSpawn(task.id);
@@ -2163,15 +2173,24 @@ export function spawnSecondaryReviewer(
   cleanEnv.CI = "1";
   if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
 
-  const workspace = prepareTaskWorkspace(task, workflow, db);
-
-  const child = spawn(args[0], args.slice(1), {
-    cwd: workspace.cwd,
-    env: cleanEnv,
-    shell: process.platform === "win32",
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  let workspace: ReturnType<typeof prepareTaskWorkspace>;
+  let child: ChildProcess;
+  try {
+    workspace = prepareTaskWorkspace(task, workflow, db);
+    child = spawn(args[0], args.slice(1), {
+      cwd: workspace.cwd,
+      env: cleanEnv,
+      shell: process.platform === "win32",
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+  } catch (err) {
+    // Workspace preparation (e.g. `git worktree add` conflict) or spawn()
+    // can throw between createWriteStream and the child handlers below.
+    // Close the log stream so we do not leak a file descriptor per failure.
+    try { logStream.end(); } catch { /* already closed */ }
+    throw err;
+  }
 
   // Track in the reviewer session (not in activeProcesses — the primary
   // owns that slot for the task). killAgent will clean up via the session.
