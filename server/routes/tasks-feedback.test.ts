@@ -93,6 +93,36 @@ function getTransitions(db: DatabaseSync, taskId: string): string[] {
   ).map((row) => row.message);
 }
 
+function getSystemLogs(db: DatabaseSync, taskId: string): string[] {
+  return (
+    db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC",
+    ).all(taskId) as Array<{ message: string }>
+  ).map((row) => row.message);
+}
+
+function getTaskField(db: DatabaseSync, taskId: string, field: string): unknown {
+  const row = db.prepare(`SELECT ${field} FROM tasks WHERE id = ?`).get(taskId) as Record<string, unknown> | undefined;
+  return row?.[field];
+}
+
+function insertCompletedRefinementTask(db: DatabaseSync, taskId: string, agentId: string): void {
+  insertRefinementTask(db, taskId, agentId);
+  const completedAt = Date.now() - 5_000;
+  db.prepare(
+    `UPDATE tasks
+     SET completed_at = ?,
+         refinement_completed_at = ?,
+         refinement_plan = ?
+     WHERE id = ?`,
+  ).run(
+    completedAt,
+    completedAt,
+    "---REFINEMENT PLAN---\nOriginal plan\n---END REFINEMENT---",
+    taskId,
+  );
+}
+
 describe("POST /tasks/:id/feedback refinement regressions", () => {
   before(() => {
     rmSync(TEST_DB_PATH, { force: true });
@@ -143,6 +173,12 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "__STAGE_TRANSITION__:refinement→inbox",
         "__STAGE_TRANSITION__:inbox→refinement",
       ]);
+      assert.deepEqual(getSystemLogs(db, taskId), [
+        "[CEO Feedback] Revise the plan.",
+        "__STAGE_TRANSITION__:refinement→inbox",
+        "[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.",
+        "__STAGE_TRANSITION__:inbox→refinement",
+      ]);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {
@@ -191,10 +227,107 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "__STAGE_TRANSITION__:refinement→inbox",
         "__STAGE_TRANSITION__:inbox→refinement",
       ]);
+      assert.deepEqual(getSystemLogs(db, taskId), [
+        "[CEO Feedback] Tighten the acceptance criteria.",
+        "__STAGE_TRANSITION__:refinement→inbox",
+        "[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.",
+        "__STAGE_TRANSITION__:inbox→refinement",
+      ]);
       assert.ok(
         events.some((event) => event.type === "task_update"),
         "expected a task_update broadcast for the respawned refinement task",
       );
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("clears completed_at and restarts when revising a completed refinement with an active agent", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertCompletedRefinementTask(db, taskId, agentId);
+
+    let queueCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => {
+        queueCalls += 1;
+        return true;
+      },
+      spawnAgent: async () => {
+        throw new Error("spawnAgent should not run when revision restart stays in-process");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Re-open the plan and add test coverage." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(queueCalls, 1);
+      assert.equal(getTaskField(db, taskId, "status"), "refinement");
+      assert.equal(getTaskField(db, taskId, "completed_at"), null);
+      assert.equal(getTaskField(db, taskId, "refinement_revision_completed_at"), null);
+      assert.ok(
+        typeof getTaskField(db, taskId, "refinement_revision_requested_at") === "number",
+        "refinement_revision_requested_at should be stamped",
+      );
+      assert.deepEqual(getTransitions(db, taskId), [
+        "__STAGE_TRANSITION__:refinement→inbox",
+        "__STAGE_TRANSITION__:inbox→refinement",
+      ]);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("clears completed_at on idle-agent respawn for a completed refinement revision", async () => {
+    const db = await createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertCompletedRefinementTask(db, taskId, agentId);
+
+    let spawnCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        spawnCalls += 1;
+        return { pid: 1234 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise the acceptance criteria ordering." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnCalls, 1);
+      assert.equal(getTaskField(db, taskId, "status"), "refinement");
+      assert.equal(getTaskField(db, taskId, "completed_at"), null);
+      assert.deepEqual(getSystemLogs(db, taskId), [
+        "[CEO Feedback] Revise the acceptance criteria ordering.",
+        "__STAGE_TRANSITION__:refinement→inbox",
+        "[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.",
+        "__STAGE_TRANSITION__:inbox→refinement",
+      ]);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {

@@ -147,6 +147,13 @@ export interface StageSegment {
  * the segment can be rendered as a monospace block.
  */
 export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
+  const chronologicalLogs = [...logs].sort((left, right) => {
+    if (left.created_at !== right.created_at) {
+      return left.created_at - right.created_at;
+    }
+    return left.id - right.id;
+  });
+
   const segments: StageSegment[] = [];
   let current: StageSegment | null = null;
 
@@ -163,7 +170,7 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
     entryCount: 0,
   });
 
-  for (const log of logs) {
+  for (const log of chronologicalLogs) {
     const transition = parseStageTransition(log.message);
 
     if (transition) {
