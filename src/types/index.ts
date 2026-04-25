@@ -47,6 +47,15 @@ export interface TaskSummary {
   auto_respawn_count: number;
   created_at: number;
   updated_at: number;
+
+  // Server-derived summary fields. Populated by the GET /tasks handler
+  // and the WebSocket task_update broadcast (see
+  // server/domain/task-derived-fields.ts). Lets the kanban render
+  // parent/child relationships and "has plan" state without fetching
+  // the heavy description / result / refinement_plan columns.
+  parent_task_number: string | null;
+  child_task_numbers: string[] | null;
+  has_refinement_plan: boolean;
 }
 
 export interface Task extends TaskSummary {

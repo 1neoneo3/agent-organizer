@@ -168,20 +168,39 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
-          {/* Dependency display */}
-          {task.depends_on && (() => {
-            try {
-              const deps = JSON.parse(task.depends_on) as string[];
-              if (deps.length === 0) return null;
-              return (
-                <div style={{ marginTop: "2px", fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
-                  <span style={{ color: "var(--status-cancelled)", fontWeight: 600 }}>Blocked by</span>
-                  {deps.map((v) => (
-                    <span key={v} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v}</span>
-                  ))}
-                </div>
-              );
-            } catch { return null; }
+          {/* Parent/child relationship + dependency display.
+              parent_task_number / child_task_numbers are server-derived
+              fields populated from description/result heads — the
+              regex extraction lives in server/domain/task-derived-fields.ts
+              so the kanban does not need the full description/result
+              columns shipped to the client. */}
+          {(() => {
+            const lines: Array<{ label: string; color: string; values: string[] }> = [];
+            if (task.parent_task_number) {
+              lines.push({ label: "Parent", color: "var(--status-refinement)", values: [task.parent_task_number] });
+            }
+            if (task.child_task_numbers && task.child_task_numbers.length > 0) {
+              lines.push({ label: "Children", color: "var(--status-refinement)", values: task.child_task_numbers });
+            }
+            if (task.depends_on) {
+              try {
+                const deps = JSON.parse(task.depends_on) as string[];
+                if (deps.length > 0) lines.push({ label: "Blocked by", color: "var(--status-cancelled)", values: deps });
+              } catch { /* ignore */ }
+            }
+            if (lines.length === 0) return null;
+            return (
+              <div style={{ marginTop: "2px", display: "flex", flexDirection: "column", gap: "1px" }}>
+                {lines.map((line) => (
+                  <div key={line.label} style={{ fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
+                    <span style={{ color: line.color, fontWeight: 600 }}>{line.label}</span>
+                    {line.values.map((v) => (
+                      <span key={v} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v}</span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
           })()}
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "4px", flexWrap: "wrap" }}>

@@ -336,23 +336,30 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
 
       {/* Modals */}
       {selectedTaskId && (() => {
-        if (detailLoading && !detailTask) {
-          return (
-            <div style={{
-              position: "fixed", inset: 0, zIndex: 50,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: "rgba(0,0,0,0.6)",
-            }}>
-              <div style={{ color: "var(--text-secondary)", fontSize: "14px" }}>Loading...</div>
-            </div>
-          );
-        }
-        if (!detailTask) return null;
+        const summary = tasks.find((t) => t.id === selectedTaskId);
+        if (!summary) return null;
+        // Render the modal immediately with TaskSummary header fields
+        // (title / status / agent / dates) and let the heavy sections
+        // (Description / Implementation Plan / Result / Repos / PRs)
+        // render skeletons until `detailTask` arrives. Avoids the
+        // full-screen blackout that blocked list ↔ detail switching.
+        const taskForDisplay: Task = detailTask ?? {
+          ...summary,
+          description: null,
+          result: null,
+          refinement_plan: null,
+          planned_files: null,
+          interactive_prompt_data: null,
+          repository_urls: null,
+          pr_urls: null,
+          merged_pr_urls: null,
+        };
         return (
           <TaskDetailModal
-            task={detailTask}
+            task={taskForDisplay}
+            isLoadingDetail={detailLoading && !detailTask}
             agents={agents}
-            interactivePrompt={interactivePrompts.get(detailTask.id)}
+            interactivePrompt={interactivePrompts.get(taskForDisplay.id)}
             on={on}
             subscribeTask={onSubscribeTask}
             onClose={() => setSelectedTaskId(null)}

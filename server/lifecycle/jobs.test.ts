@@ -687,7 +687,7 @@ describe("recoverInProgressOrphans", () => {
     assert.equal(spawnedTasks.length, 1, "exactly one task respawned");
   });
 
-  it("broadcasts full task row for refinement orphan with plan", () => {
+  it("broadcasts task summary update with has_refinement_plan flag for refinement orphan with plan", () => {
     insertTask(db, { id: "t3", status: "refinement", assigned_agent_id: "agent-1" });
     db.prepare("UPDATE tasks SET refinement_plan = 'the plan' WHERE id = 't3'").run();
     const ws = createFakeWs();
@@ -697,7 +697,12 @@ describe("recoverInProgressOrphans", () => {
     const taskUpdate = ws.events.find((e) => e.type === "task_update");
     assert.ok(taskUpdate, "expected task_update broadcast");
     const payload = taskUpdate!.payload as Record<string, unknown>;
-    assert.equal(payload.refinement_plan, "the plan", "broadcast must include refinement_plan");
+    // After cache 撤去 + /tasks summary 化 (#82130), WS broadcasts no
+    // longer ship full Task rows. Heavy fields like `refinement_plan`
+    // are excluded; the `has_refinement_plan` derived flag carries the
+    // "plan exists" signal needed by the kanban Plan banner.
+    assert.equal(payload.refinement_plan, undefined, "broadcast must NOT include refinement_plan body");
+    assert.equal(payload.has_refinement_plan, true, "broadcast must include has_refinement_plan: true");
     assert.ok(payload.completed_at, "broadcast must include completed_at");
     assert.equal(payload.status, "refinement");
   });

@@ -36,6 +36,9 @@ function createTask(id: string, status: TaskSummary["status"], createdAt = 1): T
     completed_at: null,
     last_heartbeat_at: null,
     auto_respawn_count: 0,
+    parent_task_number: null,
+    child_task_numbers: null,
+    has_refinement_plan: false,
     created_at: createdAt,
     updated_at: 1,
   };

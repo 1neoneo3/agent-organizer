@@ -55,6 +55,9 @@ function toReviewTask(task: ReviewTask): TaskSummary {
     completed_at: null,
     last_heartbeat_at: null,
     auto_respawn_count: 0,
+    parent_task_number: null,
+    child_task_numbers: null,
+    has_refinement_plan: false,
     created_at: 0,
     updated_at: task.updated_at,
   };

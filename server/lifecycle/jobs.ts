@@ -6,6 +6,7 @@ import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implem
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
 import type { Agent, Task } from "../types/runtime.js";
+import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 const pendingOrphanRespawns = new Set<string>();
@@ -133,8 +134,8 @@ export function recoverInProgressOrphans(
         ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
       }
 
-      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id);
-      ws.broadcast("task_update", freshTask ?? { id: task.id, status: "refinement", completed_at: now });
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+      ws.broadcast("task_update", freshTask ? buildTaskSummaryUpdate(freshTask) : { id: task.id, status: "refinement" as const, completed_at: now });
       continue;
     }
 

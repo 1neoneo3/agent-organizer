@@ -58,6 +58,7 @@ export interface Task {
   settings_overrides: string | null;
   started_at: number | null;
   completed_at: number | null;
+  last_heartbeat_at?: number | null;
   auto_respawn_count: number;
   created_at: number;
   updated_at: number;

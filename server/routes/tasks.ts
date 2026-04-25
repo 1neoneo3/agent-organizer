@@ -26,6 +26,11 @@ import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
 import { isImplementerAgent, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
 import {
+  deriveParentTaskNumber,
+  deriveChildTaskNumbers,
+} from "../domain/task-derived-fields.js";
+import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
+import {
   collectAllBlockers,
   formatAllBlockers,
   isBlocked,
@@ -279,12 +284,40 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     "last_heartbeat_at", "auto_respawn_count", "created_at", "updated_at",
   ].join(", ");
 
+  // Derive parent/child kanban refs and has_plan flag from short head
+  // slices of description/result + a non-null boolean over refinement_plan.
+  // Avoids shipping the full description / result / refinement_plan
+  // columns (potentially tens of KB each) to the list endpoint.
+  const TASK_DERIVED_COLS = [
+    "SUBSTR(description, 1, 80) AS _desc_head",
+    "SUBSTR(result, 1, 200) AS _result_head",
+    "CASE WHEN refinement_plan IS NOT NULL AND refinement_plan != '' THEN 1 ELSE 0 END AS has_refinement_plan",
+  ].join(", ");
+
+  function attachDerivedFields(rows: unknown[]): unknown[] {
+    return rows.map((raw) => {
+      const r = raw as {
+        _desc_head?: string | null;
+        _result_head?: string | null;
+        has_refinement_plan?: number | boolean;
+      } & Record<string, unknown>;
+      const out: Record<string, unknown> = { ...r };
+      out.parent_task_number = deriveParentTaskNumber(r._desc_head ?? null);
+      out.child_task_numbers = deriveChildTaskNumbers(r._result_head ?? null);
+      out.has_refinement_plan = Boolean(r.has_refinement_plan);
+      delete out._desc_head;
+      delete out._result_head;
+      return out;
+    });
+  }
+
   router.get("/tasks", (req, res) => {
     const t0 = performance.now();
     const status = req.query.status as string | undefined;
-    const tasks = status
-      ? db.prepare(`SELECT ${TASK_SUMMARY_COLS} FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC`).all(status)
-      : db.prepare(`SELECT ${TASK_SUMMARY_COLS} FROM tasks ORDER BY priority DESC, created_at DESC`).all();
+    const rows = status
+      ? db.prepare(`SELECT ${TASK_SUMMARY_COLS}, ${TASK_DERIVED_COLS} FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC`).all(status)
+      : db.prepare(`SELECT ${TASK_SUMMARY_COLS}, ${TASK_DERIVED_COLS} FROM tasks ORDER BY priority DESC, created_at DESC`).all();
+    const tasks = attachDerivedFields(rows);
     sendMeasuredJson(res, "/tasks", t0, tasks);
   });
 
@@ -396,7 +429,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, primaryRepoUrl, urlsJson, overridesJson, now, now);
 
     let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
-    ws.broadcast("task_update", task);
+    ws.broadcast("task_update", buildTaskSummaryUpdate(task));
 
     task = autoDispatchTask(db, ws, id, {
       autoAssign: AUTO_ASSIGN_TASK_ON_CREATE,
@@ -511,7 +544,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
-    ws.broadcast("task_update", task);
+    ws.broadcast("task_update", buildTaskSummaryUpdate(task));
 
     // Trigger auto-QA on manual status change to qa_testing
     if (updates.status === "qa_testing") {
@@ -652,7 +685,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     );
 
     const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    ws.broadcast("task_update", updated);
+    ws.broadcast("task_update", buildTaskSummaryUpdate(updated));
     res.json({ task: updated, index, checked, total });
   });
 
@@ -851,7 +884,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} approved. Advancing to ${next}.`);
 
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    ws.broadcast("task_update", updatedTask);
+    ws.broadcast("task_update", buildTaskSummaryUpdate(updatedTask));
 
     // After refinement approval → auto-dispatch to in_progress if agent is idle
     if (isRefinement && next === "in_progress" && updatedTask.assigned_agent_id) {
@@ -1031,9 +1064,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     }
 
     const updatedParent = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    ws.broadcast("task_update", updatedParent);
+    ws.broadcast("task_update", buildTaskSummaryUpdate(updatedParent));
     for (const child of childTasks) {
-      ws.broadcast("task_update", child);
+      ws.broadcast("task_update", buildTaskSummaryUpdate(child));
     }
 
     db.prepare(
@@ -1188,7 +1221,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         if (isRefinementRevision) {
           const freshTask = fetchTaskById(db, task.id);
           if (freshTask) {
-            ws.broadcast("task_update", freshTask);
+            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
           }
         }
         return res.json({ sent: true, restarted, feedback_path: feedbackPath });
@@ -1204,7 +1237,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         if (isRefinementRevision) {
           const freshTask = fetchTaskById(db, task.id);
           if (freshTask) {
-            ws.broadcast("task_update", freshTask);
+            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
           }
         }
         return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
@@ -1215,7 +1248,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         if (isRefinementRevision) {
           const freshTask = fetchTaskById(db, task.id);
           if (freshTask) {
-            ws.broadcast("task_update", freshTask);
+            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
           }
         }
         return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
@@ -1254,7 +1287,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     const freshTask = fetchTaskById(db, task.id) as Task;
     if (previousStatus === "refinement") {
-      ws.broadcast("task_update", freshTask);
+      ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
     }
     taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus }).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {

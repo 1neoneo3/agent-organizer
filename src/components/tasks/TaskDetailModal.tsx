@@ -91,6 +91,45 @@ function formatDuration(ms: number | null): string {
   return remHour === 0 ? `${totalDays}d` : `${totalDays}d ${remHour}h`;
 }
 
+/**
+ * Skeleton placeholder shown in heavy detail sections (Description /
+ * Implementation Plan / Result / Repos / PR URLs) while the parent
+ * (TaskBoard) is fetching the full Task via `fetchTask(id)`. Lets the
+ * modal render its summary header immediately on list ↔ detail
+ * navigation instead of blocking with a full-screen overlay.
+ */
+function DetailSkeleton({ heading, lineCount = 3 }: { heading: string; lineCount?: number }) {
+  return (
+    <div style={{ marginBottom: "16px" }} aria-busy aria-live="polite">
+      <h3 style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
+        {heading}
+      </h3>
+      <div style={{
+        background: "var(--bg-primary)",
+        borderRadius: "8px",
+        padding: "12px",
+        border: "1px solid var(--border-subtle)",
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+      }}>
+        {Array.from({ length: lineCount }).map((_, i) => (
+          <div
+            key={i}
+            style={{
+              height: "10px",
+              borderRadius: "3px",
+              background: "var(--bg-tertiary)",
+              opacity: 0.6,
+              width: i === lineCount - 1 ? "60%" : "100%",
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RefinementPlanBlock({
   plan,
   testId = "refinement-plan-section",
@@ -122,6 +161,18 @@ function RefinementPlanBlock({
 
 interface TaskDetailModalProps {
   task: Task;
+  /**
+   * When `true`, the heavy sections (Description / Implementation Plan /
+   * Result / Repositories / PR URLs) render skeleton placeholders
+   * instead of "No description" / hidden fallbacks. Summary fields
+   * (header, status, agent, dates) render immediately because they are
+   * already present in the prop's `TaskSummary`-shaped portion.
+   *
+   * The parent (TaskBoard) sets this to `true` while
+   * `fetchTask(selectedTaskId)` is in flight after a list ↔ detail
+   * navigation, then unsets it once the full Task detail arrives.
+   */
+  isLoadingDetail?: boolean;
   agents: Agent[];
   interactivePrompt?: InteractivePrompt;
   on: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
@@ -136,6 +187,7 @@ interface TaskDetailModalProps {
 
 export function TaskDetailModal({
   task,
+  isLoadingDetail = false,
   agents,
   interactivePrompt,
   on,
@@ -462,6 +514,9 @@ export function TaskDetailModal({
           {task.refinement_plan && task.status === "refinement" && (
             <RefinementPlanBlock plan={task.refinement_plan} />
           )}
+          {!task.refinement_plan && task.status === "refinement" && isLoadingDetail && (
+            <DetailSkeleton heading="Implementation Plan" lineCount={4} />
+          )}
 
           {/* Description */}
           {task.description ? (
@@ -478,6 +533,8 @@ export function TaskDetailModal({
                 <MarkdownContent content={task.description} />
               </div>
             </div>
+          ) : isLoadingDetail ? (
+            <DetailSkeleton heading="Description" lineCount={2} />
           ) : (
             <div style={{ marginBottom: "16px" }}>
               <p style={{ fontSize: "13px", color: "var(--text-tertiary)", fontStyle: "italic" }}>No description</p>
@@ -488,6 +545,9 @@ export function TaskDetailModal({
               task has moved past the refinement stage. The approval action bar
               below is gated on status === "refinement" so it never appears in
               this branch. */}
+          {!task.refinement_plan && task.status !== "refinement" && isLoadingDetail && task.has_refinement_plan && (
+            <DetailSkeleton heading="Implementation Plan" lineCount={4} />
+          )}
           {task.refinement_plan && task.status !== "refinement" && (
             <RefinementPlanBlock
               plan={task.refinement_plan}

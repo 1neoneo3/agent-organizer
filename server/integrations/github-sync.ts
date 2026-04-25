@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
 import { execFileSync } from "node:child_process";
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
+import type { Task } from "../types/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import {
@@ -102,8 +104,8 @@ export function syncGithubIssues(
       db.prepare(
         "UPDATE tasks SET title = ?, description = ?, project_path = ?, updated_at = ? WHERE id = ?"
       ).run(title, description, projectPath, now, existing.id);
-      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(existing.id);
-      ws.broadcast("task_update", task);
+      const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(existing.id) as Task | undefined;
+      if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
       updated++;
       continue;
     }
@@ -117,8 +119,8 @@ export function syncGithubIssues(
       ) VALUES (?, ?, ?, NULL, ?, 'inbox', ?, 'medium', ?, NULL, NULL, 0, NULL, NULL, 'github', ?, NULL, NULL, ?, ?)`
     ).run(id, title, description, projectPath, priorityFromLabels(issue), nextTaskNumber(db), externalId, now, now);
 
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-    ws.broadcast("task_update", task);
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
+    if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
     autoDispatchTask(db, ws, id, {
       autoAssign,
       autoRun,

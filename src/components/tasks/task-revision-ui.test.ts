@@ -32,6 +32,9 @@ function createTask(overrides: Partial<TaskSummary> = {}): TaskSummary {
     completed_at: null,
     last_heartbeat_at: null,
     auto_respawn_count: 0,
+    parent_task_number: null,
+    child_task_numbers: null,
+    has_refinement_plan: false,
     created_at: 1,
     updated_at: 1,
     ...overrides,
@@ -53,6 +56,7 @@ describe("getTaskRevisionUi", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
         refinement_completed_at: 1000,
+        has_refinement_plan: true,
       })),
       {
         revisionBadge: null,
@@ -68,6 +72,7 @@ describe("getTaskRevisionUi", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
         refinement_completed_at: 1000,
+        has_refinement_plan: true,
         refinement_revision_requested_at: 2_000,
       })),
       {
@@ -88,6 +93,7 @@ describe("getTaskRevisionUi", () => {
     assert.deepEqual(
       getTaskRevisionUi(createTask({
         refinement_completed_at: 1000,
+        has_refinement_plan: true,
         refinement_revision_requested_at: 2_000,
         refinement_revision_completed_at: 3_000,
       })),
