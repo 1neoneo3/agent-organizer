@@ -191,6 +191,60 @@ describe("reconcileStaleAgentPointers", () => {
 
     assert.equal(released.length, 0, "Map active should be honored");
   });
+
+  it("returns empty result when no agents exist", () => {
+    const ws = createFakeWs();
+    const { released } = reconcileStaleAgentPointers(db, ws as never);
+    assert.equal(released.length, 0);
+    assert.equal(ws.events.length, 0);
+  });
+
+  it("does NOT release a working agent whose task is in a non-terminal active status", () => {
+    const activeStatuses = ["inbox", "refinement", "test_generation", "qa_testing", "pr_review", "human_review"];
+    for (const status of activeStatuses) {
+      const localDb = createDb();
+      insertTask(localDb, `t-${status}`, status);
+      insertAgent(localDb, `a-${status}`, "working", `t-${status}`);
+      const ws = createFakeWs();
+
+      const { released } = reconcileStaleAgentPointers(localDb, ws as never);
+
+      assert.equal(released.length, 0, `should NOT release agent for task in ${status}`);
+      const agent = localDb
+        .prepare(`SELECT status FROM agents WHERE id = 'a-${status}'`)
+        .get() as { status: string };
+      assert.equal(agent.status, "working", `agent should remain working for task in ${status}`);
+      localDb.close();
+    }
+  });
+
+  it("updates the agent's updated_at timestamp on release", () => {
+    const past = Date.now() - 60_000;
+    db.prepare(
+      `INSERT INTO agents (id, name, cli_provider, status, current_task_id, created_at, updated_at)
+       VALUES ('a1', 'agent-a1', 'claude', 'working', 'missing-task', ?, ?)`,
+    ).run(past, past);
+    const ws = createFakeWs();
+
+    reconcileStaleAgentPointers(db, ws as never);
+
+    const agent = db
+      .prepare("SELECT updated_at FROM agents WHERE id = 'a1'")
+      .get() as { updated_at: number };
+    assert.ok(agent.updated_at > past, "updated_at should be bumped forward");
+  });
+
+  it("skips an agent concurrently released between SELECT and UPDATE", () => {
+    insertAgent(db, "a1", "working", "missing-task");
+    const ws = createFakeWs();
+
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL WHERE id = 'a1'").run();
+
+    const { released } = reconcileStaleAgentPointers(db, ws as never);
+
+    assert.equal(released.length, 0, "should skip already-released agent");
+    assert.equal(ws.events.length, 0);
+  });
 });
 
 describe("releaseAgentsForDeletedTask", () => {
@@ -249,5 +303,55 @@ describe("releaseAgentsForDeletedTask", () => {
       .prepare("SELECT id, status FROM agents WHERE id IN ('a1','a2') ORDER BY id")
       .all() as Array<{ id: string; status: string }>;
     for (const r of rows) assert.equal(r.status, "idle");
+  });
+
+  it("cleans up a stale pointer on an idle agent", () => {
+    insertAgent(db, "a1", "idle", "t-gone");
+    const ws = createFakeWs();
+
+    const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
+
+    assert.deepEqual(released, ["a1"]);
+    const agent = db
+      .prepare("SELECT current_task_id FROM agents WHERE id = 'a1'")
+      .get() as { current_task_id: string | null };
+    assert.equal(agent.current_task_id, null);
+  });
+
+  it("cleans up a stale pointer on an offline agent", () => {
+    insertAgent(db, "a1", "offline", "t-gone");
+    const ws = createFakeWs();
+
+    const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
+
+    assert.deepEqual(released, ["a1"]);
+    const agent = db
+      .prepare("SELECT status, current_task_id FROM agents WHERE id = 'a1'")
+      .get() as { status: string; current_task_id: string | null };
+    assert.equal(agent.status, "idle");
+    assert.equal(agent.current_task_id, null);
+  });
+
+  it("updates the agent's updated_at timestamp on release", () => {
+    const past = Date.now() - 60_000;
+    db.prepare(
+      `INSERT INTO agents (id, name, cli_provider, status, current_task_id, created_at, updated_at)
+       VALUES ('a1', 'agent-a1', 'claude', 'working', 't-gone', ?, ?)`,
+    ).run(past, past);
+    const ws = createFakeWs();
+
+    releaseAgentsForDeletedTask(db, ws as never, "t-gone");
+
+    const agent = db
+      .prepare("SELECT updated_at FROM agents WHERE id = 'a1'")
+      .get() as { updated_at: number };
+    assert.ok(agent.updated_at > past, "updated_at should be bumped forward");
+  });
+
+  it("returns empty when no agents exist in the database", () => {
+    const ws = createFakeWs();
+    const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
+    assert.deepEqual(released, []);
+    assert.equal(ws.events.length, 0);
   });
 });
