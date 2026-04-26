@@ -245,6 +245,37 @@ describe("reconcileStaleAgentPointers", () => {
     assert.equal(released.length, 0, "should skip already-released agent");
     assert.equal(ws.events.length, 0);
   });
+
+  it("does NOT release idle or offline agents pointing at done/cancelled tasks", () => {
+    insertTask(db, "t-done", "done");
+    insertTask(db, "t-cancel", "cancelled");
+    insertAgent(db, "idle-agent", "idle", "t-done");
+    insertAgent(db, "offline-agent", "offline", "t-cancel");
+    const ws = createFakeWs();
+
+    const { released } = reconcileStaleAgentPointers(db, ws as never);
+
+    assert.equal(released.length, 0, "reconcile only targets working agents");
+    const idleAgent = db
+      .prepare("SELECT current_task_id FROM agents WHERE id = 'idle-agent'")
+      .get() as { current_task_id: string | null };
+    assert.equal(idleAgent.current_task_id, "t-done", "idle agent pointer untouched");
+    const offlineAgent = db
+      .prepare("SELECT current_task_id FROM agents WHERE id = 'offline-agent'")
+      .get() as { current_task_id: string | null };
+    assert.equal(offlineAgent.current_task_id, "t-cancel", "offline agent pointer untouched");
+  });
+
+  it("does not release a working agent whose missing task has a live process", () => {
+    insertAgent(db, "a1", "working", "deleted-but-active");
+    const ws = createFakeWs();
+
+    const { released } = reconcileStaleAgentPointers(db, ws as never, {
+      activeTaskIds: new Set(["deleted-but-active"]),
+    });
+
+    assert.equal(released.length, 0, "active process protects even missing tasks");
+  });
 });
 
 describe("releaseAgentsForDeletedTask", () => {
@@ -353,5 +384,21 @@ describe("releaseAgentsForDeletedTask", () => {
     const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
     assert.deepEqual(released, []);
     assert.equal(ws.events.length, 0);
+  });
+
+  it("skips an agent whose pointer changed between SELECT and UPDATE", () => {
+    insertAgent(db, "a1", "working", "t-gone");
+    const ws = createFakeWs();
+
+    db.prepare("UPDATE agents SET current_task_id = 'other-task' WHERE id = 'a1'").run();
+
+    const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
+
+    assert.deepEqual(released, [], "should skip agent whose pointer diverged");
+    const agent = db
+      .prepare("SELECT status, current_task_id FROM agents WHERE id = 'a1'")
+      .get() as { status: string; current_task_id: string | null };
+    assert.equal(agent.status, "working", "agent remains working");
+    assert.equal(agent.current_task_id, "other-task", "agent pointer preserved");
   });
 });
