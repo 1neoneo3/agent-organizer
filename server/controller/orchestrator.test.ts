@@ -5,9 +5,11 @@ import { SCHEMA_SQL } from "../db/schema.js";
 import type { Directive } from "../types/runtime.js";
 import {
   findUnsafeWriteScopeOverlap,
+  isControllerStage,
   isControllerTaskStartable,
   reconcileControllerDirective,
   splitDirectiveIntoControllerTasks,
+  summarizeControllerDirective,
 } from "./orchestrator.js";
 
 function createDb(): DatabaseSync {
@@ -169,6 +171,232 @@ describe("controller orchestrator", () => {
     assert.equal(updated?.controller_stage, "blocked");
     const verifyTask = db.prepare("SELECT * FROM tasks WHERE task_number = 'T02'").get() as any;
     assert.equal(isControllerTaskStartable(db, verifyTask), false);
+  });
+
+  it("rejects splits that contain duplicate task_numbers", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+
+    assert.throws(
+      () =>
+        splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+          { task_number: "T01", title: "A", controller_stage: "implement" },
+          { task_number: "T01", title: "B", controller_stage: "verify" },
+        ]),
+      /Duplicate task_number/,
+    );
+
+    const created = db.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number };
+    assert.equal(created.n, 0);
+  });
+
+  it("rejects splits whose depends_on points at a non-existent task_number", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+
+    assert.throws(
+      () =>
+        splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+          { task_number: "T01", title: "A", controller_stage: "implement" },
+          {
+            task_number: "T02",
+            title: "B",
+            controller_stage: "verify",
+            depends_on: ["T99"],
+          },
+        ]),
+      /depends_on unknown task_number: T99/,
+    );
+
+    const created = db.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number };
+    assert.equal(created.n, 0);
+  });
+
+  it("rejects splits where parallel implement children share a write_scope file", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+
+    assert.throws(
+      () =>
+        splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+          {
+            task_number: "T01",
+            title: "A",
+            controller_stage: "implement",
+            write_scope: ["server/shared.ts"],
+          },
+          {
+            task_number: "T02",
+            title: "B",
+            controller_stage: "implement",
+            write_scope: ["server/shared.ts"],
+          },
+        ]),
+      /overlap write_scope/,
+    );
+  });
+
+  it("allows verify-stage children to share write_scope (only implement is gated)", () => {
+    const overlap = findUnsafeWriteScopeOverlap([
+      {
+        task_number: "T01",
+        title: "Verify A",
+        controller_stage: "verify",
+        write_scope: ["server/a.ts"],
+      },
+      {
+        task_number: "T02",
+        title: "Verify B",
+        controller_stage: "verify",
+        write_scope: ["server/a.ts"],
+      },
+    ]);
+    assert.equal(overlap, null);
+  });
+
+  it("normalizes write_scope (dedup, trim, sort) before persisting", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+
+    const result = splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+      {
+        task_number: "T01",
+        title: "Implement",
+        controller_stage: "implement",
+        write_scope: [" server/b.ts ", "server/a.ts", "server/a.ts", ""],
+      },
+    ]);
+
+    assert.deepStrictEqual(JSON.parse(result.tasks[0].write_scope ?? "[]"), [
+      "server/a.ts",
+      "server/b.ts",
+    ]);
+  });
+
+  it("isControllerTaskStartable returns true for non-controller tasks (no directive_id / no stage)", () => {
+    const db = createDb();
+    const taskWithoutDirective = {
+      directive_id: null,
+      controller_stage: null,
+    } as never;
+    assert.equal(isControllerTaskStartable(db, taskWithoutDirective), true);
+
+    const directive = insertDirective(db, { id: "d-non-ctrl", controller_mode: 0 });
+    const taskOnNonControllerDirective = {
+      directive_id: directive.id,
+      controller_stage: "implement",
+    } as never;
+    assert.equal(isControllerTaskStartable(db, taskOnNonControllerDirective), true);
+  });
+
+  it("reconcileControllerDirective is a no-op for missing / completed / cancelled directives", () => {
+    const db = createDb();
+    const ws = createWs();
+
+    assert.equal(reconcileControllerDirective(createCtx(db, ws), "missing-id"), undefined);
+
+    const completed = insertDirective(db, {
+      id: "d-completed",
+      controller_mode: 1,
+      status: "completed",
+      controller_stage: "completed",
+    });
+    const result = reconcileControllerDirective(createCtx(db, ws), completed.id);
+    assert.equal(result?.id, completed.id);
+    assert.equal(result?.status, "completed");
+    // No update broadcast should fire for a terminal directive.
+    assert.equal(ws.sent.length, 0);
+  });
+
+  it("reconcileControllerDirective is a no-op when no controller tasks exist yet", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db, { controller_mode: 1, status: "pending" });
+
+    const result = reconcileControllerDirective(createCtx(db, ws), directive.id);
+
+    assert.equal(result?.id, directive.id);
+    assert.equal(result?.status, "pending");
+    assert.equal(ws.sent.length, 0);
+  });
+
+  it("isControllerStage validates the public stage names", () => {
+    assert.equal(isControllerStage("implement"), true);
+    assert.equal(isControllerStage("verify"), true);
+    assert.equal(isControllerStage("integrate"), true);
+    assert.equal(isControllerStage("blocked"), false);
+    assert.equal(isControllerStage("completed"), false);
+    assert.equal(isControllerStage("unknown"), false);
+  });
+
+  it("summarizeControllerDirective groups tasks by stage", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+    splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+      { task_number: "T01", title: "Impl A", controller_stage: "implement" },
+      { task_number: "T02", title: "Impl B", controller_stage: "implement" },
+      { task_number: "T03", title: "Verify", controller_stage: "verify", depends_on: ["T01", "T02"] },
+      { task_number: "T04", title: "Integrate", controller_stage: "integrate", depends_on: ["T03"] },
+    ]);
+
+    const summary = summarizeControllerDirective(db, directive.id);
+
+    assert.equal(summary.directive?.id, directive.id);
+    assert.equal(summary.tasks.length, 4);
+    assert.equal(summary.stages.implement.length, 2);
+    assert.equal(summary.stages.verify.length, 1);
+    assert.equal(summary.stages.integrate.length, 1);
+    assert.equal(summary.stages.implement[0].task_number, "T01");
+  });
+
+  it("summarizeControllerDirective returns empty stages for an unknown directive", () => {
+    const db = createDb();
+    const summary = summarizeControllerDirective(db, "missing");
+    assert.equal(summary.directive, undefined);
+    assert.equal(summary.tasks.length, 0);
+    assert.deepStrictEqual(
+      [summary.stages.implement.length, summary.stages.verify.length, summary.stages.integrate.length],
+      [0, 0, 0],
+    );
+  });
+
+  it("does not regress controller_stage when re-reconciled at the same stage", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+    splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+      { task_number: "T01", title: "A", controller_stage: "implement" },
+      { task_number: "T02", title: "B", controller_stage: "implement" },
+      { task_number: "T03", title: "Verify", controller_stage: "verify", depends_on: ["T01", "T02"] },
+    ]);
+
+    // Only one of two implement tasks done => still in implement.
+    db.prepare("UPDATE tasks SET status = 'done' WHERE task_number = 'T01' AND directive_id = ?").run(directive.id);
+    const stillImplement = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    assert.equal(stillImplement?.controller_stage, "implement");
+
+    db.prepare("UPDATE tasks SET status = 'done' WHERE task_number = 'T02' AND directive_id = ?").run(directive.id);
+    const advanced = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    assert.equal(advanced?.controller_stage, "verify");
+  });
+
+  it("skips missing stages when advancing (implement -> integrate when no verify exists)", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+    splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+      { task_number: "T01", title: "Impl", controller_stage: "implement" },
+      { task_number: "T02", title: "Integrate", controller_stage: "integrate", depends_on: ["T01"] },
+    ]);
+
+    db.prepare("UPDATE tasks SET status = 'done' WHERE task_number = 'T01' AND directive_id = ?").run(directive.id);
+    const advanced = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    assert.equal(advanced?.controller_stage, "integrate");
   });
 
   it("copies integrate result to the directive idempotently", () => {
