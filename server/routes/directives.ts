@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Directive } from "../types/runtime.js";
 import { decomposeDirective, getDecomposeLogs } from "../spawner/decomposer.js";
+import {
+  CONTROLLER_STAGES,
+  reconcileControllerDirective,
+  splitDirectiveIntoControllerTasks,
+  summarizeControllerDirective,
+} from "../controller/orchestrator.js";
 
 const CreateDirectiveSchema = z.object({
   title: z.string().min(1).max(500),
@@ -13,6 +19,8 @@ const CreateDirectiveSchema = z.object({
   issued_by_id: z.string().nullish(),
   project_path: z.string().nullish(),
   auto_decompose: z.boolean().default(false),
+  controller_mode: z.boolean().default(false),
+  controller_stage: z.enum(CONTROLLER_STAGES).nullish(),
 });
 
 const UpdateDirectiveSchema = z.object({
@@ -20,6 +28,24 @@ const UpdateDirectiveSchema = z.object({
   content: z.string().min(1).optional(),
   status: z.enum(["pending", "decomposing", "active", "completed", "cancelled"]).optional(),
   project_path: z.string().nullish(),
+  controller_mode: z.boolean().optional(),
+  controller_stage: z.enum([...CONTROLLER_STAGES, "blocked", "completed"] as const).nullish(),
+});
+
+const ControllerChildSchema = z.object({
+  task_number: z.string().min(1).max(32),
+  title: z.string().min(1).max(500),
+  description: z.string().nullish(),
+  controller_stage: z.enum(CONTROLLER_STAGES),
+  controller_role: z.string().min(1).max(80).nullish(),
+  write_scope: z.array(z.string().min(1)).default([]),
+  depends_on: z.array(z.string().min(1)).default([]),
+  priority: z.number().int().min(0).max(10).default(0),
+  task_size: z.enum(["small", "medium", "large"]).default("small"),
+});
+
+const ControllerSplitSchema = z.object({
+  children: z.array(ControllerChildSchema).min(1).max(30),
 });
 
 export function createDirectivesRouter(ctx: RuntimeContext): Router {
@@ -51,12 +77,12 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
 
     const id = randomUUID();
     const now = Date.now();
-    const { title, content, issued_by_type, issued_by_id, project_path, auto_decompose } = parsed.data;
+    const { title, content, issued_by_type, issued_by_id, project_path, auto_decompose, controller_mode, controller_stage } = parsed.data;
 
     db.prepare(
-      `INSERT INTO directives (id, title, content, issued_by_type, issued_by_id, status, project_path, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
-    ).run(id, title, content, issued_by_type, issued_by_id ?? null, project_path ?? null, now, now);
+      `INSERT INTO directives (id, title, content, issued_by_type, issued_by_id, status, project_path, controller_mode, controller_stage, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`
+    ).run(id, title, content, issued_by_type, issued_by_id ?? null, project_path ?? null, controller_mode ? 1 : 0, controller_stage ?? null, now, now);
 
     const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(id) as unknown as Directive;
     ws.broadcast("directive_update", directive);
@@ -86,8 +112,13 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
 
     for (const [key, value] of Object.entries(updates)) {
       if (value !== undefined) {
-        fields.push(`${key} = ?`);
-        values.push((value ?? null) as string | number | null);
+        if (key === "controller_mode") {
+          fields.push(`${key} = ?`);
+          values.push(value ? 1 : 0);
+        } else {
+          fields.push(`${key} = ?`);
+          values.push((value ?? null) as string | number | null);
+        }
       }
     }
     fields.push("updated_at = ?");
@@ -140,6 +171,43 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
       "SELECT * FROM tasks WHERE directive_id = ? ORDER BY task_number ASC, priority DESC, created_at ASC"
     ).all(req.params.id);
     res.json(tasks);
+  });
+
+  router.post("/directives/:id/controller/split", (req, res) => {
+    const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(req.params.id) as Directive | undefined;
+    if (!directive) return res.status(404).json({ error: "not_found" });
+    if (directive.status === "cancelled") return res.status(409).json({ error: "directive_cancelled" });
+
+    const existingControllerTasks = db.prepare(
+      "SELECT id FROM tasks WHERE directive_id = ? AND controller_stage IS NOT NULL LIMIT 1",
+    ).get(directive.id);
+    if (existingControllerTasks) {
+      return res.status(409).json({ error: "controller_tasks_already_exist" });
+    }
+
+    const parsed = ControllerSplitSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    try {
+      const result = splitDirectiveIntoControllerTasks(ctx, directive, parsed.data.children);
+      res.status(201).json(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: "invalid_controller_split", message });
+    }
+  });
+
+  router.post("/directives/:id/controller/reconcile", (req, res) => {
+    const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(req.params.id) as Directive | undefined;
+    if (!directive) return res.status(404).json({ error: "not_found" });
+    const updated = reconcileControllerDirective(ctx, directive.id);
+    res.json({ directive: updated, summary: summarizeControllerDirective(db, directive.id) });
+  });
+
+  router.get("/directives/:id/controller", (req, res) => {
+    const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(req.params.id);
+    if (!directive) return res.status(404).json({ error: "not_found" });
+    res.json(summarizeControllerDirective(db, req.params.id));
   });
 
   // Get plan document for a directive

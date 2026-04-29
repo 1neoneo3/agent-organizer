@@ -137,6 +137,7 @@ export const SETTINGS_DEFAULTS = {
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
   auto_qa: "true" as const, // "true" | "false" — auto-trigger QA agent on qa_testing
   auto_dispatch_mode: "all_inbox" as const, // "disabled" | "github_only" | "all_inbox"
+  enable_controller_mode: "false" as const, // "true" | "false" — opt-in directive controller orchestration
   // Phase 1: run tsc / lint / tests / e2e in parallel at pr_review entry.
   // Enabled by default so new installations benefit immediately; the
   // module is a no-op unless at least one `check_*_cmd` is configured

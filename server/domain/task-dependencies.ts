@@ -48,17 +48,22 @@ export function parseDependsOn(rawDependsOn: string | null): string[] {
  */
 export function getBlockingDependencies(
   db: DatabaseSync,
-  task: { depends_on: string | null },
+  task: { depends_on: string | null; directive_id?: string | null },
 ): BlockingDependency[] {
   const deps = parseDependsOn(task.depends_on);
   if (deps.length === 0) return [];
 
   const blocking: BlockingDependency[] = [];
-  const selectStmt = db.prepare(
+  const selectGlobalStmt = db.prepare(
     "SELECT task_number, status FROM tasks WHERE task_number = ? LIMIT 1",
   );
+  const selectScopedStmt = db.prepare(
+    "SELECT task_number, status FROM tasks WHERE directive_id = ? AND task_number = ? LIMIT 1",
+  );
   for (const depNumber of deps) {
-    const row = selectStmt.get(depNumber) as
+    const row = (task.directive_id
+      ? selectScopedStmt.get(task.directive_id, depNumber)
+      : selectGlobalStmt.get(depNumber)) as
       | { task_number: string; status: string }
       | undefined;
     if (!row) {
@@ -80,7 +85,7 @@ export function getBlockingDependencies(
  */
 export function hasBlockingDependencies(
   db: DatabaseSync,
-  task: { depends_on: string | null },
+  task: { depends_on: string | null; directive_id?: string | null },
 ): boolean {
   return getBlockingDependencies(db, task).length > 0;
 }
@@ -213,7 +218,7 @@ export function isBlocked(blockers: TaskBlockers): boolean {
  */
 export function collectAllBlockers(
   db: DatabaseSync,
-  task: { id: string; depends_on: string | null; planned_files: string | null },
+  task: { id: string; depends_on: string | null; planned_files: string | null; directive_id?: string | null },
 ): TaskBlockers {
   return {
     dependencies: getBlockingDependencies(db, task),

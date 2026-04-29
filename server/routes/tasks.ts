@@ -44,6 +44,7 @@ import {
   TASK_OVERRIDABLE_KEYS,
   validateOverridesPatch,
 } from "../domain/task-settings.js";
+import { reconcileControllerDirective } from "../controller/orchestrator.js";
 
 // Accept overrides as a flat string→string record on create/update so
 // callers can seed stage toggles (default_enable_refinement, review_mode,
@@ -276,6 +277,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   const TASK_SUMMARY_COLS = [
     "id", "title", "assigned_agent_id", "project_path", "status",
     "priority", "task_size", "task_number", "depends_on",
+    "controller_stage", "controller_role",
     "refinement_completed_at", "refinement_revision_requested_at",
     "refinement_revision_completed_at", "review_count", "directive_id",
     "pr_url", "external_source", "external_id", "review_branch",
@@ -544,6 +546,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
+    if (task.directive_id && task.controller_stage) {
+      reconcileControllerDirective(ctx, task.directive_id);
+    }
     ws.broadcast("task_update", buildTaskSummaryUpdate(task));
 
     // Trigger auto-QA on manual status change to qa_testing
