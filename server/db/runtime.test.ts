@@ -697,6 +697,200 @@ describe("initializeDb", () => {
   });
 });
 
+describe("backfillPlannedFilesFromExistingPlans", () => {
+  // Pin the contract for the file-conflict gate's "static" side: every
+  // task that already has a refinement_plan but a NULL/empty
+  // planned_files column gets retroactively populated on boot. The
+  // backfill is idempotent and must never overwrite an existing
+  // non-empty value (preserves any prior persist that won the race).
+
+  it("extracts files from a JA-headed plan into planned_files on boot", async () => {
+    const { initializeDb, backfillPlannedFilesFromExistingPlans } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, refinement_plan, planned_files, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "bf-ja",
+      "JA backfill",
+      "in_progress",
+      "small",
+      [
+        "---REFINEMENT PLAN---",
+        "## 変更対象ファイル",
+        "- `server/routes/tasks.ts` — extend",
+        "- `server/domain/task-rules.ts` — new",
+        "---END REFINEMENT---",
+      ].join("\n"),
+      null,
+      now,
+      now,
+    );
+
+    backfillPlannedFilesFromExistingPlans(db);
+
+    const row = db
+      .prepare("SELECT planned_files FROM tasks WHERE id = ?")
+      .get("bf-ja") as { planned_files: string | null };
+
+    assert.deepEqual(JSON.parse(row.planned_files ?? "[]"), [
+      "server/routes/tasks.ts",
+      "server/domain/task-rules.ts",
+    ]);
+  });
+
+  it("leaves planned_files NULL when the existing plan has no recognized heading", async () => {
+    // Empty extraction must NOT write `[]` — NULL is the gate's
+    // "no static overlap info" sentinel.
+    const { initializeDb, backfillPlannedFilesFromExistingPlans } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, refinement_plan, planned_files, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "bf-no-heading",
+      "No heading",
+      "in_progress",
+      "small",
+      "---REFINEMENT PLAN---\n## Background\nprose only\n---END REFINEMENT---",
+      null,
+      now,
+      now,
+    );
+
+    backfillPlannedFilesFromExistingPlans(db);
+
+    const row = db
+      .prepare("SELECT planned_files FROM tasks WHERE id = ?")
+      .get("bf-no-heading") as { planned_files: string | null };
+
+    assert.equal(
+      row.planned_files,
+      null,
+      "no recognized heading must leave planned_files NULL, not '[]'",
+    );
+  });
+
+  it("does not overwrite an existing non-empty planned_files row (idempotency)", async () => {
+    // Re-running the backfill on an already-populated row must be a
+    // no-op even if extracting the plan would produce a different
+    // result. Manual fixes via SQL console must survive boot.
+    const { initializeDb, backfillPlannedFilesFromExistingPlans } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const existing = JSON.stringify(["src/manually-set.ts"]);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, refinement_plan, planned_files, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "bf-existing",
+      "Already populated",
+      "in_progress",
+      "small",
+      [
+        "---REFINEMENT PLAN---",
+        "## Files to Modify",
+        "- `src/extracted-would-be.ts` — different from manual",
+        "---END REFINEMENT---",
+      ].join("\n"),
+      existing,
+      now,
+      now,
+    );
+
+    backfillPlannedFilesFromExistingPlans(db);
+    backfillPlannedFilesFromExistingPlans(db); // second pass — must remain identical
+
+    const row = db
+      .prepare("SELECT planned_files FROM tasks WHERE id = ?")
+      .get("bf-existing") as { planned_files: string | null };
+
+    assert.equal(
+      row.planned_files,
+      existing,
+      "non-empty planned_files must never be overwritten by backfill",
+    );
+  });
+
+  it("treats `planned_files = ''` as 'untouched' and backfills it", async () => {
+    // Older write paths may have persisted empty literals. The contract
+    // is JSON-or-NULL, so '' is normalized to "needs backfill".
+    const { initializeDb, backfillPlannedFilesFromExistingPlans } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, refinement_plan, planned_files, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "bf-empty-string",
+      "Empty literal",
+      "in_progress",
+      "small",
+      [
+        "---REFINEMENT PLAN---",
+        "## Files to Modify (planned)",
+        "- `src/recovered.ts` — extracted via parens-supporting regex",
+        "---END REFINEMENT---",
+      ].join("\n"),
+      "", // empty string sentinel
+      now,
+      now,
+    );
+
+    backfillPlannedFilesFromExistingPlans(db);
+
+    const row = db
+      .prepare("SELECT planned_files FROM tasks WHERE id = ?")
+      .get("bf-empty-string") as { planned_files: string | null };
+
+    assert.deepEqual(JSON.parse(row.planned_files ?? "[]"), ["src/recovered.ts"]);
+  });
+
+  it("runs from initializeDb() unconditionally (existing-column boot path)", async () => {
+    // CEO concern: if backfill lived inside the migration's early
+    // return, environments that already had the column wouldn't get
+    // the retroactive fix. Verify a row inserted between two boots
+    // gets backfilled by the SECOND initializeDb() call.
+    const { initializeDb } = await import("./runtime.js");
+    const db1 = initializeDb();
+
+    const now = Date.now();
+    db1.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, refinement_plan, planned_files, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "bf-second-boot",
+      "Second boot backfill",
+      "in_progress",
+      "small",
+      [
+        "---REFINEMENT PLAN---",
+        "## Files to Modify",
+        "- `src/lib.ts` — extracted on boot",
+        "---END REFINEMENT---",
+      ].join("\n"),
+      null,
+      now,
+      now,
+    );
+
+    // Second initializeDb on the same DB_PATH must run the backfill
+    // even though the planned_files column already existed.
+    const db2 = initializeDb();
+    const row = db2
+      .prepare("SELECT planned_files FROM tasks WHERE id = ?")
+      .get("bf-second-boot") as { planned_files: string | null };
+
+    assert.deepEqual(JSON.parse(row.planned_files ?? "[]"), ["src/lib.ts"]);
+  });
+});
+
 describe("initializeDb dbPath parameter", () => {
   it("accepts :memory: and returns a fully-migrated in-memory database", async () => {
     const { initializeDb } = await import("./runtime.js");

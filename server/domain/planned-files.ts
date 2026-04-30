@@ -23,6 +23,7 @@
 export const PLANNED_FILES_HEADINGS = [
   "Files to Modify",
   "Files To Modify",
+  "変更対象ファイル",
   "修正するファイル",
   "変更するファイル",
   "編集するファイル",
@@ -63,10 +64,17 @@ const BULLET_PATH_RE = /^\s*[-*•]\s*`([^`\n]+)`/;
 /**
  * Regex that matches any of the recognized "files to modify" headings.
  * `##` level is expected but the helper tolerates `###` as well.
+ *
+ * Trailing tolerance is deliberately narrow: only whitespace, or a single
+ * parenthesized annotation (e.g. `(planned)`, `(Files to Modify)`) is
+ * allowed after the heading word. Plain trailing tokens are rejected so
+ * `## Files to Modify Backup` and `## Files to Modify Or Skip` do NOT
+ * match — they are not the planned-files section and picking them up
+ * would silently feed wrong paths into the file-conflict gate.
  */
 function buildHeadingRegex(): RegExp {
   const alt = PLANNED_FILES_HEADINGS.map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  return new RegExp(`^#{2,3}\\s*(?:${alt})\\s*$`, "m");
+  return new RegExp(`^#{2,3}\\s*(?:${alt})\\s*(?:\\([^()\\n]+\\)\\s*)?$`, "m");
 }
 
 const HEADING_RE = buildHeadingRegex();
