@@ -319,20 +319,21 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     assert.equal(picked?.id, "lead-1");
   });
 
-  it("falls back to pickIdleAgent when no agent matches the override role", () => {
+  it("returns undefined when the override is configured but no matching idle agent exists (strict mode)", () => {
     const db = createDb();
     setSetting(db, "default_enable_refinement", "true");
     setSetting(db, "refinement_agent_role", "planner");
 
-    // No planner agent exists.
+    // No planner agent exists. Strict semantics: do NOT fall back to a
+    // non-matching agent, leave the task in inbox so the periodic
+    // dispatcher can retry once a matching agent appears.
     insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
     const task = insertTask(db, { project_path: null });
 
-    const picked = pickInboxAgent(db, task);
-    assert.equal(picked?.id, "lead-1");
+    assert.equal(pickInboxAgent(db, task), undefined);
   });
 
-  it("falls back when the override agent is busy", () => {
+  it("returns undefined when the override matches an agent that is currently busy (strict mode)", () => {
     const db = createDb();
     setSetting(db, "default_enable_refinement", "true");
     setSetting(db, "refinement_agent_role", "planner");
@@ -347,8 +348,7 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
     const task = insertTask(db, { project_path: null });
 
-    const picked = pickInboxAgent(db, task);
-    assert.equal(picked?.id, "lead-1");
+    assert.equal(pickInboxAgent(db, task), undefined);
   });
 
   it("returns undefined when no idle agent is available at all", () => {
@@ -428,7 +428,7 @@ describe("autoDispatchTask + refinement_agent settings (integration)", () => {
     assert.equal(row.assigned_agent_id, "planner-1");
   });
 
-  it("falls back to legacy round-robin assignment when refinement override does not match", () => {
+  it("leaves the task unassigned when the refinement override is configured but no matching agent exists (strict mode)", () => {
     const db = createDb();
     const ws = createWs();
     setSetting(db, "default_enable_refinement", "true");
@@ -446,6 +446,7 @@ describe("autoDispatchTask + refinement_agent settings (integration)", () => {
     const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get("task-1") as {
       assigned_agent_id: string | null;
     };
-    assert.equal(row.assigned_agent_id, "lead-1");
+    // Strict: configured_no_match must not silently fall back to lead-1.
+    assert.equal(row.assigned_agent_id, null);
   });
 });

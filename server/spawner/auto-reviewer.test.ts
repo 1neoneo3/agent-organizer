@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
-import { triggerAutoReview, findReviewAgents } from "./auto-reviewer.js";
+import { triggerAutoReview, findReviewAgents, resolveReviewPanel } from "./auto-reviewer.js";
 
 function createDbForMissingTask() {
   const calls: Array<{ sql: string; args: unknown[] }> = [];
@@ -374,16 +374,49 @@ describe("findReviewAgents (settings override integration)", () => {
     assert.equal(panel.length, 0);
   });
 
-  it("falls back to the role-based code_reviewer when no override matches", () => {
+  it("strict mode: skips the panel (empty assignments via findReviewAgents) when override is configured but no agent matches", () => {
     const db = createDb();
     insertAgent(db, { id: "code-1", role: "code_reviewer", cli_model: "gpt-5.5" });
-    // Override targets a model nobody runs.
+    // Override targets a model nobody runs — must NOT silently fall
+    // back to the role-based code_reviewer.
     setSetting(db, "review_agent_role", "code_reviewer");
     setSetting(db, "review_agent_model", "claude-opus-4-7");
 
+    const decision = resolveReviewPanel(db as never, null);
+    assert.equal(decision.kind, "skip");
+    if (decision.kind === "skip") {
+      assert.match(decision.reason, /no matching idle worker/i);
+    }
+    // Backward-compatible wrapper flattens skip → empty array.
     const panel = findReviewAgents(db as never, null);
-    const codeSlot = panel.find((a) => a.role === "code");
-    assert.equal(codeSlot?.agent.id, "code-1");
+    assert.equal(panel.length, 0);
+  });
+
+  it("strict mode: returns skip when only the implementer matches the override (configured_no_match via excludeIds)", () => {
+    const db = createDb();
+    insertAgent(db, { id: "impl-1", role: "code_reviewer", cli_model: "gpt-5.5" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+
+    const decision = resolveReviewPanel(db as never, "impl-1");
+    assert.equal(decision.kind, "skip");
+  });
+
+  it("strict mode: pairs the override match with an idle security_reviewer secondary slot", () => {
+    const db = createDb();
+    insertAgent(db, { id: "code-override", role: "code_reviewer", cli_model: "claude-opus-4-7" });
+    insertAgent(db, { id: "sec-1", role: "security_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setSetting(db, "review_agent_model", "claude-opus-4-7");
+
+    const decision = resolveReviewPanel(db as never, null);
+    assert.equal(decision.kind, "panel");
+    if (decision.kind === "panel") {
+      assert.equal(decision.assignments.length, 2);
+      assert.equal(decision.assignments[0].agent.id, "code-override");
+      assert.equal(decision.assignments[0].role, "code");
+      assert.equal(decision.assignments[1].agent.id, "sec-1");
+      assert.equal(decision.assignments[1].role, "security");
+    }
   });
 
   it("override agent does not block the security reviewer secondary slot", () => {

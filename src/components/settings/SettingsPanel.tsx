@@ -20,25 +20,25 @@ const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
     roleKey: "refinement_agent_role",
     modelKey: "refinement_agent_model",
     label: "Plan Stage",
-    description: "Filter plan-stage workers by role and/or model. A random idle match is selected before falling back to the normal resolver.",
+    description: "Filter plan-stage workers by role and/or model. The filter is treated as a hard constraint: when configured but no matching idle worker is available this tick, dispatch is skipped and retried next tick rather than falling back to a non-matching agent.",
   },
   {
     roleKey: "review_agent_role",
     modelKey: "review_agent_model",
     label: "PR Review Stage",
-    description: "Filter the primary PR reviewer by role and/or model. The security_reviewer secondary slot still applies.",
+    description: "Filter the primary PR reviewer by role and/or model. Treated as a hard constraint: when configured but no matching idle worker is available, the review is skipped and retried on the next pr_review trigger. The security_reviewer secondary slot still applies.",
   },
   {
     roleKey: "qa_agent_role",
     modelKey: "qa_agent_model",
     label: "QA Testing Stage",
-    description: "Filter QA workers by role and/or model. A random idle match is selected before falling back to the default tester selection.",
+    description: "Filter QA workers by role and/or model. Treated as a hard constraint: when configured but no matching idle worker is available, QA is skipped and retried on the next qa_testing trigger rather than falling back to the default tester.",
   },
   {
     roleKey: "test_generation_agent_role",
     modelKey: "test_generation_agent_model",
     label: "Test Generation Stage",
-    description: "Filter test-generation workers by role and/or model. A random idle match is selected before falling back to the default tester selection.",
+    description: "Filter test-generation workers by role and/or model. Treated as a hard constraint: when configured but no matching idle worker is available, test generation is skipped and retried on the next trigger rather than falling back to the default tester.",
   },
 ];
 
@@ -333,7 +333,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         <section>
           <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Stage-Specific Agent Assignments</h3>
           <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
-            Override the default role-based agent selection for each workflow stage. When a stage has a role and/or model filter, the system chooses a random idle worker that matches the configured combination. If no worker matches at dispatch time, it falls back to the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.
+            Override the default role-based agent selection for each workflow stage. When a stage has a role and/or model filter, the system chooses a random idle worker that matches the configured combination. The filter is treated as a <strong>hard constraint</strong>: if no idle worker matches at dispatch time the stage is skipped and retried on the next tick rather than falling back to a non-matching agent. Leave both fields empty to use the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             {STAGE_AGENT_OPTIONS.map((option) => (

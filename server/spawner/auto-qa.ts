@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
-import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
+import { resolveStageAgentSelection } from "./stage-agent-resolver.js";
 import { handleSpawnFailure } from "./spawn-failures.js";
 
 /**
@@ -48,7 +48,12 @@ export async function triggerAutoQa(
   }
 
   // Find a suitable QA agent
-  const tester = findQaAgent(db, currentTask.assigned_agent_id);
+  const decision = resolveQaAgent(db, currentTask.assigned_agent_id);
+  if (decision.kind === "skip") {
+    logSystem(db, currentTask.id, decision.reason);
+    return;
+  }
+  const tester = decision.agent;
   if (!tester) {
     logSystem(db, currentTask.id, "Auto QA skipped: no idle tester agent available");
     return;
@@ -81,39 +86,72 @@ function countQaIterations(db: DatabaseSync, taskId: string): number {
 }
 
 /**
- * Find an idle agent suitable for QA testing.
+ * Discriminated decision for the QA agent search.
  *
- * Priority:
- *  1. Idle agent with role "tester" (excluding the implementer)
- *  2. Any idle worker agent (excluding the implementer)
+ *  - `agent`: a worker has been chosen — `agent` may still be
+ *    `undefined` when neither the override nor the role-based
+ *    fallback turned up an idle worker (e.g. nobody registered).
+ *  - `skip`: `qa_agent_role` / `qa_agent_model` is configured but no
+ *    matching idle worker is reachable. The caller must NOT fall back
+ *    to a generic tester / worker; instead it should log + return so
+ *    the next qa_testing trigger picks up the configured worker.
  */
-function findQaAgent(
+export type QaAgentDecision =
+  | { kind: "agent"; agent: Agent | undefined }
+  | { kind: "skip"; reason: string };
+
+/**
+ * Pick an idle agent for the QA stage. Honours the
+ * `qa_agent_role` / `qa_agent_model` override as a hard constraint:
+ * configured + match → use it, configured + no match → skip.
+ *
+ * When the override is unconfigured, falls back to the legacy priority:
+ *  1. an idle agent with role "tester" (excluding the implementer)
+ *  2. any idle worker agent (excluding the implementer)
+ *
+ * Exported so the selector can be exercised by node:test without
+ * spawning an external process.
+ */
+export function resolveQaAgent(
   db: DatabaseSync,
   implementerAgentId: string | null,
-): Agent | undefined {
-  // Settings override: explicit QA role/model filter wins when at least
-  // one idle worker matches and is not the implementer.
-  const override = resolveStageAgentOverride(
+): QaAgentDecision {
+  const overrideResult = resolveStageAgentSelection(
     db,
     "qa_agent_role",
     "qa_agent_model",
-    [implementerAgentId],
+    { excludeIds: [implementerAgentId] },
   );
-  if (override) return override;
 
-  // Try tester role first
-  const testerByRole = db.prepare(
-    "SELECT * FROM agents WHERE role = 'tester' AND status = 'idle' AND id != ? LIMIT 1"
-  ).get(implementerAgentId ?? "") as Agent | undefined;
+  if (overrideResult.status === "configured_match") {
+    return { kind: "agent", agent: overrideResult.agent };
+  }
+  if (
+    overrideResult.status === "configured_no_match"
+    || overrideResult.status === "configured_no_match_in_pool"
+  ) {
+    return {
+      kind: "skip",
+      reason:
+        "Auto QA skipped: qa_agent_role/model is configured but no matching idle worker exists; will retry on the next qa_testing trigger",
+    };
+  }
 
-  if (testerByRole) return testerByRole;
+  // Unconfigured: legacy fallback.
+  const testerByRole = db
+    .prepare(
+      "SELECT * FROM agents WHERE role = 'tester' AND status = 'idle' AND id != ? LIMIT 1",
+    )
+    .get(implementerAgentId ?? "") as Agent | undefined;
+  if (testerByRole) return { kind: "agent", agent: testerByRole };
 
-  // Fallback: any idle worker (not the implementer)
-  const anyIdle = db.prepare(
-    "SELECT * FROM agents WHERE status = 'idle' AND agent_type = 'worker' AND id != ? LIMIT 1"
-  ).get(implementerAgentId ?? "") as Agent | undefined;
+  const anyIdle = db
+    .prepare(
+      "SELECT * FROM agents WHERE status = 'idle' AND agent_type = 'worker' AND id != ? LIMIT 1",
+    )
+    .get(implementerAgentId ?? "") as Agent | undefined;
 
-  return anyIdle;
+  return { kind: "agent", agent: anyIdle };
 }
 
 function getSetting(db: DatabaseSync, key: string): string | undefined {

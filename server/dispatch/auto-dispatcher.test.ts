@@ -477,6 +477,203 @@ describe("dispatchAutoStartableTasks", () => {
     );
   });
 
+  it("uses the configured refinement_agent_role override when refinement is the first active stage", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "true");
+    insertSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer", stats_tasks_done: 0 });
+    insertAgent(db, { id: "planner-1", name: "Planner", role: "planner", stats_tasks_done: 99 });
+    insertTask(db, {
+      id: "task-refinement",
+      title: "Plan something",
+      external_source: null,
+      external_id: null,
+    });
+
+    const started: string[] = [];
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(task, agent) {
+        started.push(agent.id);
+        const updatedAt = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?")
+          .run(updatedAt, task.id);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+          .run(task.id, updatedAt, agent.id);
+      },
+    });
+
+    assert.equal(result.started, 1);
+    assert.deepEqual(started, ["planner-1"]);
+  });
+
+  it("skips refinement tasks when the override is configured but no matching idle worker exists", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "true");
+    insertSetting(db, "refinement_agent_role", "planner");
+
+    // No planner registered — only an unrelated lead engineer is idle.
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
+    const task = insertTask(db, {
+      id: "task-no-match",
+      title: "Plan something",
+      external_source: null,
+      external_id: null,
+    });
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask() {
+        throw new Error("must not start without a matching planner");
+      },
+    });
+
+    assert.equal(result.started, 0);
+    assert.equal(result.skipped, 1);
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC",
+    ).all(task.id) as Array<{ message: string }>;
+    assert.match(
+      logs.at(-1)?.message ?? "",
+      /no matching idle worker/i,
+    );
+  });
+
+  it("skips a second refinement task when the only matching worker was already consumed in this tick", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "true");
+    insertSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, { id: "planner-1", name: "Planner", role: "planner" });
+    // Two refinement tasks, only one planner — the second must skip with
+    // "already taken in this tick" rather than being dispatched to a
+    // non-matching worker.
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
+    const t1 = insertTask(db, {
+      id: "task-refine-1",
+      title: "Plan A",
+      task_number: "#A",
+      external_source: null,
+      external_id: null,
+      created_at: Date.now() - 1000,
+    });
+    const t2 = insertTask(db, {
+      id: "task-refine-2",
+      title: "Plan B",
+      task_number: "#B",
+      external_source: null,
+      external_id: null,
+      created_at: Date.now(),
+    });
+
+    // startTask intentionally does NOT update agents.status to 'working'
+    // so we can probe the candidatePool path: in production spawnAgent
+    // updates the agent status asynchronously, so within a single
+    // dispatch tick the consumed agent can still appear status=idle in
+    // the DB. The dispatcher's `availableAgents.delete(...)` is what
+    // protects against re-dispatching the same agent — the resolver
+    // surfaces this as configured_no_match_in_pool.
+    const started: string[] = [];
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(task, agent) {
+        started.push(`${task.id}:${agent.id}`);
+        const updatedAt = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?")
+          .run(updatedAt, task.id);
+        // agents.status NOT updated here on purpose.
+      },
+    });
+
+    assert.equal(result.started, 1, "exactly the first task must run");
+    assert.deepEqual(started, [`${t1.id}:planner-1`]);
+    const t2Logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC",
+    ).all(t2.id) as Array<{ message: string }>;
+    assert.match(
+      t2Logs.at(-1)?.message ?? "",
+      /already taken in this tick/i,
+    );
+  });
+
+  it("dispatches a second matching planner to a second refinement task in the same tick (candidate pool reuse)", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "true");
+    insertSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, { id: "planner-1", name: "Planner1", role: "planner" });
+    insertAgent(db, { id: "planner-2", name: "Planner2", role: "planner" });
+    insertTask(db, {
+      id: "task-refine-1",
+      title: "Plan A",
+      task_number: "#A",
+      external_source: null,
+      external_id: null,
+      created_at: Date.now() - 1000,
+    });
+    insertTask(db, {
+      id: "task-refine-2",
+      title: "Plan B",
+      task_number: "#B",
+      external_source: null,
+      external_id: null,
+      created_at: Date.now(),
+    });
+
+    const startedAgents = new Set<string>();
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(task, agent) {
+        startedAgents.add(agent.id);
+        const updatedAt = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?")
+          .run(updatedAt, task.id);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+          .run(task.id, updatedAt, agent.id);
+      },
+    });
+
+    assert.equal(result.started, 2);
+    assert.deepEqual([...startedAgents].sort(), ["planner-1", "planner-2"]);
+  });
+
+  it("falls back to chooseBestAgent when refinement is not the first active stage even with override configured", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    // default_enable_refinement = "false" → first stage is in_progress.
+    insertSetting(db, "default_enable_refinement", "false");
+    insertSetting(db, "refinement_agent_role", "planner");
+
+    // No planner exists, and the override would normally cause skip;
+    // but since refinement isn't in the active pipeline, the lead
+    // engineer should be picked by chooseBestAgent.
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
+    insertTask(db, {
+      id: "task-non-refine",
+      title: "Implement feature",
+      external_source: null,
+      external_id: null,
+    });
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(task, agent) {
+        const updatedAt = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?")
+          .run(updatedAt, task.id);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+          .run(task.id, updatedAt, agent.id);
+      },
+    });
+
+    assert.equal(result.started, 1);
+  });
+
   it("Layer 2: catches errors that escape the inner try (startTask throws synchronously)", () => {
     // Reproduces a Layer-2-only scenario: the throw originates from
     // startTask (synchronous throw rather than async rejection).

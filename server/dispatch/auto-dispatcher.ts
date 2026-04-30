@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { AUTO_DISPATCH_INTERVAL_MS } from "../config/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
-import { resolveStageAgentOverride } from "../spawner/stage-agent-resolver.js";
+import { resolveStageAgentSelection } from "../spawner/stage-agent-resolver.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
@@ -154,19 +154,33 @@ function scoreAgentForTask(agent: Agent, task: Task, preferredRoles: string[]): 
   return score;
 }
 
+type RefinementSelection =
+  | { kind: "default" }
+  | { kind: "use"; agent: Agent }
+  | { kind: "skip"; reason: string };
+
+/**
+ * Decide whether the configured refinement-stage agent override applies
+ * to a freshly-eligible inbox task.
+ *
+ *  - Returns `default` when:
+ *    - the task's first active stage is not `refinement` (override
+ *      simply does not apply, regardless of settings), OR
+ *    - the role/model settings are both empty (unconfigured).
+ *  - Returns `use` when the override is configured and a matching idle
+ *    worker is available in the current tick's pool.
+ *  - Returns `skip` when the override is configured but no matching
+ *    idle worker exists in the DB, OR all matching workers were
+ *    already consumed earlier in the same tick. The dispatcher must
+ *    NOT silently fall back to a non-matching agent: that would let
+ *    the task run with the wrong worker just because the configured
+ *    one was momentarily unavailable.
+ */
 function resolveRefinementAgentForInbox(
   db: DatabaseSync,
   task: Task,
   availableAgents: Map<string, Agent>,
-): Agent | undefined {
-  const override = resolveStageAgentOverride(
-    db,
-    "refinement_agent_role",
-    "refinement_agent_model",
-  );
-  if (!override) return undefined;
-  if (!availableAgents.has(override.id)) return undefined;
-
+): RefinementSelection {
   // When the task has no project_path we cannot load a project workflow,
   // so fall back to the built-in defaults (workflow = null). We never read
   // the dispatcher's own CWD: that would silently apply AO's workflow to
@@ -180,9 +194,38 @@ function resolveRefinementAgentForInbox(
     }
   }
   const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
-  if (activeStages[0] !== "refinement") return undefined;
+  if (activeStages[0] !== "refinement") {
+    // Override only applies to tasks that actually start with refinement.
+    // Skipping a non-refinement task because of this setting would be
+    // surprising — fall through to the legacy scoring path.
+    return { kind: "default" };
+  }
 
-  return override;
+  const result = resolveStageAgentSelection(
+    db,
+    "refinement_agent_role",
+    "refinement_agent_model",
+    { candidatePool: new Set(availableAgents.keys()) },
+  );
+
+  switch (result.status) {
+    case "unconfigured":
+      return { kind: "default" };
+    case "configured_match":
+      return { kind: "use", agent: result.agent };
+    case "configured_no_match":
+      return {
+        kind: "skip",
+        reason:
+          "skipped: refinement_agent_role/model is configured but no matching idle worker exists; will retry next tick",
+      };
+    case "configured_no_match_in_pool":
+      return {
+        kind: "skip",
+        reason:
+          "skipped: refinement_agent_role/model match was already taken in this tick; will retry next tick",
+      };
+  }
 }
 
 function chooseBestAgent(task: Task, agents: Agent[]): Agent | undefined {
@@ -371,13 +414,20 @@ export function dispatchAutoStartableTasks(
     }
 
     // Stage-specific default: when the task's first active stage is
-    // `refinement`, honour the stage-specific role/model selection
-    // before falling back to role-based scoring. The override only
-    // applies if the agent is currently idle (i.e. present in
-    // `availableAgents`); otherwise we defer to `chooseBestAgent` so
-    // a busy override does not starve the queue.
-    const refinementOverride = resolveRefinementAgentForInbox(db, task, availableAgents);
-    const selectedAgent = refinementOverride ?? chooseBestAgent(task, [...availableAgents.values()]);
+    // `refinement`, honour the stage-specific role/model selection as
+    // a hard constraint. If the user configured the filter but no
+    // matching idle worker is available *in this tick*, we skip the
+    // task and retry next tick instead of dispatching to a
+    // non-matching agent.
+    const refinementSelection = resolveRefinementAgentForInbox(db, task, availableAgents);
+    if (refinementSelection.kind === "skip") {
+      summary.skipped += 1;
+      writeDispatchLog(db, task, refinementSelection.reason);
+      continue;
+    }
+    const selectedAgent = refinementSelection.kind === "use"
+      ? refinementSelection.agent
+      : chooseBestAgent(task, [...availableAgents.values()]);
     if (!selectedAgent) {
       summary.skipped += 1;
       writeDispatchLog(db, task, "skipped: no idle worker agent is available");
