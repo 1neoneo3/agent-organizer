@@ -33,9 +33,9 @@ function insertAgent(db: DatabaseSync, overrides?: Partial<Agent>): Agent {
 
   db.prepare(
     `INSERT INTO agents (
-      id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, personality,
+      id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, agent_type, personality,
       status, current_task_id, stats_tasks_done, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     agent.id,
     agent.name,
@@ -44,6 +44,7 @@ function insertAgent(db: DatabaseSync, overrides?: Partial<Agent>): Agent {
     agent.cli_reasoning_level,
     agent.avatar_emoji,
     agent.role,
+    agent.agent_type,
     agent.personality,
     agent.status,
     agent.current_task_id,
