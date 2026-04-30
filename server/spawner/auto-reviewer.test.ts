@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import { triggerAutoReview, findReviewAgents } from "./auto-reviewer.js";
 
 function createDbForMissingTask() {
@@ -284,5 +285,119 @@ describe("findReviewAgents", () => {
     assert.equal(panel[0].agent.id, "agent-fallback");
     assert.equal(panel[1].role, "security");
     assert.equal(panel[1].agent.id, "agent-sec");
+  });
+});
+
+/**
+ * Integration tests using a real in-memory SQLite database. These are
+ * required to exercise `resolveStageAgentOverride`, which uses
+ * `db.prepare(...).all(...)` against the settings + agents tables — the
+ * legacy stub above only implements `.get(...)` and would silently
+ * bypass the override path. Locking the override behaviour in place
+ * here closes the gap that allowed the autoDispatchTask bug
+ * (refinement_agent_role ignored at task creation) to ship undetected,
+ * and keeps `review_agent_role` / `review_agent_model` from regressing.
+ */
+describe("findReviewAgents (settings override integration)", () => {
+  function createDb(): DatabaseSync {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE agents (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        agent_type TEXT NOT NULL DEFAULT 'worker',
+        status TEXT NOT NULL DEFAULT 'idle',
+        role TEXT,
+        cli_model TEXT,
+        current_task_id TEXT
+      );
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `);
+    return db;
+  }
+
+  function insertAgent(
+    db: DatabaseSync,
+    a: {
+      id: string;
+      role?: string | null;
+      cli_model?: string | null;
+      status?: string;
+      agent_type?: string;
+    },
+  ): void {
+    db.prepare(
+      "INSERT INTO agents (id, name, agent_type, status, role, cli_model) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(
+      a.id,
+      a.id,
+      a.agent_type ?? "worker",
+      a.status ?? "idle",
+      a.role ?? null,
+      a.cli_model ?? null,
+    );
+  }
+
+  function setSetting(db: DatabaseSync, key: string, value: string): void {
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(key, value);
+  }
+
+  it("uses the role+model override for the primary code slot", () => {
+    const db = createDb();
+    insertAgent(db, { id: "code-default", role: "code_reviewer", cli_model: "gpt-5.5" });
+    insertAgent(db, {
+      id: "code-override",
+      role: "code_reviewer",
+      cli_model: "claude-opus-4-7",
+    });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setSetting(db, "review_agent_model", "claude-opus-4-7");
+
+    const panel = findReviewAgents(db as never, null);
+    const codeSlot = panel.find((a) => a.role === "code");
+    assert.equal(codeSlot?.agent.id, "code-override");
+  });
+
+  it("excludes the implementer from the override match", () => {
+    const db = createDb();
+    insertAgent(db, { id: "impl-1", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+
+    const panel = findReviewAgents(db as never, "impl-1");
+    // Only the implementer matches the role filter — and it's excluded —
+    // so neither override nor role-based fallback should pick anyone.
+    assert.equal(panel.length, 0);
+  });
+
+  it("falls back to the role-based code_reviewer when no override matches", () => {
+    const db = createDb();
+    insertAgent(db, { id: "code-1", role: "code_reviewer", cli_model: "gpt-5.5" });
+    // Override targets a model nobody runs.
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setSetting(db, "review_agent_model", "claude-opus-4-7");
+
+    const panel = findReviewAgents(db as never, null);
+    const codeSlot = panel.find((a) => a.role === "code");
+    assert.equal(codeSlot?.agent.id, "code-1");
+  });
+
+  it("override agent does not block the security reviewer secondary slot", () => {
+    const db = createDb();
+    insertAgent(db, { id: "code-override", role: "code_reviewer", cli_model: "gpt-5.5" });
+    insertAgent(db, { id: "sec-1", role: "security_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setSetting(db, "review_agent_model", "gpt-5.5");
+
+    const panel = findReviewAgents(db as never, null);
+    assert.equal(panel.length, 2);
+    assert.equal(panel[0].agent.id, "code-override");
+    assert.equal(panel[0].role, "code");
+    assert.equal(panel[1].agent.id, "sec-1");
+    assert.equal(panel[1].role, "security");
   });
 });

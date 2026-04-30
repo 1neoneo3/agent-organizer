@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "../db/schema.js";
 import type { Agent, Task } from "../types/runtime.js";
-import { autoDispatchTask } from "./auto-dispatch.js";
+import { autoDispatchTask, pickInboxAgent } from "./auto-dispatch.js";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -249,5 +249,202 @@ describe("autoDispatchTask", () => {
     });
 
     assert.equal(spawnCalls, 1, "should spawn agent when review_count < max");
+  });
+});
+
+function setSetting(db: DatabaseSync, key: string, value: string): void {
+  db.prepare(
+    "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) " +
+      "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+  ).run(key, value, Date.now());
+}
+
+describe("pickInboxAgent (stage-specific refinement override)", () => {
+  // Regression coverage for the bug where POST /tasks → autoDispatchTask
+  // ignored `refinement_agent_role` / `refinement_agent_model` because it
+  // delegated to the legacy `pickIdleAgent`. The fix routes inbox-time
+  // selection through the same stage resolver that the periodic
+  // dispatcher uses, so the configured Plan-Stage agent is honoured at
+  // task creation as well.
+
+  it("uses the refinement_agent_role override when refinement is the first active stage", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer", stats_tasks_done: 0 });
+    insertAgent(db, { id: "planner-1", name: "Planner", role: "planner", stats_tasks_done: 5 });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked?.id, "planner-1");
+  });
+
+  it("matches on cli_model when refinement_agent_model is configured", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+    setSetting(db, "refinement_agent_model", "claude-opus-4-7");
+
+    insertAgent(db, {
+      id: "planner-mismatch",
+      name: "PlannerA",
+      role: "planner",
+      cli_model: "gpt-5.5",
+    });
+    insertAgent(db, {
+      id: "planner-match",
+      name: "PlannerB",
+      role: "planner",
+      cli_model: "claude-opus-4-7",
+    });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked?.id, "planner-match");
+  });
+
+  it("falls back to pickIdleAgent when refinement is not in the active pipeline", () => {
+    const db = createDb();
+    // default_enable_refinement is "false" by default → first stage is in_progress.
+    setSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, { id: "planner-1", name: "Planner", role: "planner", stats_tasks_done: 5 });
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer", stats_tasks_done: 0 });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    // pickIdleAgent orders by stats_tasks_done ASC, so lead-1 wins.
+    assert.equal(picked?.id, "lead-1");
+  });
+
+  it("falls back to pickIdleAgent when no agent matches the override role", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+
+    // No planner agent exists.
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked?.id, "lead-1");
+  });
+
+  it("falls back when the override agent is busy", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, {
+      id: "planner-1",
+      name: "Planner",
+      role: "planner",
+      status: "working",
+      current_task_id: "other",
+    });
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked?.id, "lead-1");
+  });
+
+  it("returns undefined when no idle agent is available at all", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, {
+      id: "busy-1",
+      name: "Busy",
+      role: "planner",
+      status: "working",
+      current_task_id: "other",
+    });
+    const task = insertTask(db, { project_path: null });
+
+    assert.equal(pickInboxAgent(db, task), undefined);
+  });
+
+  it("ignores the override when both role and model settings are empty", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "");
+    setSetting(db, "refinement_agent_model", "");
+
+    insertAgent(db, { id: "planner-1", name: "Planner", role: "planner", stats_tasks_done: 5 });
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer", stats_tasks_done: 0 });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    // Empty filters → fallback to pickIdleAgent (lowest stats_tasks_done).
+    assert.equal(picked?.id, "lead-1");
+  });
+
+  it("does not select a ceo agent through the override path even when role matches", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+
+    // The CEO has the matching role/agent_type combo BUT is filtered out
+    // by resolveStageAgentOverride's `agent_type = 'worker'` constraint,
+    // so a worker-typed planner must win the override match.
+    insertAgent(db, { id: "ceo-1", name: "CEO", role: "planner", agent_type: "ceo" });
+    insertAgent(db, {
+      id: "planner-worker",
+      name: "PlannerW",
+      role: "planner",
+      agent_type: "worker",
+    });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked?.id, "planner-worker");
+  });
+});
+
+describe("autoDispatchTask + refinement_agent settings (integration)", () => {
+  it("assigns the configured refinement agent at task creation", () => {
+    const db = createDb();
+    const ws = createWs();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer", stats_tasks_done: 0 });
+    insertAgent(db, { id: "planner-1", name: "Planner", role: "planner", stats_tasks_done: 99 });
+    insertTask(db, { project_path: null });
+
+    autoDispatchTask(db, ws as never, "task-1", {
+      autoAssign: true,
+      autoRun: false,
+      spawnAgent: () => Promise.resolve({ pid: 0 }),
+    });
+
+    const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get("task-1") as {
+      assigned_agent_id: string | null;
+    };
+    assert.equal(row.assigned_agent_id, "planner-1");
+  });
+
+  it("falls back to legacy round-robin assignment when refinement override does not match", () => {
+    const db = createDb();
+    const ws = createWs();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner"); // No planner exists.
+
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer", stats_tasks_done: 0 });
+    insertTask(db, { project_path: null });
+
+    autoDispatchTask(db, ws as never, "task-1", {
+      autoAssign: true,
+      autoRun: false,
+      spawnAgent: () => Promise.resolve({ pid: 0 }),
+    });
+
+    const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get("task-1") as {
+      assigned_agent_id: string | null;
+    };
+    assert.equal(row.assigned_agent_id, "lead-1");
   });
 });
