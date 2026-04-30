@@ -124,9 +124,6 @@ function migrateAddControllerFields(db: DatabaseSync): void {
   if (!taskCols.some((c) => c.name === "controller_stage")) {
     db.exec("ALTER TABLE tasks ADD COLUMN controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate'))");
   }
-  if (!taskCols.some((c) => c.name === "controller_role")) {
-    db.exec("ALTER TABLE tasks ADD COLUMN controller_role TEXT");
-  }
   if (!taskCols.some((c) => c.name === "write_scope")) {
     db.exec("ALTER TABLE tasks ADD COLUMN write_scope TEXT");
   }

@@ -28,7 +28,6 @@ export interface TaskSummary {
   task_number: string | null;
   depends_on: string | null;
   controller_stage?: "implement" | "verify" | "integrate" | null;
-  controller_role?: string | null;
   refinement_completed_at?: number | null;
   refinement_revision_requested_at?: number | null;
   refinement_revision_completed_at?: number | null;

@@ -247,41 +247,11 @@ describe("dispatchAutoStartableTasks", () => {
     assert.match(logs[0].message, /github-synced tasks only/i);
   });
 
-  it("honors controller_role as the first agent selection hint", () => {
-    const db = createDb();
-    const ws = createWs();
-    insertSetting(db, "auto_dispatch_mode", "all_inbox");
-    const lead = insertAgent(db, { name: "Lead", role: "lead_engineer", stats_tasks_done: 100 });
-    const tester = insertAgent(db, { name: "Tester", role: "tester", stats_tasks_done: 1 });
-    const task = insertTask(db, {
-      title: "Verify controller orchestration",
-      external_source: null,
-      external_id: null,
-    });
-    db.prepare("UPDATE tasks SET controller_role = 'tester' WHERE id = ?").run(task.id);
-
-    const result = dispatchAutoStartableTasks(db, ws as never, {
-      startTask(taskToStart, assignedAgent) {
-        const now = Date.now();
-        db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?")
-          .run(now, now, taskToStart.id);
-        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
-          .run(taskToStart.id, now, assignedAgent.id);
-      },
-    });
-
-    const startedTask = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(task.id) as {
-      assigned_agent_id: string | null;
-    };
-    assert.equal(result.started, 1);
-    assert.equal(startedTask.assigned_agent_id, tester.id);
-    assert.notEqual(startedTask.assigned_agent_id, lead.id);
-  });
-
   it("does not start controller children before their directive stage opens", () => {
     const db = createDb();
     const ws = createWs();
     insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "enable_controller_mode", "true");
     insertAgent(db, { name: "Available Engineer", role: "lead_engineer" });
     const now = Date.now();
     db.prepare(
@@ -310,6 +280,94 @@ describe("dispatchAutoStartableTasks", () => {
     assert.equal(result.started, 0);
     assert.equal(row.status, "inbox");
     assert.equal(row.assigned_agent_id, null);
+  });
+
+  it("keeps legacy dispatch behavior for controller fields when controller mode is disabled", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "enable_controller_mode", "false");
+    insertAgent(db, { name: "Available Engineer", role: "lead_engineer" });
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO directives (
+         id, title, content, status, controller_mode, controller_stage, created_at, updated_at
+       ) VALUES ('d-controller-off', 'Controller', 'Controller', 'active', 1, 'implement', ?, ?)`,
+    ).run(now, now);
+    const task = insertTask(db, {
+      title: "Verify can run when feature is off",
+      external_source: null,
+      external_id: null,
+      directive_id: "d-controller-off",
+    });
+    db.prepare("UPDATE tasks SET controller_stage = 'verify' WHERE id = ?").run(task.id);
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, assignedAgent) {
+        const updatedAt = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?")
+          .run(updatedAt, updatedAt, taskToStart.id);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+          .run(taskToStart.id, updatedAt, assignedAgent.id);
+      },
+    });
+
+    const row = db.prepare("SELECT status FROM tasks WHERE id = ?").get(task.id) as { status: string };
+    assert.equal(result.started, 1);
+    assert.equal(row.status, "in_progress");
+  });
+
+  it("does not dispatch serial controller implement children with overlapping write_scope at the same time", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "enable_controller_mode", "true");
+    insertAgent(db, { name: "Engineer A", role: "lead_engineer" });
+    insertAgent(db, { name: "Engineer B", role: "lead_engineer" });
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO directives (
+         id, title, content, status, controller_mode, controller_stage, created_at, updated_at
+       ) VALUES ('d-overlap', 'Controller', 'Controller', 'active', 1, 'implement', ?, ?)`,
+    ).run(now, now);
+    const first = insertTask(db, {
+      title: "Implement first",
+      task_number: "T01",
+      external_source: null,
+      external_id: null,
+      directive_id: "d-overlap",
+    });
+    const second = insertTask(db, {
+      title: "Implement second",
+      task_number: "T02",
+      depends_on: '["T01"]',
+      external_source: null,
+      external_id: null,
+      directive_id: "d-overlap",
+    });
+    db.prepare(
+      "UPDATE tasks SET controller_stage = 'implement', write_scope = ?, planned_files = ? WHERE id IN (?, ?)",
+    ).run('["server/shared.ts"]', '["server/shared.ts"]', first.id, second.id);
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, assignedAgent) {
+        const updatedAt = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?")
+          .run(updatedAt, updatedAt, taskToStart.id);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+          .run(taskToStart.id, updatedAt, assignedAgent.id);
+      },
+    });
+
+    const rows = db.prepare("SELECT task_number, status FROM tasks WHERE directive_id = 'd-overlap' ORDER BY task_number").all() as Array<{
+      task_number: string;
+      status: string;
+    }>;
+    assert.equal(result.started, 1);
+    assert.deepStrictEqual(rows.map((row) => [row.task_number, row.status]), [
+      ["T01", "in_progress"],
+      ["T02", "inbox"],
+    ]);
   });
 
   it("does not throw when startTask deletes the task before writeDispatchLog runs (FK 787 race)", () => {

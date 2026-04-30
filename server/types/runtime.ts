@@ -36,7 +36,6 @@ export interface Task {
   task_number: string | null;
   depends_on: string | null;
   controller_stage?: "implement" | "verify" | "integrate" | null;
-  controller_role?: string | null;
   write_scope?: string | null;
   result: string | null;
   refinement_plan: string | null;

@@ -277,7 +277,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   const TASK_SUMMARY_COLS = [
     "id", "title", "assigned_agent_id", "project_path", "status",
     "priority", "task_size", "task_number", "depends_on",
-    "controller_stage", "controller_role",
+    "controller_stage",
     "refinement_completed_at", "refinement_revision_requested_at",
     "refinement_revision_completed_at", "review_count", "directive_id",
     "pr_url", "external_source", "external_id", "review_branch",

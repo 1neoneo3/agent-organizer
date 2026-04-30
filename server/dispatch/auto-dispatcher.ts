@@ -13,7 +13,7 @@ import {
   formatAllBlockers,
   isBlocked,
 } from "../domain/task-dependencies.js";
-import { isControllerTaskStartable, reconcileControllerDirective } from "../controller/orchestrator.js";
+import { isControllerModeEnabled, isControllerTaskStartable, reconcileControllerDirective } from "../controller/orchestrator.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
 
@@ -81,9 +81,6 @@ function tokenizeProjectPath(projectPath: string | null): string[] {
 }
 
 function detectPreferredRoles(task: Task): string[] {
-  if (task.controller_role) {
-    return [task.controller_role, ...detectTextPreferredRoles(task).filter((role) => role !== task.controller_role)];
-  }
   return detectTextPreferredRoles(task);
 }
 
@@ -303,11 +300,13 @@ export function dispatchAutoStartableTasks(
   }
 
   const startTask = options?.startTask ?? createDefaultTaskStarter(db, ws);
-  const activeControllerDirectives = db.prepare(
-    "SELECT id FROM directives WHERE controller_mode = 1 AND status = 'active'",
-  ).all() as Array<{ id: string }>;
-  for (const directive of activeControllerDirectives) {
-    reconcileControllerDirective({ db, ws }, directive.id);
+  if (isControllerModeEnabled(db)) {
+    const activeControllerDirectives = db.prepare(
+      "SELECT id FROM directives WHERE controller_mode = 1 AND status = 'active'",
+    ).all() as Array<{ id: string }>;
+    for (const directive of activeControllerDirectives) {
+      reconcileControllerDirective({ db, ws }, directive.id);
+    }
   }
 
   const idleWorkers = getIdleWorkers(db);

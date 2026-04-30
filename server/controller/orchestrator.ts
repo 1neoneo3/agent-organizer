@@ -11,7 +11,6 @@ export interface ControllerChildInput {
   title: string;
   description?: string | null;
   controller_stage: ControllerStage;
-  controller_role?: string | null;
   write_scope?: string[];
   depends_on?: string[];
   priority?: number;
@@ -23,6 +22,13 @@ export interface ControllerSplitResult {
   tasks: Task[];
 }
 
+export interface ControllerAdvanceResult {
+  directive: Directive | undefined;
+  advanced: boolean;
+  blocked_reason?: string;
+  created_integrate_task?: Task;
+}
+
 function nowMs(): number {
   return Date.now();
 }
@@ -31,41 +37,17 @@ export function isControllerStage(value: string): value is ControllerStage {
   return (CONTROLLER_STAGES as readonly string[]).includes(value);
 }
 
-function parseStringArray(raw: string | null): string[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function intersect(left: readonly string[], right: readonly string[]): string[] {
-  const rightSet = new Set(right);
-  return left.filter((item) => rightSet.has(item));
-}
-
 function normalizeScope(scope: readonly string[] | undefined): string[] {
   return [...new Set((scope ?? []).map((item) => item.trim()).filter(Boolean))].sort();
 }
 
-export function findUnsafeWriteScopeOverlap(children: readonly ControllerChildInput[]): string | null {
-  const implementChildren = children.filter((child) => child.controller_stage === "implement");
-  for (let i = 0; i < implementChildren.length; i++) {
-    const left = implementChildren[i];
-    const leftScope = normalizeScope(left.write_scope);
-    if (leftScope.length === 0) continue;
-    for (let j = i + 1; j < implementChildren.length; j++) {
-      const right = implementChildren[j];
-      const rightScope = normalizeScope(right.write_scope);
-      const overlap = intersect(leftScope, rightScope);
-      if (overlap.length > 0) {
-        return `${left.task_number} and ${right.task_number} overlap write_scope: ${overlap.join(", ")}`;
-      }
-    }
-  }
-  return null;
+function getSetting(db: DatabaseSync, key: string): string | undefined {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+  return row?.value;
+}
+
+export function isControllerModeEnabled(db: DatabaseSync): boolean {
+  return getSetting(db, "enable_controller_mode") === "true";
 }
 
 function firstStageWithTasks(tasks: readonly { controller_stage?: ControllerStage | null }[]): ControllerStage | null {
@@ -104,6 +86,47 @@ function buildAggregatedResult(tasks: readonly Task[]): string {
       return `## ${title}\n\n${task.result?.trim() || "(no result)"}`;
     });
   return sections.join("\n\n").trim();
+}
+
+function nextGeneratedTaskNumber(tasks: readonly Task[]): string {
+  const used = new Set(tasks.map((task) => task.task_number).filter((value): value is string => Boolean(value)));
+  for (let i = tasks.length + 1; i <= tasks.length + 100; i++) {
+    const candidate = `T${String(i).padStart(2, "0")}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `T${Date.now()}`;
+}
+
+function createIntegrateChild(ctx: RuntimeContext, directive: Directive, tasks: readonly Task[]): Task {
+  const existing = tasks.find((task) => task.controller_stage === "integrate");
+  if (existing) return existing;
+
+  const verifyTaskNumbers = tasks
+    .filter((task) => task.controller_stage === "verify" && task.task_number)
+    .map((task) => task.task_number as string);
+  const dependsOnJson = verifyTaskNumbers.length > 0 ? JSON.stringify([...new Set(verifyTaskNumbers)]) : null;
+  const now = nowMs();
+  const id = randomUUID();
+  ctx.db.prepare(
+    `INSERT INTO tasks (
+       id, title, description, project_path, status, priority, task_size,
+       directive_id, task_number, depends_on, controller_stage,
+       write_scope, planned_files, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, 'inbox', 0, 'small', ?, ?, ?, 'integrate', NULL, NULL, ?, ?)`,
+  ).run(
+    id,
+    "Integrate controller results",
+    "Aggregate completed controller child results and produce the final directive result.",
+    directive.project_path,
+    directive.id,
+    nextGeneratedTaskNumber(tasks),
+    dependsOnJson,
+    now,
+    now,
+  );
+  const task = ctx.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
+  ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+  return task;
 }
 
 function updateDirectiveStage(
@@ -162,6 +185,13 @@ function dbUpdateDirective(
 }
 
 export function reconcileControllerDirective(ctx: RuntimeContext, directiveId: string): Directive | undefined {
+  if (!isControllerModeEnabled(ctx.db)) {
+    return fetchDirective(ctx.db, directiveId);
+  }
+  return advanceControllerDirective(ctx, directiveId).directive;
+}
+
+export function advanceControllerDirective(ctx: RuntimeContext, directiveId: string): ControllerAdvanceResult {
   const directive = fetchDirective(ctx.db, directiveId);
   if (
     !directive ||
@@ -169,56 +199,78 @@ export function reconcileControllerDirective(ctx: RuntimeContext, directiveId: s
     directive.status === "cancelled" ||
     directive.status === "completed"
   ) {
-    return directive;
+    return {
+      directive,
+      advanced: false,
+      blocked_reason: directive ? `directive is ${directive.status}` : "directive not found",
+    };
   }
 
   const tasks = fetchControllerTasks(ctx.db, directiveId);
-  if (tasks.length === 0) return directive;
+  if (tasks.length === 0) return { directive, advanced: false, blocked_reason: "no controller tasks exist" };
 
   if (tasks.some((task) => task.status === "cancelled")) {
     if (directive.controller_stage !== "blocked") {
-      return updateDirectiveStage(ctx, directive, "blocked", { status: "active" });
+      return { directive: updateDirectiveStage(ctx, directive, "blocked", { status: "active" }), advanced: true };
     }
-    return directive;
+    return { directive, advanced: false, blocked_reason: "one or more controller tasks are cancelled" };
   }
 
   const currentStage =
     directive.controller_stage && isControllerStage(directive.controller_stage)
       ? directive.controller_stage
       : firstStageWithTasks(tasks);
-  if (!currentStage) return directive;
+  if (!currentStage) return { directive, advanced: false, blocked_reason: "no current controller stage" };
 
   const currentStageTasks = stageTasks(tasks, currentStage);
-  if (currentStageTasks.length === 0) return directive;
+  if (currentStageTasks.length === 0) {
+    return { directive, advanced: false, blocked_reason: `no tasks exist for ${currentStage}` };
+  }
   if (!currentStageTasks.every((task) => task.status === "done")) {
     if (directive.controller_stage !== currentStage || directive.status !== "active") {
-      return updateDirectiveStage(ctx, directive, currentStage, { status: "active" });
+      return { directive: updateDirectiveStage(ctx, directive, currentStage, { status: "active" }), advanced: true };
     }
-    return directive;
+    return {
+      directive,
+      advanced: false,
+      blocked_reason: `${currentStage} stage has unfinished tasks`,
+    };
   }
 
   if (currentStage === "integrate") {
     const aggregatedResult = buildAggregatedResult(tasks);
-    return updateDirectiveStage(ctx, directive, "completed", {
-      status: "completed",
-      aggregatedResult,
-      completedAt: nowMs(),
-    });
+    return {
+      directive: updateDirectiveStage(ctx, directive, "completed", {
+        status: "completed",
+        aggregatedResult,
+        completedAt: nowMs(),
+      }),
+      advanced: true,
+    };
   }
 
   const nextStage = nextStageWithTasks(currentStage, tasks);
+  if (!nextStage && currentStage === "verify") {
+    const integrateTask = createIntegrateChild(ctx, directive, tasks);
+    return {
+      directive: updateDirectiveStage(ctx, directive, "integrate", { status: "active" }),
+      advanced: true,
+      created_integrate_task: integrateTask,
+    };
+  }
   if (!nextStage) {
-    return updateDirectiveStage(ctx, directive, "completed", {
-      status: "completed",
-      aggregatedResult: buildAggregatedResult(tasks),
-      completedAt: nowMs(),
-    });
+    return {
+      directive,
+      advanced: false,
+      blocked_reason: "integrate stage is required before completion",
+    };
   }
 
-  return updateDirectiveStage(ctx, directive, nextStage, { status: "active" });
+  return { directive: updateDirectiveStage(ctx, directive, nextStage, { status: "active" }), advanced: true };
 }
 
 export function isControllerTaskStartable(db: DatabaseSync, task: Task): boolean {
+  if (!isControllerModeEnabled(db)) return true;
   if (!task.directive_id || !task.controller_stage) return true;
   const directive = fetchDirective(db, task.directive_id);
   if (!directive || directive.controller_mode !== 1) return true;
@@ -230,11 +282,6 @@ export function splitDirectiveIntoControllerTasks(
   directive: Directive,
   children: readonly ControllerChildInput[],
 ): ControllerSplitResult {
-  const overlap = findUnsafeWriteScopeOverlap(children);
-  if (overlap) {
-    throw new Error(overlap);
-  }
-
   const seenTaskNumbers = new Set<string>();
   for (const child of children) {
     if (seenTaskNumbers.has(child.task_number)) {
@@ -256,9 +303,9 @@ export function splitDirectiveIntoControllerTasks(
   const insertTask = ctx.db.prepare(
     `INSERT INTO tasks (
        id, title, description, project_path, status, priority, task_size,
-       directive_id, task_number, depends_on, controller_stage, controller_role,
+       directive_id, task_number, depends_on, controller_stage,
        write_scope, planned_files, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, 'inbox', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, 'inbox', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
 
   const createdTasks: Task[] = [];
@@ -279,7 +326,6 @@ export function splitDirectiveIntoControllerTasks(
       child.task_number,
       dependsOnJson,
       child.controller_stage,
-      child.controller_role ?? null,
       writeScopeJson,
       writeScopeJson,
       now,

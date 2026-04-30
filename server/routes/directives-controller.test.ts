@@ -41,6 +41,14 @@ async function setupServer(): Promise<{
   return { db, server, baseUrl: `http://127.0.0.1:${address.port}` };
 }
 
+function setControllerMode(db: DatabaseSync, enabled: boolean): void {
+  db.prepare(
+    `INSERT INTO settings (key, value, updated_at)
+     VALUES ('enable_controller_mode', ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(enabled ? "true" : "false", Date.now());
+}
+
 async function closeServer(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
@@ -85,6 +93,7 @@ describe("directive controller API", () => {
 
   it("creates staged children through the controller split endpoint", async () => {
     const { db, server, baseUrl } = await setupServer();
+    setControllerMode(db, true);
     const now = Date.now();
     db.prepare(
       `INSERT INTO directives (id, title, content, status, created_at, updated_at)
@@ -101,14 +110,12 @@ describe("directive controller API", () => {
               task_number: "T01",
               title: "Implement",
               controller_stage: "implement",
-              controller_role: "lead_engineer",
               write_scope: ["server/controller/orchestrator.ts"],
             },
             {
               task_number: "T02",
               title: "Verify",
               controller_stage: "verify",
-              controller_role: "tester",
               depends_on: ["T01"],
             },
           ],
@@ -118,18 +125,76 @@ describe("directive controller API", () => {
       assert.equal(response.status, 201);
       const body = (await response.json()) as {
         directive: { controller_mode: number; controller_stage: string };
-        tasks: Array<{ task_number: string; controller_stage: string; controller_role: string | null }>;
+        tasks: Array<{ task_number: string; controller_stage: string }>;
       };
 
       assert.equal(body.directive.controller_mode, 1);
       assert.equal(body.directive.controller_stage, "implement");
       assert.deepStrictEqual(
-        body.tasks.map((task) => [task.task_number, task.controller_stage, task.controller_role]),
+        body.tasks.map((task) => [task.task_number, task.controller_stage]),
         [
-          ["T01", "implement", "lead_engineer"],
-          ["T02", "verify", "tester"],
+          ["T01", "implement"],
+          ["T02", "verify"],
         ],
       );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("rejects controller split while controller mode is disabled", async () => {
+    const { db, server, baseUrl } = await setupServer();
+    setControllerMode(db, false);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO directives (id, title, content, status, created_at, updated_at)
+       VALUES ('d-disabled', 'Split me', 'Split me', 'pending', ?, ?)`,
+    ).run(now, now);
+
+    try {
+      const response = await fetch(`${baseUrl}/directives/d-disabled/controller/split`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          children: [{ task_number: "T01", title: "Implement", controller_stage: "implement" }],
+        }),
+      });
+      assert.equal(response.status, 403);
+      const count = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE directive_id = 'd-disabled'").get() as { n: number };
+      assert.equal(count.n, 0);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("advances stage only when safety conditions are met", async () => {
+    const { db, server, baseUrl } = await setupServer();
+    setControllerMode(db, true);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO directives (
+         id, title, content, status, controller_mode, controller_stage, created_at, updated_at
+       ) VALUES ('d-advance', 'Advance me', 'Advance me', 'active', 1, 'implement', ?, ?)`,
+    ).run(now, now);
+    db.prepare(
+      `INSERT INTO tasks (
+         id, title, status, directive_id, task_number, controller_stage, created_at, updated_at
+       ) VALUES
+         ('task-impl', 'Implement', 'inbox', 'd-advance', 'T01', 'implement', ?, ?),
+         ('task-verify', 'Verify', 'inbox', 'd-advance', 'T02', 'verify', ?, ?)`,
+    ).run(now, now, now, now);
+
+    try {
+      const blocked = await fetch(`${baseUrl}/directives/d-advance/advance-stage`, { method: "POST" });
+      assert.equal(blocked.status, 409);
+      const blockedBody = (await blocked.json()) as { blocked_reason: string };
+      assert.match(blockedBody.blocked_reason, /unfinished tasks/);
+
+      db.prepare("UPDATE tasks SET status = 'done' WHERE id = 'task-impl'").run();
+      const advanced = await fetch(`${baseUrl}/directives/d-advance/advance-stage`, { method: "POST" });
+      assert.equal(advanced.status, 200);
+      const advancedBody = (await advanced.json()) as { directive: { controller_stage: string } };
+      assert.equal(advancedBody.directive.controller_stage, "verify");
     } finally {
       await closeServer(server);
     }

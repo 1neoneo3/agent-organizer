@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS tasks (
   task_number TEXT,
   depends_on TEXT,
   controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate')),
-  controller_role TEXT,
   write_scope TEXT,
   result TEXT,
   refinement_plan TEXT,

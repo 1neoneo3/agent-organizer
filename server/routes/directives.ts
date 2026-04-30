@@ -7,6 +7,8 @@ import type { RuntimeContext, Directive } from "../types/runtime.js";
 import { decomposeDirective, getDecomposeLogs } from "../spawner/decomposer.js";
 import {
   CONTROLLER_STAGES,
+  advanceControllerDirective,
+  isControllerModeEnabled,
   reconcileControllerDirective,
   splitDirectiveIntoControllerTasks,
   summarizeControllerDirective,
@@ -37,7 +39,6 @@ const ControllerChildSchema = z.object({
   title: z.string().min(1).max(500),
   description: z.string().nullish(),
   controller_stage: z.enum(CONTROLLER_STAGES),
-  controller_role: z.string().min(1).max(80).nullish(),
   write_scope: z.array(z.string().min(1)).default([]),
   depends_on: z.array(z.string().min(1)).default([]),
   priority: z.number().int().min(0).max(10).default(0),
@@ -174,6 +175,9 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
   });
 
   router.post("/directives/:id/controller/split", (req, res) => {
+    if (!isControllerModeEnabled(db)) {
+      return res.status(403).json({ error: "controller_mode_disabled" });
+    }
     const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(req.params.id) as Directive | undefined;
     if (!directive) return res.status(404).json({ error: "not_found" });
     if (directive.status === "cancelled") return res.status(409).json({ error: "directive_cancelled" });
@@ -198,10 +202,31 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
   });
 
   router.post("/directives/:id/controller/reconcile", (req, res) => {
+    if (!isControllerModeEnabled(db)) {
+      return res.status(403).json({ error: "controller_mode_disabled" });
+    }
     const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(req.params.id) as Directive | undefined;
     if (!directive) return res.status(404).json({ error: "not_found" });
     const updated = reconcileControllerDirective(ctx, directive.id);
     res.json({ directive: updated, summary: summarizeControllerDirective(db, directive.id) });
+  });
+
+  router.post("/directives/:id/advance-stage", (req, res) => {
+    if (!isControllerModeEnabled(db)) {
+      return res.status(403).json({ error: "controller_mode_disabled" });
+    }
+    const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(req.params.id) as Directive | undefined;
+    if (!directive) return res.status(404).json({ error: "not_found" });
+    const result = advanceControllerDirective(ctx, directive.id);
+    if (!result.advanced) {
+      return res.status(409).json({
+        error: "stage_advance_blocked",
+        blocked_reason: result.blocked_reason,
+        directive: result.directive,
+        summary: summarizeControllerDirective(db, directive.id),
+      });
+    }
+    res.json({ ...result, summary: summarizeControllerDirective(db, directive.id) });
   });
 
   router.get("/directives/:id/controller", (req, res) => {

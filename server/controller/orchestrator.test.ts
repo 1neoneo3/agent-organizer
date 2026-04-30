@@ -4,7 +4,6 @@ import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import type { Directive } from "../types/runtime.js";
 import {
-  findUnsafeWriteScopeOverlap,
   isControllerStage,
   isControllerTaskStartable,
   reconcileControllerDirective,
@@ -16,6 +15,8 @@ function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(SCHEMA_SQL);
+  db.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('enable_controller_mode', 'true', ?)")
+    .run(Date.now());
   return db;
 }
 
@@ -76,7 +77,7 @@ function insertDirective(db: DatabaseSync, overrides: Partial<Directive> = {}): 
 }
 
 describe("controller orchestrator", () => {
-  it("splits a directive into staged worker tasks with role, write_scope, and dependencies", () => {
+  it("splits a directive into staged worker tasks with write_scope and dependencies", () => {
     const db = createDb();
     const ws = createWs();
     const directive = insertDirective(db);
@@ -86,21 +87,18 @@ describe("controller orchestrator", () => {
         task_number: "T01",
         title: "Implement API",
         controller_stage: "implement",
-        controller_role: "lead_engineer",
         write_scope: ["server/routes/directives.ts"],
       },
       {
         task_number: "T02",
         title: "Verify API",
         controller_stage: "verify",
-        controller_role: "tester",
         depends_on: ["T01"],
       },
       {
         task_number: "T03",
         title: "Integrate result",
         controller_stage: "integrate",
-        controller_role: "lead_engineer",
         depends_on: ["T02"],
       },
     ]);
@@ -109,30 +107,10 @@ describe("controller orchestrator", () => {
     assert.equal(result.directive.status, "active");
     assert.equal(result.directive.controller_stage, "implement");
     assert.equal(result.tasks.length, 3);
-    assert.equal(result.tasks[0].controller_role, "lead_engineer");
     assert.deepStrictEqual(JSON.parse(result.tasks[0].write_scope ?? "[]"), ["server/routes/directives.ts"]);
     assert.equal(result.tasks[1].depends_on, '["T01"]');
     assert.ok(ws.sent.some((entry) => entry.type === "directive_update"));
     assert.equal(ws.sent.filter((entry) => entry.type === "task_update").length, 3);
-  });
-
-  it("rejects parallel implement children that overlap write_scope", () => {
-    const overlap = findUnsafeWriteScopeOverlap([
-      {
-        task_number: "T01",
-        title: "A",
-        controller_stage: "implement",
-        write_scope: ["server/a.ts"],
-      },
-      {
-        task_number: "T02",
-        title: "B",
-        controller_stage: "implement",
-        write_scope: ["server/a.ts"],
-      },
-    ]);
-
-    assert.match(overlap ?? "", /overlap write_scope/);
   });
 
   it("advances from implement to verify only after all current stage tasks are done", () => {
@@ -214,47 +192,28 @@ describe("controller orchestrator", () => {
     assert.equal(created.n, 0);
   });
 
-  it("rejects splits where parallel implement children share a write_scope file", () => {
+  it("allows split with serial implement children that share a write_scope file", () => {
     const db = createDb();
     const ws = createWs();
     const directive = insertDirective(db);
 
-    assert.throws(
-      () =>
-        splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
-          {
-            task_number: "T01",
-            title: "A",
-            controller_stage: "implement",
-            write_scope: ["server/shared.ts"],
-          },
-          {
-            task_number: "T02",
-            title: "B",
-            controller_stage: "implement",
-            write_scope: ["server/shared.ts"],
-          },
-        ]),
-      /overlap write_scope/,
-    );
-  });
-
-  it("allows verify-stage children to share write_scope (only implement is gated)", () => {
-    const overlap = findUnsafeWriteScopeOverlap([
+    const result = splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
       {
         task_number: "T01",
-        title: "Verify A",
-        controller_stage: "verify",
-        write_scope: ["server/a.ts"],
+        title: "A",
+        controller_stage: "implement",
+        write_scope: ["server/shared.ts"],
       },
       {
         task_number: "T02",
-        title: "Verify B",
-        controller_stage: "verify",
-        write_scope: ["server/a.ts"],
+        title: "B",
+        controller_stage: "implement",
+        write_scope: ["server/shared.ts"],
+        depends_on: ["T01"],
       },
     ]);
-    assert.equal(overlap, null);
+    assert.equal(result.tasks.length, 2);
+    assert.equal(result.tasks[1].depends_on, '["T01"]');
   });
 
   it("normalizes write_scope (dedup, trim, sort) before persisting", () => {
@@ -424,5 +383,36 @@ describe("controller orchestrator", () => {
     assert.equal(second?.controller_stage, "completed");
     assert.equal(second?.aggregated_result, completed?.aggregated_result);
     assert.equal(second?.completed_at, completedAt);
+  });
+
+  it("creates at most one integrate child after verify completes before directive completion", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+    splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+      { task_number: "T01", title: "Implement A", controller_stage: "implement" },
+      { task_number: "T02", title: "Verify", controller_stage: "verify", depends_on: ["T01"] },
+    ]);
+    db.prepare("UPDATE tasks SET status = 'done' WHERE task_number IN ('T01', 'T02') AND directive_id = ?").run(directive.id);
+
+    const openedVerify = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    const first = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    const second = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    const integrateRows = db.prepare(
+      "SELECT id, status, task_number, depends_on FROM tasks WHERE directive_id = ? AND controller_stage = 'integrate'",
+    ).all(directive.id) as Array<{ id: string; status: string; task_number: string; depends_on: string | null }>;
+
+    assert.equal(openedVerify?.controller_stage, "verify");
+    assert.equal(first?.status, "active");
+    assert.equal(first?.controller_stage, "integrate");
+    assert.equal(second?.status, "active");
+    assert.equal(integrateRows.length, 1);
+    assert.equal(integrateRows[0].status, "inbox");
+    assert.equal(integrateRows[0].depends_on, '["T02"]');
+
+    db.prepare("UPDATE tasks SET status = 'done', result = ? WHERE id = ?").run("Integrated result", integrateRows[0].id);
+    const completed = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    assert.equal(completed?.status, "completed");
+    assert.match(completed?.aggregated_result ?? "", /Integrated result/);
   });
 });
