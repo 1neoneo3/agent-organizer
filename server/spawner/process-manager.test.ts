@@ -1450,3 +1450,265 @@ describe("persistRefinementPlanExtraction", () => {
   });
 });
 
+describe("persistRefinementPlanExtraction — planned_files auto-population", () => {
+  // These tests pin the behavior that drives the file-conflict gate: the
+  // refinement plan's "Files to Modify" section is the ONLY source of truth
+  // for tasks.planned_files. The dispatcher reads that column to block
+  // parallel tasks from clobbering each other; if the column drifts (stale
+  // overwrite, missed normalization, unexpected NULL when files are listed,
+  // etc.), the gate silently fails open.
+
+  function getPlannedFiles(db: DatabaseSync, taskId: string): string | null {
+    const row = db.prepare("SELECT planned_files FROM tasks WHERE id = ?").get(
+      taskId,
+    ) as { planned_files: string | null } | undefined;
+    return row?.planned_files ?? null;
+  }
+
+  it("populates planned_files from a plan that includes Files to Modify on first save", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tinitial-plan", status: "refinement" });
+    assert.equal(getPlannedFiles(db, task.id), null, "precondition: starts NULL");
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `server/routes/tasks.ts` — extend handler",
+      "- `server/domain/task-rules.ts` — new helper",
+      "## Implementation Plan",
+      "1. step",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const stored = getPlannedFiles(db, task.id);
+    assert.deepEqual(JSON.parse(stored ?? "[]"), [
+      "server/routes/tasks.ts",
+      "server/domain/task-rules.ts",
+    ]);
+  });
+
+  it("stores planned_files as NULL when the plan has no Files to Modify section", () => {
+    // A plan that produces only prose / Implementation Plan but never enumerates
+    // target files is a valid refinement output. We must not store "[]" — the
+    // dispatcher uses NULL as the sentinel for "no static overlap info; fall
+    // through to other gates". Storing "[]" would suppress the file gate but
+    // also potentially confuse downstream summary logic.
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan-no-files", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Background",
+      "Some prose only.",
+      "## Implementation Plan",
+      "1. Think hard",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(
+      getPlannedFiles(db, task.id),
+      null,
+      "no Files to Modify heading → planned_files must remain NULL, not '[]'",
+    );
+  });
+
+  it("normalizes paths before persisting (./prefix, duplicate slashes, trailing slash)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan-normalize", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `./src/a.ts` — leading-dot form",
+      "- `src//b.ts` — duplicate slash",
+      "- `src/dir/` — trailing slash on directory",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "src/a.ts",
+      "src/b.ts",
+      "src/dir",
+    ]);
+  });
+
+  it("revising a plan replaces planned_files completely (drops files no longer listed)", () => {
+    // Regression guard: revision must not merge or accumulate. If a user
+    // removes a file from the "Files to Modify" list during revision, the
+    // gate should let go of that file too.
+    const db = createDb();
+    const task = insertTask(db, { id: "trevise-replace", status: "refinement" });
+    db.prepare(
+      `UPDATE tasks
+       SET refinement_plan = '---REFINEMENT PLAN---\nOLD\n---END REFINEMENT---',
+           refinement_completed_at = 1_000,
+           refinement_revision_requested_at = 4_000,
+           planned_files = ?
+       WHERE id = ?`,
+    ).run(JSON.stringify(["src/old1.ts", "src/old2.ts"]), task.id);
+
+    const revised = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `src/new.ts` — replacement",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: revised },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(
+      JSON.parse(getPlannedFiles(db, task.id) ?? "[]"),
+      ["src/new.ts"],
+      "old planned_files entries must be dropped, not merged",
+    );
+  });
+
+  it("revising to a plan without Files to Modify clears planned_files back to NULL", () => {
+    // Inverse of the replace test: if the revision strips out the section,
+    // the column should follow.
+    const db = createDb();
+    const task = insertTask(db, { id: "trevise-clear", status: "refinement" });
+    db.prepare(
+      "UPDATE tasks SET planned_files = ? WHERE id = ?",
+    ).run(JSON.stringify(["src/old.ts"]), task.id);
+
+    const revised = [
+      "---REFINEMENT PLAN---",
+      "## Implementation Plan",
+      "1. Just do it",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: revised },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(getPlannedFiles(db, task.id), null);
+  });
+
+  it("fallback kind does not modify an existing planned_files row", () => {
+    // The fallback path only writes refinement_plan; it must not destroy
+    // a previously-extracted planned_files list (e.g. revision attempt that
+    // produced markerless prose after a real plan was already saved).
+    const db = createDb();
+    const task = insertTask(db, { id: "tfallback-keeps", status: "refinement" });
+    const existingPlan = "---REFINEMENT PLAN---\nOLD\n---END REFINEMENT---";
+    const existingFiles = JSON.stringify(["src/keep.ts"]);
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = ?, planned_files = ? WHERE id = ?",
+    ).run(existingPlan, existingFiles, task.id);
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "fallback", plan: "markerless tail prose" },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(
+      getPlannedFiles(db, task.id),
+      existingFiles,
+      "fallback path must leave planned_files untouched",
+    );
+  });
+
+  it("empty kind does not modify planned_files", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tempty-keeps", status: "refinement" });
+    const existingFiles = JSON.stringify(["src/keep.ts"]);
+    db.prepare(
+      "UPDATE tasks SET planned_files = ? WHERE id = ?",
+    ).run(existingFiles, task.id);
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "empty" },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(getPlannedFiles(db, task.id), existingFiles);
+  });
+
+  it("supports the JA heading 修正するファイル end-to-end at the persistence layer", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tja-heading", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## 修正するファイル",
+      "- `server/spawner/process-manager.ts` — 追加",
+      "- `server/domain/planned-files.ts` — 新規",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "server/spawner/process-manager.ts",
+      "server/domain/planned-files.ts",
+    ]);
+  });
+
+  it("deduplicates files when the plan lists the same path with different formatting", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tdedupe", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `src/auth.ts` — first mention",
+      "- `./src/auth.ts` — duplicate via leading dot",
+      "- `src//auth.ts` — duplicate via dup slash",
+      "- `src/other.ts` — distinct",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "src/auth.ts",
+      "src/other.ts",
+    ]);
+  });
+});
+
