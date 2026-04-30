@@ -336,31 +336,34 @@ describe("releaseAgentsForDeletedTask", () => {
     for (const r of rows) assert.equal(r.status, "idle");
   });
 
-  it("cleans up a stale pointer on an idle agent", () => {
+  it("does not mutate an idle agent pointing at the deleted task", () => {
     insertAgent(db, "a1", "idle", "t-gone");
     const ws = createFakeWs();
 
     const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
 
-    assert.deepEqual(released, ["a1"]);
+    assert.deepEqual(released, []);
     const agent = db
-      .prepare("SELECT current_task_id FROM agents WHERE id = 'a1'")
-      .get() as { current_task_id: string | null };
-    assert.equal(agent.current_task_id, null);
+      .prepare("SELECT status, current_task_id FROM agents WHERE id = 'a1'")
+      .get() as { status: string; current_task_id: string | null };
+    assert.equal(agent.status, "idle");
+    assert.equal(agent.current_task_id, "t-gone");
+    assert.equal(ws.events.length, 0);
   });
 
-  it("cleans up a stale pointer on an offline agent", () => {
+  it("does not mutate an offline agent pointing at the deleted task", () => {
     insertAgent(db, "a1", "offline", "t-gone");
     const ws = createFakeWs();
 
     const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
 
-    assert.deepEqual(released, ["a1"]);
+    assert.deepEqual(released, []);
     const agent = db
       .prepare("SELECT status, current_task_id FROM agents WHERE id = 'a1'")
       .get() as { status: string; current_task_id: string | null };
-    assert.equal(agent.status, "idle");
-    assert.equal(agent.current_task_id, null);
+    assert.equal(agent.status, "offline");
+    assert.equal(agent.current_task_id, "t-gone");
+    assert.equal(ws.events.length, 0);
   });
 
   it("updates the agent's updated_at timestamp on release", () => {

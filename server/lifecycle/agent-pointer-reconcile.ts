@@ -79,7 +79,7 @@ export function reconcileStaleAgentPointers(
 }
 
 /**
- * Release every agent whose `current_task_id` points at the given task.
+ * Release every working agent whose `current_task_id` points at the given task.
  * Called from `DELETE /tasks/:id` so the agent does not stay `working`
  * referencing a now-missing task. The DELETE itself does not cascade —
  * `agents.current_task_id` has no FK constraint on purpose, so we clean it
@@ -91,7 +91,7 @@ export function releaseAgentsForDeletedTask(
   taskId: string,
 ): string[] {
   const agents = db
-    .prepare("SELECT id FROM agents WHERE current_task_id = ?")
+    .prepare("SELECT id FROM agents WHERE status = 'working' AND current_task_id = ?")
     .all(taskId) as Array<{ id: string }>;
   if (agents.length === 0) return [];
 
@@ -99,7 +99,7 @@ export function releaseAgentsForDeletedTask(
   const released: string[] = [];
   for (const agent of agents) {
     const result = db.prepare(
-      "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ? AND current_task_id = ?",
+      "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ? AND status = 'working' AND current_task_id = ?",
     ).run(now, agent.id, taskId);
     if (result.changes === 0) continue;
     released.push(agent.id);
