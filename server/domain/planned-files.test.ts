@@ -138,6 +138,35 @@ describe("extractPlannedFilesFromPlan", () => {
     ]);
   });
 
+  it("extracts backtick paths from the first column of a Markdown table", () => {
+    const plan = [
+      "## 変更対象ファイル",
+      "",
+      "| ファイル | 変更内容 |",
+      "|----------|----------|",
+      "| `server/domain/planned-files.ts` | table extraction |",
+      "| `server/db/runtime.ts` | backfill |",
+      "",
+      "## 実装計画",
+      "1. update extractor",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "server/domain/planned-files.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
+  it("supports mixed bullet and table rows while deduplicating", () => {
+    const plan = [
+      "## Files to Modify",
+      "",
+      "- `src/a.ts` — bullet",
+      "| `src/b.ts` | table |",
+      "| `./src/a.ts` | duplicate normalized path |",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
+  });
+
   it("accepts a parenthesized bilingual annotation after the heading", () => {
     // Refinement plans authored by JA agents commonly include a bilingual
     // hint, e.g. `## 変更対象ファイル (Files to Modify)`. The strict

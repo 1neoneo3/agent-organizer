@@ -62,6 +62,14 @@ export function normalizePath(raw: string): string {
 const BULLET_PATH_RE = /^\s*[-*•]\s*`([^`\n]+)`/;
 
 /**
+ * Regex for a Markdown table row whose first cell is a backtick-wrapped
+ * file path. Refinement plans commonly render "変更対象ファイル" as a
+ * two-column table (`ファイル | 変更内容`), so only the first cell is
+ * considered a path source.
+ */
+const TABLE_FIRST_CELL_PATH_RE = /^\s*\|\s*`([^`\n|]+)`\s*\|/;
+
+/**
  * Regex that matches any of the recognized "files to modify" headings.
  * `##` level is expected but the helper tolerates `###` as well.
  *
@@ -106,7 +114,7 @@ export function extractPlannedFilesFromPlan(plan: string | null | undefined): st
   const seen = new Set<string>();
   const out: string[] = [];
   for (const line of sectionBody.split("\n")) {
-    const m = BULLET_PATH_RE.exec(line);
+    const m = BULLET_PATH_RE.exec(line) ?? TABLE_FIRST_CELL_PATH_RE.exec(line);
     if (!m) continue;
     const norm = normalizePath(m[1]);
     if (norm.length === 0) continue;
