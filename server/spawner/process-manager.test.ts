@@ -23,6 +23,8 @@ import {
   spawnSecondaryReviewer,
   tryStartPendingSpawn,
 } from "./process-manager.js";
+import { aggregateSelfReviewVerdict } from "../workflow/stage-pipeline.js";
+import { detectTextInteractivePrompt } from "./event-classifier.js";
 import type { Task } from "../types/runtime.js";
 
 const HAS_PROC_SELF_FD = platform() === "linux";
@@ -753,6 +755,37 @@ describe("determineCompletionStatus", () => {
     assert.equal(status, "pr_review");
   });
 
+  it("lets self review needs-changes keep the task in progress", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "in_progress", review_count: 0, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "[SELF_REVIEW:NEEDS_CHANGES:missing error handling]", 12_000);
+
+    const status = determineCompletionStatus(db, task);
+    assert.equal(status, "in_progress");
+  });
+
+  it("treats self review pass as a separate implementation-stage outcome", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "in_progress", review_count: 0, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "[SELF_REVIEW:PASS]", 12_000);
+
+    const status = determineCompletionStatus(db, task);
+    assert.equal(status, "pr_review");
+  });
+
+  it("parses self review verdicts independently from reviewer verdicts", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "in_progress", review_count: 0, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "[SELF_REVIEW:PASS]", 12_000);
+    insertAssistantLog(db, task.id, "[REVIEW:PASS]", 13_000);
+
+    const verdict = aggregateSelfReviewVerdict(db, task.id, 10_000);
+    assert.deepEqual(verdict, { verdict: "passed", reason: null });
+  });
+
   // --- Role-tagged verdict tests (parallel review panel) ---
 
   it("passes when both code and security role-tagged verdicts are PASS", () => {
@@ -813,6 +846,29 @@ describe("determineCompletionStatus", () => {
 
     const status = determineCompletionStatus(db, task, true);
     assert.equal(status, "done");
+  });
+});
+
+describe("detectTextInteractivePrompt", () => {
+  it("does not misclassify a review summary that contains request-like phrasing", () => {
+    const summary = [
+      "レビューサマリー:",
+      "### 判定",
+      "- 修正点を指定してください。",
+      "- 追加の観点があれば教えてください。",
+      "[REVIEW:NEEDS_CHANGES]",
+    ].join("\n");
+
+    const prompt = detectTextInteractivePrompt(summary, { strictMode: false });
+    assert.equal(prompt, null);
+  });
+
+  it("still detects a real user prompt outside review summary text", () => {
+    const text = "修正が必要です。次に進むために、対象ファイルを指定してください。";
+
+    const prompt = detectTextInteractivePrompt(text, { strictMode: false });
+    assert.equal(prompt?.promptType, "text_input_request");
+    assert.equal(prompt?.detectedText, text);
   });
 });
 
@@ -946,6 +1002,22 @@ describe("resolveCompletionStatusAfterPromotion", () => {
 
     assert.equal(resolution.status, "pr_review");
     assert.match(resolution.blockedReason ?? "", /pr_url/);
+  });
+
+  it("blocks completion when review_sync_status is still local_commit_ready even if other artifact fields exist", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
+      branchName: "issue/t8",
+      commitSha: "ghi789",
+      prUrl: "https://github.com/example/repo/pull/8",
+      syncStatus: "local_commit_ready",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /review_sync_status=local_commit_ready/);
   });
 
   it("blocks completion when review artifact sync is not applicable", () => {

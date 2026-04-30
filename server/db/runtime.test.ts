@@ -30,6 +30,8 @@ describe("initializeDb", () => {
     const reviewCommitSha = columns.find((column) => column.name === "review_commit_sha");
     const reviewSyncStatus = columns.find((column) => column.name === "review_sync_status");
     const reviewSyncError = columns.find((column) => column.name === "review_sync_error");
+    const selfReviewStatus = columns.find((column) => column.name === "self_review_status");
+    const selfReviewCompletedAt = columns.find((column) => column.name === "self_review_completed_at");
     const autoDispatch = db.prepare("SELECT value FROM settings WHERE key = 'auto_dispatch_mode'").get() as
       | { value: string }
       | undefined;
@@ -40,6 +42,8 @@ describe("initializeDb", () => {
     assert.ok(reviewCommitSha);
     assert.ok(reviewSyncStatus);
     assert.ok(reviewSyncError);
+    assert.ok(selfReviewStatus);
+    assert.ok(selfReviewCompletedAt);
     assert.equal(autoDispatch?.value, "all_inbox");
   });
 

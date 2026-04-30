@@ -397,6 +397,15 @@ export function determineNextStage(
   }
 
   // Implementation completed — check if resuming from a failed stage
+  const selfReview = aggregateSelfReviewVerdict(db, task.id, runStartedAt);
+  if (selfReview?.verdict === "needs_changes") {
+    recordFailedStage(db, task.id, "in_progress");
+    return "in_progress";
+  }
+  if (selfReview?.verdict === "passed") {
+    clearFailedStage(db, task.id);
+  }
+
   const failedStage = findLastFailedStage(db, task.id);
   if (failedStage && activeStages.includes(failedStage)) {
     // Resume from the previously failed stage instead of starting over
@@ -424,12 +433,19 @@ const ROLE_VERDICT_NEEDS_CHANGES = /\[REVIEW:(\w+):NEEDS_CHANGES/;
 const LEGACY_VERDICT_PASS = /\[REVIEW:PASS\]/;
 const LEGACY_VERDICT_NEEDS_CHANGES = /\[REVIEW:NEEDS_CHANGES/;
 const PANEL_MARKER = /\[REVIEWER_PANEL:([^\]]+)\]/;
+const SELF_REVIEW_VERDICT_PASS = /\[SELF_REVIEW:PASS\]/;
+const SELF_REVIEW_VERDICT_NEEDS_CHANGES = /\[SELF_REVIEW:NEEDS_CHANGES(?::([^\]]+))?\]/;
 
 export interface ReviewAggregation {
   /** True when any reviewer (any role) emitted NEEDS_CHANGES. */
   needsChanges: boolean;
   /** True when every expected role has a PASS verdict. */
   allPassed: boolean;
+}
+
+export interface SelfReviewAggregation {
+  verdict: "passed" | "needs_changes";
+  reason: string | null;
 }
 
 /**
@@ -513,4 +529,44 @@ export function aggregateReviewVerdicts(
   // Every expected role must have a PASS
   const allPassed = [...expectedRoles].every((role) => passedRoles.has(role));
   return { needsChanges: false, allPassed };
+}
+
+/**
+ * Aggregate self review verdicts from assistant logs for a single
+ * implementation run.
+ *
+ * Self review is intentionally separate from reviewer PR review so
+ * that implementation-stage verification does not consume the reviewer
+ * loop budget. A NEEDS_CHANGES verdict keeps the task in `in_progress`;
+ * a PASS verdict records completion of the self-review gate and allows
+ * the normal pipeline to advance.
+ */
+export function aggregateSelfReviewVerdict(
+  db: DatabaseSync,
+  taskId: string,
+  runStartedAt: number,
+): SelfReviewAggregation | null {
+  const assistantLogs = db
+    .prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 100",
+    )
+    .all(taskId, runStartedAt) as Array<{ message: string }>;
+
+  let sawPass = false;
+  for (const log of assistantLogs) {
+    const msg = log.message;
+    const needsChangesMatch = msg.match(SELF_REVIEW_VERDICT_NEEDS_CHANGES);
+    if (needsChangesMatch) {
+      return {
+        verdict: "needs_changes",
+        reason: needsChangesMatch[1]?.trim() || null,
+      };
+    }
+
+    if (!sawPass && SELF_REVIEW_VERDICT_PASS.test(msg)) {
+      sawPass = true;
+    }
+  }
+
+  return sawPass ? { verdict: "passed", reason: null } : null;
 }

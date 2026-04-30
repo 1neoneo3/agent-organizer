@@ -45,6 +45,8 @@ export interface Task {
   external_source: string | null;
   external_id: string | null;
   review_count: number;
+  self_review_status?: "not_started" | "passed" | "needs_changes";
+  self_review_completed_at?: number | null;
   directive_id: string | null;
   interactive_prompt_data: string | null;
   review_branch: string | null;

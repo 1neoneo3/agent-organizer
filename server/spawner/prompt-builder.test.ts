@@ -21,13 +21,19 @@ describe("buildTaskPrompt", () => {
         project_path: "/tmp/project",
       } as never,
       {
-        runtimePolicy: {
-          provider: "codex",
-          codexSandboxMode: "workspace-write",
-          codexApprovalPolicy: "on-request",
-          localhostAllowed: false,
-          canAgentRunE2E: false,
-          e2eExecution: "host",
+      runtimePolicy: {
+        provider: "codex",
+        codexSandboxMode: "workspace-write",
+        codexApprovalPolicy: "on-request",
+        githubWriteMode: "disabled",
+        githubWriteAllowedRepos: [],
+        githubWriteTokenPassthrough: false,
+        githubWriteAllowed: false,
+        githubWriteReason: "disabled by settings or WORKFLOW.md",
+        projectRepositoryUrl: null,
+        localhostAllowed: false,
+        canAgentRunE2E: false,
+        e2eExecution: "host",
           e2eCommand: "pnpm test:e2e",
           summary: "Localhost listen: blocked. Delegate E2E to host execution.",
         },
@@ -63,6 +69,21 @@ describe("buildTaskPrompt", () => {
     assert.match(prompt, /Keep changes focused/);
   });
 
+  it("instructs implementers to emit self review verdicts before handoff", () => {
+    const prompt = buildTaskPrompt(
+      {
+        id: "task-self-review",
+        title: "Add feature X",
+        description: "Implement the feature.",
+        project_path: "/tmp/project",
+      } as never,
+    );
+
+    assert.match(prompt, /SELF_REVIEW:PASS/);
+    assert.match(prompt, /SELF_REVIEW:NEEDS_CHANGES/);
+    assert.match(prompt, /実装が reviewer の PR review に進める状態/);
+  });
+
   it("does not tell agents to reset the branch in git-worktree mode", () => {
     const prompt = buildTaskPrompt(
       {
@@ -84,6 +105,79 @@ describe("buildTaskPrompt", () => {
     assert.match(worktreeGitSection, /現在のブランチに留まる/);
     assert.doesNotMatch(worktreeGitSection, /git checkout -B <branch-name> origin\/main/);
     assert.match(worktreeGitSection, /git push -u origin HEAD/);
+  });
+
+  it("switches to host promotion when GitHub write is disabled", () => {
+    const prompt = buildTaskPrompt(
+      {
+        id: "task-no-gh-write",
+        title: "Keep GitHub writes disabled",
+        description: "Implement the feature without sandbox GitHub writes.",
+        project_path: "/tmp/project",
+      } as never,
+      {
+        runtimePolicy: {
+          provider: "codex",
+          codexSandboxMode: "workspace-write",
+          codexApprovalPolicy: "on-request",
+          githubWriteMode: "disabled",
+          githubWriteAllowedRepos: [],
+          githubWriteTokenPassthrough: false,
+          githubWriteAllowed: false,
+          githubWriteReason: "disabled by settings or WORKFLOW.md",
+          projectRepositoryUrl: "https://github.com/acme/widgets",
+          localhostAllowed: false,
+          canAgentRunE2E: false,
+          e2eExecution: "host",
+          e2eCommand: "pnpm test:e2e",
+          summary: "GitHub write disabled. Localhost listen: blocked. Delegate E2E to host execution.",
+        },
+        workspaceMode: "git-worktree",
+      },
+    );
+
+    const gitWorkflowSection = prompt.slice(
+      prompt.indexOf("## Gitワークフロー"),
+      prompt.indexOf("## Available Skills"),
+    );
+    assert.match(prompt, /GitHub write is disabled/i);
+    assert.match(gitWorkflowSection, /review artifact 促進にホストを使うこと/);
+    assert.doesNotMatch(gitWorkflowSection, /git push -u origin HEAD/);
+    assert.doesNotMatch(gitWorkflowSection, /gh pr create/);
+  });
+
+  it("keeps direct push/PR instructions when GitHub write is enabled", () => {
+    const prompt = buildTaskPrompt(
+      {
+        id: "task-gh-write",
+        title: "Enable direct GitHub writes",
+        description: "Implement the feature and open a PR directly.",
+        project_path: "/tmp/project",
+      } as never,
+      {
+        runtimePolicy: {
+          provider: "codex",
+          codexSandboxMode: "workspace-write",
+          codexApprovalPolicy: "on-request",
+          githubWriteMode: "enabled",
+          githubWriteAllowedRepos: ["acme/widgets"],
+          githubWriteTokenPassthrough: true,
+          githubWriteAllowed: true,
+          githubWriteReason: "enabled for https://github.com/acme/widgets",
+          projectRepositoryUrl: "https://github.com/acme/widgets",
+          localhostAllowed: false,
+          canAgentRunE2E: false,
+          e2eExecution: "host",
+          e2eCommand: "pnpm test:e2e",
+          summary: "GitHub write enabled. Localhost listen: blocked. Delegate E2E to host execution.",
+        },
+        workspaceMode: "git-worktree",
+      },
+    );
+
+    assert.match(prompt, /GitHub write is enabled for https:\/\/github\.com\/acme\/widgets/i);
+    assert.match(prompt, /git push -u origin HEAD/);
+    assert.match(prompt, /gh pr create/);
   });
 
   // --- AO Phase 3: parallel impl/test scope injection ---

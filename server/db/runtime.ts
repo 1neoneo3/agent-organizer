@@ -55,6 +55,7 @@ export function initializeDb(dbPath?: string): DatabaseSync {
   migrateAddPrUrl(db);
   migrateAddExternalTaskRef(db);
   migrateAddReviewArtifactFields(db);
+  migrateAddSelfReviewTracking(db);
   migrateAddQaTestingStatus(db);
   migrateAddWorkflowStages(db);
   migrateAddLogStageAgent(db);
@@ -156,6 +157,18 @@ function migrateAddReviewArtifactFields(db: DatabaseSync): void {
   }
   if (!cols.some((c) => c.name === "review_sync_error")) {
     db.exec("ALTER TABLE tasks ADD COLUMN review_sync_error TEXT");
+  }
+}
+
+function migrateAddSelfReviewTracking(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "self_review_status")) {
+    db.exec(
+      "ALTER TABLE tasks ADD COLUMN self_review_status TEXT NOT NULL DEFAULT 'not_started' CHECK(self_review_status IN ('not_started','passed','needs_changes'))",
+    );
+  }
+  if (!cols.some((c) => c.name === "self_review_completed_at")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN self_review_completed_at INTEGER");
   }
 }
 

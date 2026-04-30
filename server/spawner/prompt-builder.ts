@@ -268,6 +268,34 @@ function appendWorkflowContext(
     }
   }
 
+  if (runtimePolicy) {
+    const githubWriteAllowed = runtimePolicy.githubWriteAllowed ?? true;
+    const githubWriteReason = runtimePolicy.githubWriteReason ?? "GitHub write policy not resolved";
+    parts.push("## GitHub Write Policy");
+    parts.push("");
+    if (githubWriteAllowed) {
+      parts.push(
+        runtimePolicy.projectRepositoryUrl
+          ? `GitHub write is enabled for ${runtimePolicy.projectRepositoryUrl}.`
+          : "GitHub write is enabled for this task.",
+      );
+      parts.push(
+        "You may run `git push` and `gh pr create` from the agent when the task reaches its release point.",
+      );
+      if (runtimePolicy.githubWriteTokenPassthrough) {
+        parts.push(
+          "GitHub credentials are inherited from the shell environment for this run.",
+        );
+      }
+    } else {
+      parts.push(`GitHub write is disabled. ${githubWriteReason}.`);
+      parts.push(
+        "Do not run `git push` or `gh pr create` in the sandbox; the host will promote the review artifact after completion.",
+      );
+    }
+    parts.push("");
+  }
+
   if (workflow?.body) {
     parts.push("## Project Workflow (WORKFLOW.md)");
     parts.push("");
@@ -310,6 +338,7 @@ export function buildTaskPrompt(
   const language: OutputLanguage = opts?.language ?? DEFAULT_OUTPUT_LANGUAGE;
   const isEn = language === "en";
   const workspaceMode = opts?.workspaceMode ?? opts?.workflow?.workspaceMode ?? "shared";
+  const githubWriteAllowed = opts?.runtimePolicy?.githubWriteAllowed ?? true;
   // Prompt is built in two halves and joined at the end:
   //   1. `staticParts` — everything that is the same across every task
   //      run for a given project: language, CLAUDE.md + rules, contract
@@ -353,6 +382,13 @@ export function buildTaskPrompt(
     staticParts.push("The QA agent uses this contract to validate your work.");
     staticParts.push("After emitting the contract, proceed with the implementation.");
     staticParts.push("");
+    staticParts.push("## Self Review (required before handoff)");
+    staticParts.push("");
+    staticParts.push("Before handing the task back, review your own changes and emit exactly one verdict tag:");
+    staticParts.push("- `[SELF_REVIEW:PASS]` — your implementation is ready for reviewer PR review");
+    staticParts.push("- `[SELF_REVIEW:NEEDS_CHANGES:<reason>]` — you found issues and need another implementation pass");
+    staticParts.push("Self review is separate from reviewer PR review. Do not consume the reviewer verdict tag here.");
+    staticParts.push("");
   } else {
     staticParts.push("## スプリント契約（実装前に必須）");
     staticParts.push("");
@@ -374,6 +410,13 @@ export function buildTaskPrompt(
     staticParts.push("");
     staticParts.push("この契約はQAエージェントが作業を検証する際に使用されます。");
     staticParts.push("契約を出力した後、実装に進んでください。");
+    staticParts.push("");
+    staticParts.push("## セルフレビュー（引き渡し前に必須）");
+    staticParts.push("");
+    staticParts.push("タスクを引き渡す前に、自分の変更を見直して、次の判定タグをちょうど1つ出力してください:");
+    staticParts.push("- `[SELF_REVIEW:PASS]` — 実装が reviewer の PR review に進める状態");
+    staticParts.push("- `[SELF_REVIEW:NEEDS_CHANGES:<理由>]` — 問題を見つけたので、もう一度実装をやり直す");
+    staticParts.push("セルフレビューは reviewer の PR review とは別です。ここで reviewer 用の判定タグは使わないでください。");
     staticParts.push("");
   }
   // Inject format command if configured in WORKFLOW.md. This is
@@ -559,19 +602,44 @@ export function buildTaskPrompt(
 
   // PR creation workflow (default for tasks that produce file changes).
   if (workspaceMode === "git-worktree") {
-    if (isEn) {
-      const backgroundSectionLabel = "Background";
+    if (githubWriteAllowed) {
+      if (isEn) {
+        const backgroundSectionLabel = "Background";
+        staticParts.push("## Git Workflow");
+        staticParts.push("");
+        staticParts.push("AO has already handed this task to an isolated git worktree and selected the task branch before this prompt starts.");
+        staticParts.push("When the task changes files, follow this workflow:");
+        staticParts.push("1. Stay on the current branch. Do not recreate/reset the branch from origin/main, run destructive resets, or switch away from the prepared worktree branch.");
+        staticParts.push("2. Commit changes (conventional commits format).");
+        staticParts.push("3. Push the current branch: `git push -u origin HEAD`.");
+        staticParts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`.");
+        staticParts.push(`   - **Important**: do not write a \`## ${backgroundSectionLabel}\` section in the PR body (the system injects it automatically — avoid duplication).`);
+        staticParts.push("   - Keep the PR body focused on \"Changes\" and \"Verification\" only.");
+        staticParts.push("5. **Never commit directly to main.**");
+        staticParts.push("");
+      } else {
+        staticParts.push("## Gitワークフロー");
+        staticParts.push("");
+        staticParts.push("AO はこのタスクを分離された git worktree に引き渡し、開始前にタスク用ブランチを checkout 済みです。");
+        staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
+        staticParts.push("1. 現在のブランチに留まること。origin/main からのブランチ作り直し、破壊的な reset、準備済み worktree ブランチからの切り替えは禁止。");
+        staticParts.push("2. 変更をコミット（conventional commits形式）");
+        staticParts.push("3. 現在のブランチをプッシュ: `git push -u origin HEAD`");
+        staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
+        staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
+        staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
+        staticParts.push("5. **mainに直接コミットしない**");
+        staticParts.push("");
+      }
+    } else if (isEn) {
       staticParts.push("## Git Workflow");
       staticParts.push("");
       staticParts.push("AO has already handed this task to an isolated git worktree and selected the task branch before this prompt starts.");
       staticParts.push("When the task changes files, follow this workflow:");
       staticParts.push("1. Stay on the current branch. Do not recreate/reset the branch from origin/main, run destructive resets, or switch away from the prepared worktree branch.");
       staticParts.push("2. Commit changes (conventional commits format).");
-      staticParts.push("3. Push the current branch: `git push -u origin HEAD`.");
-      staticParts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`.");
-      staticParts.push(`   - **Important**: do not write a \`## ${backgroundSectionLabel}\` section in the PR body (the system injects it automatically — avoid duplication).`);
-      staticParts.push("   - Keep the PR body focused on \"Changes\" and \"Verification\" only.");
-      staticParts.push("5. **Never commit directly to main.**");
+      staticParts.push("3. Do not push or create a PR from the sandbox; the host will promote the review artifact after completion.");
+      staticParts.push("4. **Never commit directly to main.**");
       staticParts.push("");
     } else {
       staticParts.push("## Gitワークフロー");
@@ -580,15 +648,11 @@ export function buildTaskPrompt(
       staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
       staticParts.push("1. 現在のブランチに留まること。origin/main からのブランチ作り直し、破壊的な reset、準備済み worktree ブランチからの切り替えは禁止。");
       staticParts.push("2. 変更をコミット（conventional commits形式）");
-      staticParts.push("3. 現在のブランチをプッシュ: `git push -u origin HEAD`");
-      staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
-      staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
-      staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
-      staticParts.push("5. **mainに直接コミットしない**");
+      staticParts.push("3. sandbox から push / PR 作成は行わず、完了後の review artifact 促進にホストを使うこと");
+      staticParts.push("4. **mainに直接コミットしない**");
       staticParts.push("");
     }
   } else if (isEn) {
-    const backgroundSectionLabel = "Background";
     staticParts.push("## Git Workflow");
     staticParts.push("");
     staticParts.push("When the task changes files, follow this workflow:");
@@ -596,11 +660,8 @@ export function buildTaskPrompt(
     staticParts.push("   - This is mandatory even if you think the local main is up-to-date. Never base a new branch on a stale local ref.");
     staticParts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
     staticParts.push("2. Commit changes (conventional commits format).");
-    staticParts.push("3. Push the branch: `git push -u origin <branch-name>`");
-    staticParts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`");
-    staticParts.push(`   - **Important**: do not write a \`## ${backgroundSectionLabel}\` section in the PR body (the system injects it automatically — avoid duplication).`);
-    staticParts.push("   - Keep the PR body focused on \"Changes\" and \"Verification\" only.");
-    staticParts.push("5. **Never commit directly to main.**");
+    staticParts.push("3. Do not push or create a PR from the sandbox; the host will promote the review artifact after completion.");
+    staticParts.push("4. **Never commit directly to main.**");
     staticParts.push("");
   } else {
     staticParts.push("## Gitワークフロー");
@@ -610,11 +671,8 @@ export function buildTaskPrompt(
     staticParts.push("   - ローカルmainが最新と思っても例外なく実行すること。古いローカル参照を土台にしないこと");
     staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
     staticParts.push("2. 変更をコミット（conventional commits形式）");
-    staticParts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
-    staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
-    staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
-    staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
-    staticParts.push("5. **mainに直接コミットしない**");
+    staticParts.push("3. sandbox から push / PR 作成は行わず、完了後の review artifact 促進にホストを使うこと");
+    staticParts.push("4. **mainに直接コミットしない**");
     staticParts.push("");
   }
 

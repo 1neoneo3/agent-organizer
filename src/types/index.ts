@@ -15,7 +15,7 @@ export interface Agent {
   updated_at: number;
 }
 
-export type TaskStatus = "inbox" | "refinement" | "in_progress" | "test_generation" | "qa_testing" | "pr_review" | "human_review" | "done" | "cancelled";
+export type TaskStatus = "inbox" | "refinement" | "in_progress" | "self_review" | "test_generation" | "qa_testing" | "pr_review" | "human_review" | "done" | "cancelled";
 
 export interface TaskSummary {
   id: string;
@@ -31,6 +31,8 @@ export interface TaskSummary {
   refinement_revision_requested_at?: number | null;
   refinement_revision_completed_at?: number | null;
   review_count: number;
+  self_review_status?: "not_started" | "passed" | "needs_changes";
+  self_review_completed_at?: number | null;
   directive_id: string | null;
   pr_url: string | null;
   external_source: string | null;

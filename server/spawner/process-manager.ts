@@ -26,7 +26,11 @@ import {
 import { triggerAutoChecks, waitForActiveChecks } from "./auto-checks.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "../workflow/loader.js";
 import { resolveAgentRuntimePolicy } from "../workflow/runtime-policy.js";
-import { determineNextStage, resolveActiveStages } from "../workflow/stage-pipeline.js";
+import {
+  aggregateSelfReviewVerdict,
+  determineNextStage,
+  resolveActiveStages,
+} from "../workflow/stage-pipeline.js";
 import { notifyTaskStatus } from "../notify/telegram.js";
 import type { TaskLogKind } from "../types/runtime.js";
 import {
@@ -126,6 +130,40 @@ const reviewerSessions = new Map<string, ReviewerSession>();
 
 const MAX_CONTEXT_RESETS = 3;
 const SUCCESSFUL_REVIEW_SYNC_STATUSES: ReadonlySet<ReviewSyncStatus> = new Set(["pr_open"]);
+
+function resolveGitHubWriteControls(
+  db: DatabaseSync,
+  taskId: string,
+  workflow: ProjectWorkflow | null,
+  projectPath: string | null,
+): {
+  mode: "enabled" | "disabled";
+  allowedRepos: string | null;
+  tokenPassthrough: boolean;
+  projectPath: string | null;
+} {
+  const modeSetting = getSetting(db, "github_write_mode", taskId);
+  const allowedReposSetting = getSetting(db, "github_write_allowed_repos", taskId);
+  const tokenPassthroughSetting = getSetting(db, "github_write_token_passthrough", taskId);
+
+  return {
+    mode:
+      modeSetting === undefined
+        ? (workflow?.githubWriteMode ?? "disabled")
+        : modeSetting === "enabled" || modeSetting === "disabled"
+          ? modeSetting
+          : "disabled",
+    allowedRepos:
+      allowedReposSetting === undefined
+        ? workflow?.githubWriteAllowedRepos ?? null
+        : allowedReposSetting,
+    tokenPassthrough:
+      tokenPassthroughSetting === undefined
+        ? workflow?.githubWriteTokenPassthrough ?? false
+        : tokenPassthroughSetting === "true",
+    projectPath,
+  };
+}
 
 /**
  * Create a reviewer-panel coordination session for a task. Must be
@@ -790,7 +828,8 @@ export async function spawnAgent(
   const projectPath = task.project_path ?? process.cwd();
   const workflow = loadProjectWorkflow(projectPath);
   const workspaceMode = resolveWorkspaceMode(workflow, db);
-  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
+  const githubWriteControls = resolveGitHubWriteControls(db, task.id, workflow, projectPath);
+  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow, githubWriteControls);
 
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
 
@@ -877,12 +916,26 @@ export async function spawnAgent(
       ? REVIEW_ALLOWED_TOOLS
       : undefined;
 
+  const canUseGitHubWriteForThisSpawn =
+    runtimePolicy.githubWriteAllowed &&
+    (isRefinementRun ? refinementAsPr : !isReviewRun && !isQaRun && !isTestGenRun);
+  const effectiveCodexSandboxMode =
+    canUseGitHubWriteForThisSpawn && agent.cli_provider === "codex"
+      ? "danger-full-access"
+      : runtimePolicy.codexSandboxMode ?? undefined;
+  const effectiveCodexApprovalPolicy =
+    canUseGitHubWriteForThisSpawn && agent.cli_provider === "codex"
+      ? "never"
+      : runtimePolicy.codexApprovalPolicy ?? undefined;
+
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,
     reasoningLevel: agent.cli_reasoning_level ?? undefined,
     resumeSessionId,
-    codexSandboxMode: runtimePolicy.codexSandboxMode ?? undefined,
-    codexApprovalPolicy: runtimePolicy.codexApprovalPolicy ?? undefined,
+    codexSandboxMode: effectiveCodexSandboxMode,
+    codexApprovalPolicy: effectiveCodexApprovalPolicy,
+    shellEnvironmentInheritAll:
+      canUseGitHubWriteForThisSpawn && runtimePolicy.githubWriteTokenPassthrough,
     allowedTools,
   });
 
@@ -1875,6 +1928,9 @@ export async function spawnAgent(
     const finishTime = Date.now();
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
+    const selfReview = isReviewRun
+      ? null
+      : aggregateSelfReviewVerdict(db, task.id, task.started_at ?? 0);
     const candidateStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewRun, workflow) : "cancelled";
     let finalStatus = candidateStatus;
     let promotion: ReviewArtifactPromotionResult | null = null;
@@ -1967,6 +2023,32 @@ export async function spawnAgent(
         reviewSyncError
           ? `Review artifact sync: ${promotion.syncStatus} (${reviewSyncError})`
           : `Review artifact sync: ${promotion.syncStatus}${promotion.prUrl ? ` (${promotion.prUrl})` : ""}`,
+        spawnStage,
+        agent.id,
+      );
+    }
+
+    if (code === 0 && selfReview) {
+      const selfReviewStatus = selfReview.verdict === "passed" ? "passed" : "needs_changes";
+      const selfReviewReason = selfReview.reason ? `: ${selfReview.reason}` : "";
+      db.prepare(
+        `UPDATE tasks
+         SET self_review_status = ?,
+             self_review_completed_at = ?,
+             updated_at = ?
+         WHERE id = ?`
+      ).run(
+        selfReviewStatus,
+        finishTime,
+        finishTime,
+        task.id,
+      );
+      insertLogStmt.run(
+        task.id,
+        "system",
+        selfReview.verdict === "passed"
+          ? "Self review passed."
+          : `Self review requested changes${selfReviewReason}.`,
         spawnStage,
         agent.id,
       );
@@ -2182,7 +2264,8 @@ export function spawnSecondaryReviewer(
 
   const projectPath = task.project_path ?? process.cwd();
   const workflow = loadProjectWorkflow(projectPath);
-  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
+  const githubWriteControls = resolveGitHubWriteControls(db, task.id, workflow, projectPath);
+  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow, githubWriteControls);
 
   const args = buildAgentArgs(agent.cli_provider, {
     model: agent.cli_model ?? undefined,

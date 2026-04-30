@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   refinement_revision_completed_at INTEGER,
   planned_files TEXT,
   review_count INTEGER NOT NULL DEFAULT 0,
+  self_review_status TEXT NOT NULL DEFAULT 'not_started' CHECK(self_review_status IN ('not_started','passed','needs_changes')),
+  self_review_completed_at INTEGER,
   directive_id TEXT REFERENCES directives(id) ON DELETE SET NULL,
   pr_url TEXT,
   external_source TEXT,

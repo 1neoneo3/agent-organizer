@@ -277,7 +277,8 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     "id", "title", "assigned_agent_id", "project_path", "status",
     "priority", "task_size", "task_number", "depends_on",
     "refinement_completed_at", "refinement_revision_requested_at",
-    "refinement_revision_completed_at", "review_count", "directive_id",
+    "refinement_revision_completed_at", "review_count", "self_review_status",
+    "self_review_completed_at", "directive_id",
     "pr_url", "external_source", "external_id", "review_branch",
     "review_commit_sha", "review_sync_status", "review_sync_error",
     "repository_url", "settings_overrides", "started_at", "completed_at",
@@ -482,6 +483,21 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       const validationError = validateStatusTransition(db, existingTask.status, updates.status, workflow, existingTask.task_size);
       if (validationError) {
         return res.status(400).json({ error: "invalid_status_transition", message: validationError });
+      }
+    }
+
+    // Direct status updates can still be used to start a task from
+    // inbox/cancelled, so they must observe the same dependency and
+    // file-conflict gate as /run and auto-dispatch.
+    if (updates.status === "in_progress" && existingTask.status !== "in_progress") {
+      const blockers = collectAllBlockers(db, existingTask);
+      if (isBlocked(blockers)) {
+        return res.status(409).json({
+          error: "blocked_by_dependencies",
+          message: `Blocked: ${formatAllBlockers(blockers)}`,
+          blocked_by: blockers.dependencies,
+          file_conflicts: blockers.fileConflicts,
+        });
       }
     }
 

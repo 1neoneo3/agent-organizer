@@ -40,6 +40,8 @@ export const TASK_SUMMARY_KEYS: readonly TaskUpdateKey[] = [
   "refinement_revision_requested_at",
   "refinement_revision_completed_at",
   "review_count",
+  "self_review_status",
+  "self_review_completed_at",
   "directive_id",
   "pr_url",
   "external_source",
