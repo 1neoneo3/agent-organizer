@@ -172,6 +172,7 @@ describe("syncGithubIssues", () => {
     const db = createDb();
     const ws = createWs();
     insertAgent(db);
+    const started: Array<{ agentId: string; taskId: string }> = [];
     insertTask(db, {
       id: "active-1",
       title: "Implement auth redirect",
@@ -188,10 +189,13 @@ describe("syncGithubIssues", () => {
       },
     ], {
       projectPath: "/tmp/project",
-      autoAssign: true,
-      autoRun: true,
-      spawnAgent: () => Promise.resolve({ pid: 123 }),
-    });
+        autoAssign: true,
+        autoRun: true,
+        spawnAgent: (_db, _ws, agent, task) => {
+          started.push({ agentId: agent.id, taskId: task.id });
+          return Promise.resolve({ pid: 123 });
+        },
+      });
 
     const row = db.prepare(
       "SELECT status, assigned_agent_id FROM tasks WHERE external_source = 'github' AND external_id = '12'"
@@ -202,7 +206,8 @@ describe("syncGithubIssues", () => {
 
     assert.equal(result.created, 1);
     assert.equal(row.status, "inbox");
-    assert.equal(row.assigned_agent_id, null);
+    assert.equal(row.assigned_agent_id, "agent-1");
+    assert.deepEqual(started, []);
     assert.match(logs.map((entry) => entry.message).join("\n"), /github sync conflicts/i);
     assert.match(logs.map((entry) => entry.message).join("\n"), /src\/auth\.ts/i);
   });

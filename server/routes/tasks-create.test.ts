@@ -15,6 +15,16 @@ function createWs() {
   };
 }
 
+function insertIdleAgent(db: DatabaseSync, id = "agent-1"): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO agents (
+      id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, personality,
+      status, current_task_id, stats_tasks_done, created_at, updated_at
+    ) VALUES (?, ?, 'codex', NULL, NULL, ':robot:', NULL, NULL, 'idle', NULL, 0, ?, ?)`,
+  ).run(id, `Agent ${id}`, now, now);
+}
+
 async function setupServer(): Promise<{
   db: DatabaseSync;
   server: Server;
@@ -89,6 +99,7 @@ describe("POST /tasks — task_number and title validation regressions", () => {
   it("accepts normal task titles and assigns valid task_number", async () => {
     const { db, server, baseUrl } = await setupServer();
     const maxBefore = getCurrentMaxValidNumber(db);
+    insertIdleAgent(db);
 
     try {
       const response = await fetch(`${baseUrl}/tasks`, {
@@ -99,13 +110,19 @@ describe("POST /tasks — task_number and title validation regressions", () => {
 
       assert.equal(response.status, 201);
       const body = (await response.json()) as {
+        assigned_agent_id: string | null;
         task_number: string;
         title: string;
       };
       assert.equal(body.title, "Fix authentication bug");
+      assert.equal(body.assigned_agent_id, "agent-1");
       assert.match(body.task_number, /^#\d+$/);
       const num = parseInt(body.task_number.slice(1), 10);
       assert.equal(num, maxBefore + 1, "task_number must be MAX+1 of valid numbers");
+      const row = db.prepare("SELECT assigned_agent_id FROM tasks ORDER BY created_at DESC LIMIT 1").get() as {
+        assigned_agent_id: string | null;
+      };
+      assert.equal(row.assigned_agent_id, "agent-1");
     } finally {
       await closeServer(server);
     }

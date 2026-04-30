@@ -3,7 +3,11 @@ import { describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { SCHEMA_SQL } from "../db/schema.js";
 import type { Agent, Task } from "../types/runtime.js";
-import { autoDispatchTask } from "./auto-dispatch.js";
+import {
+  autoDispatchTask,
+  formatGitHubInboxConflicts,
+  getGitHubInboxConflicts,
+} from "./auto-dispatch.js";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -249,5 +253,150 @@ describe("autoDispatchTask", () => {
     });
 
     assert.equal(spawnCalls, 1, "should spawn agent when review_count < max");
+  });
+
+  it("assigns a GitHub inbox task before blocking auto-run on conflicts", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgent(db);
+    insertTask(db, {
+      id: "active-task",
+      title: "Implement auth redirect",
+      status: "in_progress",
+      task_number: "#2",
+      external_id: "active-1",
+      external_source: null,
+      planned_files: JSON.stringify(["src/auth.ts"]),
+    });
+    insertTask(db, {
+      id: "target-task",
+      title: "Fix auth redirect",
+      description: "Adjust the redirect flow.\n- `src/auth.ts`",
+      task_number: "#3",
+      external_id: "target-1",
+      external_source: "github",
+      assigned_agent_id: null,
+    });
+    const started: Array<{ agentId: string; taskId: string }> = [];
+
+    autoDispatchTask(db, ws as never, "target-task", {
+      autoAssign: true,
+      autoRun: true,
+      spawnAgent: (_db, _ws, agent, task) => {
+        started.push({ agentId: agent.id, taskId: task.id });
+        return Promise.resolve({ pid: 123 });
+      },
+    });
+
+    const row = db.prepare("SELECT assigned_agent_id, status FROM tasks WHERE id = ?").get("target-task") as {
+      assigned_agent_id: string | null;
+      status: string;
+    };
+
+    assert.equal(row.assigned_agent_id, "agent-1");
+    assert.equal(row.status, "inbox");
+    assert.deepEqual(started, []);
+  });
+});
+
+describe("GitHub inbox conflict detection", () => {
+  it("does not flag a GitHub inbox task when only one generic keyword overlaps", () => {
+    const db = createDb();
+    insertTask(db, {
+      id: "active-task",
+      title: "Improve parser pipeline",
+      status: "in_progress",
+      task_number: "#2",
+      external_id: "active-1",
+      planned_files: null,
+      external_source: null,
+    });
+
+    const targetTask = insertTask(db, {
+      id: "target-task",
+      title: "Fix parser flow",
+      description: "Adjust parsing behavior for the new input shape.",
+      task_number: "#3",
+      external_id: "target-1",
+    });
+
+    const conflicts = getGitHubInboxConflicts(db, targetTask);
+
+    assert.deepStrictEqual(conflicts, []);
+  });
+
+  it("flags a GitHub inbox task when two generic keywords overlap", () => {
+    const db = createDb();
+    insertTask(db, {
+      id: "active-task",
+      title: "Improve parser pipeline",
+      status: "in_progress",
+      task_number: "#2",
+      external_id: "active-2",
+      planned_files: null,
+      external_source: null,
+    });
+
+    const targetTask = insertTask(db, {
+      id: "target-task",
+      title: "Refactor parser pipeline",
+      description: "Make the parser pipeline easier to extend.",
+      task_number: "#3",
+      external_id: "target-2",
+    });
+
+    const conflicts = getGitHubInboxConflicts(db, targetTask);
+
+    assert.equal(conflicts.length, 1);
+    assert.deepEqual(conflicts[0], {
+      task_number: "#2",
+      status: "in_progress",
+      matching_paths: [],
+      matching_terms: ["parser", "pipeline"],
+    });
+  });
+
+  it("flags a GitHub inbox task when one high-signal keyword overlaps", () => {
+    const db = createDb();
+    insertTask(db, {
+      id: "active-task",
+      title: "Improve auth middleware",
+      status: "in_progress",
+      task_number: "#4",
+      external_id: "active-3",
+      planned_files: null,
+      external_source: null,
+    });
+
+    const targetTask = insertTask(db, {
+      id: "target-task",
+      title: "Fix auth redirect",
+      description: "Adjust the login redirect flow.",
+      task_number: "#5",
+      external_id: "target-3",
+    });
+
+    const conflicts = getGitHubInboxConflicts(db, targetTask);
+
+    assert.equal(conflicts.length, 1);
+    assert.deepEqual(conflicts[0], {
+      task_number: "#4",
+      status: "in_progress",
+      matching_paths: [],
+      matching_terms: ["auth"],
+    });
+  });
+
+  it("formats the logged conflict reason with paths and keywords", () => {
+    const reason = formatGitHubInboxConflicts([
+      {
+        task_number: "#7",
+        status: "in_progress",
+        matching_paths: ["src/auth.ts", "src/routes/auth/"],
+        matching_terms: ["auth", "redirect"],
+      },
+    ]);
+
+    assert.equal(reason, "#7 (in_progress) → paths: src/auth.ts, src/routes/auth/; keywords: auth, redirect");
   });
 });

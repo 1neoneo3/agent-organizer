@@ -268,8 +268,9 @@ export function autoDispatchTask(
   options: AutoDispatchOptions,
 ): Task | undefined {
   const spawnAgent = options.spawnAgent ?? defaultSpawnAgent;
-  let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
-  if (!task) return undefined;
+  const currentTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
+  if (!currentTask) return undefined;
+  let task = currentTask;
 
   // Skip tasks that were returned to inbox after hitting review_count max.
   // Without this guard, periodic dispatch re-picks them and creates an infinite
@@ -281,6 +282,19 @@ export function autoDispatchTask(
   }
 
   const githubConflicts = getGitHubInboxConflicts(db, task);
+  if (!task.assigned_agent_id && options.autoAssign) {
+    const idleAgent = pickIdleAgent(db);
+    if (idleAgent) {
+      const assignTs = Date.now();
+      db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(idleAgent.id, assignTs, task.id);
+      const assignedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+      if (assignedTask) {
+        task = assignedTask;
+        ws.broadcast("task_update", pickTaskUpdate(task, ["assigned_agent_id", "updated_at"]));
+      }
+    }
+  }
+
   if (githubConflicts.length > 0) {
     writeAutoDispatchLog(
       db,
@@ -288,18 +302,6 @@ export function autoDispatchTask(
       `blocked (github sync conflicts: ${formatGitHubInboxConflicts(githubConflicts)})`,
     );
     return task;
-  }
-
-  if (!task.assigned_agent_id && options.autoAssign) {
-    const idleAgent = pickIdleAgent(db);
-    if (idleAgent) {
-      const assignTs = Date.now();
-      db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(idleAgent.id, assignTs, task.id);
-      task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
-      if (task) {
-        ws.broadcast("task_update", pickTaskUpdate(task, ["assigned_agent_id", "updated_at"]));
-      }
-    }
   }
 
   if (!task?.assigned_agent_id || !options.autoRun || task.status === "in_progress") {
