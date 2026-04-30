@@ -1783,6 +1783,11 @@ export function buildDecomposePrompt(
     parts.push(
       "- Include dependency information (which tasks must complete before this one)",
     );
+    if (directive.controller_mode === 1) {
+      parts.push("- Include `controller_stage` as one of `implement`, `verify`, or `integrate`.");
+      parts.push("- Include `write_scope` as an array of expected file paths/globs. Use [] when unknown.");
+      parts.push("- Do not include controller roles; role-aware dispatch is handled separately.");
+    }
     parts.push("");
     parts.push(
       "Respond with TWO sections separated by the exact line `---PLAN---`:",
@@ -1805,6 +1810,9 @@ export function buildDecomposePrompt(
             task_size: "small",
             priority: 10,
             depends_on: [],
+            ...(directive.controller_mode === 1
+              ? { controller_stage: "implement", write_scope: ["server/db/schema.ts"] }
+              : {}),
           },
           {
             task_id: "T02",
@@ -1813,6 +1821,9 @@ export function buildDecomposePrompt(
             task_size: "medium",
             priority: 8,
             depends_on: ["T01"],
+            ...(directive.controller_mode === 1
+              ? { controller_stage: "implement", write_scope: ["server/routes/api.ts"] }
+              : {}),
           },
         ],
         null,
@@ -1865,6 +1876,11 @@ export function buildDecomposePrompt(
     parts.push("- スコープは small から medium に収まること");
     parts.push("- 連番の task_id を持つこと（T01, T02, T03...）");
     parts.push("- 依存関係を明記すること（どのタスク完了後に着手できるか）");
+    if (directive.controller_mode === 1) {
+      parts.push("- `controller_stage` に `implement` / `verify` / `integrate` のいずれかを入れること");
+      parts.push("- `write_scope` に想定するファイルパスまたは glob の配列を入れること。不明な場合は [] にすること");
+      parts.push("- controller role は含めないこと。role-aware dispatch は別タスクで扱う");
+    }
     parts.push("");
     parts.push("必ず `---PLAN---` の行で区切られた2つのセクションで回答してください:");
     parts.push("");
@@ -1883,6 +1899,9 @@ export function buildDecomposePrompt(
             task_size: "small",
             priority: 10,
             depends_on: [],
+            ...(directive.controller_mode === 1
+              ? { controller_stage: "implement", write_scope: ["server/db/schema.ts"] }
+              : {}),
           },
           {
             task_id: "T02",
@@ -1891,6 +1910,9 @@ export function buildDecomposePrompt(
             task_size: "medium",
             priority: 8,
             depends_on: ["T01"],
+            ...(directive.controller_mode === 1
+              ? { controller_stage: "implement", write_scope: ["server/routes/api.ts"] }
+              : {}),
           },
         ],
         null,

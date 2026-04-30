@@ -8,6 +8,7 @@ import { buildDecomposePrompt } from "./prompt-builder.js";
 import { withCliPathFallback } from "./cli-tools.js";
 import { isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
+import { CONTROLLER_STAGES, isControllerModeEnabled, type ControllerStage } from "../controller/orchestrator.js";
 
 const PLAN_SEPARATOR = "---PLAN---";
 const MAX_LOG_LINES = 500;
@@ -41,6 +42,10 @@ function appendLog(directiveId: string, kind: DecomposeLogEntry["kind"], message
   return entry;
 }
 
+function normalizeWriteScope(scope: readonly string[] | undefined): string[] {
+  return [...new Set((scope ?? []).map((item) => item.trim()).filter(Boolean))].sort();
+}
+
 const DecomposedTaskSchema = z.object({
   task_id: z.string().regex(/^T\d{2,3}$/),
   title: z.string().min(1),
@@ -48,6 +53,8 @@ const DecomposedTaskSchema = z.object({
   task_size: z.enum(["small", "medium", "large"]).default("small"),
   priority: z.number().int().min(0).max(10).default(0),
   depends_on: z.array(z.string().regex(/^T\d{2,3}$/)).default([]),
+  controller_stage: z.enum(CONTROLLER_STAGES).optional(),
+  write_scope: z.array(z.string().min(1)).default([]),
 });
 
 const DecomposedTasksSchema = z.array(DecomposedTaskSchema).min(1).max(20);
@@ -55,6 +62,14 @@ const DecomposedTasksSchema = z.array(DecomposedTaskSchema).min(1).max(20);
 interface DecomposeResult {
   tasks: z.infer<typeof DecomposedTasksSchema>;
   plan: string | null;
+}
+
+function controllerStageForTask(
+  task: z.infer<typeof DecomposedTaskSchema>,
+  controllerMode: boolean,
+): ControllerStage | null {
+  if (!controllerMode) return null;
+  return task.controller_stage ?? "implement";
 }
 
 /**
@@ -100,17 +115,40 @@ export async function decomposeDirective(
     // Validate dependency references
     const validatedTasks = validateDependencies(tasks);
 
+    const controllerMode = directive.controller_mode === 1 && isControllerModeEnabled(db);
+
     // Create tasks in DB
     const insertStmt = db.prepare(
-      `INSERT INTO tasks (id, title, description, project_path, priority, task_size, directive_id, task_number, depends_on, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO tasks (
+         id, title, description, project_path, priority, task_size,
+         directive_id, task_number, depends_on, controller_stage, write_scope, planned_files,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     for (const t of validatedTasks) {
       const id = randomUUID();
       const ts = Date.now();
       const depsJson = t.depends_on.length > 0 ? JSON.stringify(t.depends_on) : null;
-      insertStmt.run(id, t.title, t.description || null, directive.project_path ?? null, t.priority, t.task_size, directive.id, t.task_id, depsJson, ts, ts);
+      const controllerStage = controllerStageForTask(t, controllerMode);
+      const writeScope = controllerMode ? normalizeWriteScope(t.write_scope) : [];
+      const writeScopeJson = writeScope.length > 0 ? JSON.stringify(writeScope) : null;
+      insertStmt.run(
+        id,
+        t.title,
+        t.description || null,
+        directive.project_path ?? null,
+        t.priority,
+        t.task_size,
+        directive.id,
+        t.task_id,
+        depsJson,
+        controllerStage,
+        writeScopeJson,
+        writeScopeJson,
+        ts,
+        ts,
+      );
       ws.broadcast(
         "task_update",
         pickTaskUpdate(
@@ -123,11 +161,24 @@ export async function decomposeDirective(
             task_size: t.task_size,
             task_number: t.task_id,
             depends_on: depsJson,
+            controller_stage: controllerStage,
             directive_id: directive.id,
             created_at: ts,
             updated_at: ts,
           },
-          ["title", "project_path", "status", "priority", "task_size", "task_number", "depends_on", "directive_id", "created_at", "updated_at"],
+          [
+            "title",
+            "project_path",
+            "status",
+            "priority",
+            "task_size",
+            "task_number",
+            "depends_on",
+            "controller_stage",
+            "directive_id",
+            "created_at",
+            "updated_at",
+          ],
         ),
       );
     }
@@ -145,8 +196,21 @@ export async function decomposeDirective(
 
     // Mark directive as active
     const finishTime = Date.now();
-    db.prepare("UPDATE directives SET status = 'active', updated_at = ? WHERE id = ?").run(finishTime, directive.id);
-    ws.broadcast("directive_update", { ...directive, status: "active", updated_at: finishTime });
+    const firstControllerStage =
+      controllerMode
+        ? CONTROLLER_STAGES.find((stage) =>
+            validatedTasks.some((task) => controllerStageForTask(task, controllerMode) === stage),
+          ) ?? "implement"
+        : null;
+    db.prepare(
+      "UPDATE directives SET status = 'active', controller_stage = COALESCE(?, controller_stage), updated_at = ? WHERE id = ?",
+    ).run(firstControllerStage, finishTime, directive.id);
+    ws.broadcast("directive_update", {
+      ...directive,
+      status: "active",
+      controller_stage: firstControllerStage ?? directive.controller_stage,
+      updated_at: finishTime,
+    });
   } catch (err) {
     // Broadcast error
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -287,7 +351,7 @@ function runClaudeprint({ prompt, cwd, onChunk }: RunClaudePrintOptions): Promis
  * Parse the output from Claude into tasks + optional plan.
  * Splits on ---PLAN--- separator. Falls back to tasks-only if separator is absent.
  */
-function parseDecomposeOutput(output: string): DecomposeResult {
+export function parseDecomposeOutput(output: string): DecomposeResult {
   const trimmed = output.trim();
 
   const sepIndex = trimmed.indexOf(PLAN_SEPARATOR);

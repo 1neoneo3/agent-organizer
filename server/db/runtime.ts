@@ -68,6 +68,7 @@ export function initializeDb(dbPath?: string): DatabaseSync {
   migrateAddPlannedFiles(db);
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
+  migrateAddControllerFields(db);
   migrateStageAgentSelectionSettings(db);
   const repairedTaskNumberMap = repairBrokenTaskNumbers(db);
   backfillTaskNumbers(db);
@@ -116,6 +117,33 @@ function migrateAddTaskNumbering(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === "depends_on")) {
     db.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT");
   }
+}
+
+function migrateAddControllerFields(db: DatabaseSync): void {
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!taskCols.some((c) => c.name === "controller_stage")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate'))");
+  }
+  if (!taskCols.some((c) => c.name === "write_scope")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN write_scope TEXT");
+  }
+
+  const directiveCols = db.prepare("PRAGMA table_info(directives)").all() as Array<{ name: string }>;
+  if (!directiveCols.some((c) => c.name === "controller_mode")) {
+    db.exec("ALTER TABLE directives ADD COLUMN controller_mode INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!directiveCols.some((c) => c.name === "controller_stage")) {
+    db.exec("ALTER TABLE directives ADD COLUMN controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate','blocked','completed'))");
+  }
+  if (!directiveCols.some((c) => c.name === "aggregated_result")) {
+    db.exec("ALTER TABLE directives ADD COLUMN aggregated_result TEXT");
+  }
+  if (!directiveCols.some((c) => c.name === "completed_at")) {
+    db.exec("ALTER TABLE directives ADD COLUMN completed_at INTEGER");
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_directives_controller ON directives(controller_mode, status, controller_stage)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_directive_controller_stage ON tasks(directive_id, controller_stage, status)");
 }
 
 function migrateAddInteractivePrompt(db: DatabaseSync): void {

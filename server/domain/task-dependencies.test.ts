@@ -26,10 +26,11 @@ function insertTask(
   id: string,
   taskNumber: string,
   status: string,
+  directiveId: string | null = null,
 ): void {
   db.prepare(
-    "INSERT INTO tasks (id, title, status, task_size, task_number) VALUES (?, ?, ?, 'small', ?)",
-  ).run(id, `task ${taskNumber}`, status, taskNumber);
+    "INSERT INTO tasks (id, title, status, task_size, task_number, directive_id) VALUES (?, ?, ?, 'small', ?, ?)",
+  ).run(id, `task ${taskNumber}`, status, taskNumber, directiveId);
 }
 
 function insertTaskWithPlannedFiles(
@@ -115,6 +116,44 @@ describe("getBlockingDependencies", () => {
     insertTask(db, "d1", "#1", "cancelled");
     const blockers = getBlockingDependencies(db, { depends_on: '["#1"]' });
     assert.deepStrictEqual(blockers, [{ task_number: "#1", status: "cancelled" }]);
+  });
+
+  it("scopes task_number dependencies by directive_id when present", () => {
+    const db = createDb();
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-a", "A", "A");
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-b", "B", "B");
+    insertTask(db, "a1", "T01", "done", "d-a");
+    insertTask(db, "b1", "T01", "in_progress", "d-b");
+
+    const blockers = getBlockingDependencies(db, {
+      directive_id: "d-a",
+      depends_on: '["T01"]',
+    });
+
+    assert.deepStrictEqual(blockers, []);
+  });
+
+  it("does not pass a dependency because a different directive has the same done task_number", () => {
+    const db = createDb();
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-a", "A", "A");
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-b", "B", "B");
+    insertTask(db, "a1", "T01", "done", "d-a");
+    insertTask(db, "b1", "T01", "in_progress", "d-b");
+
+    const blockers = getBlockingDependencies(db, {
+      directive_id: "d-b",
+      depends_on: '["T01"]',
+    });
+
+    assert.deepStrictEqual(blockers, [{ task_number: "T01", status: "in_progress" }]);
   });
 });
 

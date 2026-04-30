@@ -696,4 +696,21 @@ describe("buildDecomposePrompt language switching", () => {
     assert.match(prompt, /---PLAN---/);
     assert.doesNotMatch(prompt, /## Instructions/);
   });
+
+  it("includes controller stage fields for controller-mode directives", () => {
+    const controllerDirective = {
+      id: "directive-controller",
+      title: "Controller task generation",
+      content: "Create staged controller tasks.",
+      project_path: "/tmp/directive-controller",
+      controller_mode: 1,
+    } as never;
+    const prompt = buildDecomposePrompt(controllerDirective);
+
+    assert.match(prompt, /controller_stage/);
+    assert.match(prompt, /write_scope/);
+    assert.match(prompt, /implement/);
+    assert.match(prompt, /verify/);
+    assert.match(prompt, /integrate/);
+  });
 });

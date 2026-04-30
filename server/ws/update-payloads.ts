@@ -36,6 +36,7 @@ export const TASK_SUMMARY_KEYS: readonly TaskUpdateKey[] = [
   "task_size",
   "task_number",
   "depends_on",
+  "controller_stage",
   "refinement_completed_at",
   "refinement_revision_requested_at",
   "refinement_revision_completed_at",

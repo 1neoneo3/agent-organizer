@@ -58,6 +58,7 @@ import {
 import { getTaskSetting } from "../domain/task-settings.js";
 import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
+import { reconcileControllerDirective } from "../controller/orchestrator.js";
 
 const activeProcesses = new Map<string, ChildProcess>();
 const pendingSpawns = new Set<string>();
@@ -1996,6 +1997,9 @@ export async function spawnAgent(
     }
 
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
+    if (finishedTask?.directive_id && finishedTask.controller_stage) {
+      reconcileControllerDirective({ db, ws }, finishedTask.directive_id);
+    }
     ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });
 

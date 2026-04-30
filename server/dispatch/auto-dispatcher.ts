@@ -13,6 +13,7 @@ import {
   formatAllBlockers,
   isBlocked,
 } from "../domain/task-dependencies.js";
+import { isControllerModeEnabled, isControllerTaskStartable, reconcileControllerDirective } from "../controller/orchestrator.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
 
@@ -80,6 +81,10 @@ function tokenizeProjectPath(projectPath: string | null): string[] {
 }
 
 function detectPreferredRoles(task: Task): string[] {
+  return detectTextPreferredRoles(task);
+}
+
+function detectTextPreferredRoles(task: Task): string[] {
   const text = buildTaskSearchText(task);
   const scored = Object.entries(ROLE_HINTS)
     .map(([role, keywords]) => ({
@@ -295,12 +300,27 @@ export function dispatchAutoStartableTasks(
   }
 
   const startTask = options?.startTask ?? createDefaultTaskStarter(db, ws);
+  if (isControllerModeEnabled(db)) {
+    const activeControllerDirectives = db.prepare(
+      "SELECT id FROM directives WHERE controller_mode = 1 AND status = 'active'",
+    ).all() as Array<{ id: string }>;
+    for (const directive of activeControllerDirectives) {
+      reconcileControllerDirective({ db, ws }, directive.id);
+    }
+  }
+
   const idleWorkers = getIdleWorkers(db);
   const availableAgents = new Map(idleWorkers.map((agent) => [agent.id, agent]));
   const inboxTasks = getInboxTasks(db);
 
   for (const task of inboxTasks) {
     try {
+    if (!isControllerTaskStartable(db, task)) {
+      summary.skipped += 1;
+      writeDispatchLog(db, task, "blocked: controller stage gate is not open for this task");
+      continue;
+    }
+
     // Combined gate: declared depends_on chain AND static file-overlap
     // (planned_files intersection with any other actively-editing task).
     // A dependency in `in_progress` / `refinement` / `pr_review` / … is

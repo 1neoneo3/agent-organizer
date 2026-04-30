@@ -35,6 +35,8 @@ export interface Task {
   task_size: "small" | "medium" | "large";
   task_number: string | null;
   depends_on: string | null;
+  controller_stage?: "implement" | "verify" | "integrate" | null;
+  write_scope?: string | null;
   result: string | null;
   refinement_plan: string | null;
   refinement_completed_at: number | null;
@@ -72,6 +74,10 @@ export interface Directive {
   issued_by_id: string | null;
   status: "pending" | "decomposing" | "active" | "completed" | "cancelled";
   project_path: string | null;
+  controller_mode?: number;
+  controller_stage?: "implement" | "verify" | "integrate" | "blocked" | "completed" | null;
+  aggregated_result?: string | null;
+  completed_at?: number | null;
   created_at: number;
   updated_at: number;
 }
