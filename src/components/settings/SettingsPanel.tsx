@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { fetchAgents, updateSettings } from "../../api/endpoints.js";
+import { getAllCliModelOptions } from "../../cliModels.js";
 import type { Agent, Settings } from "../../types/index.js";
 import { AGENT_ROLES, getRoleLabel } from "../agents/roles.js";
 
@@ -54,6 +55,12 @@ const inputStyle = {
   marginTop: "4px",
 } as const;
 
+const textareaStyle = {
+  ...inputStyle,
+  minHeight: "88px",
+  resize: "vertical",
+} as const;
+
 export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   const [local, setLocal] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
@@ -78,11 +85,14 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   }, []);
 
   const workerAgents = agents.filter((a) => a.agent_type === "worker");
-  const modelOptions = [...new Set(
-    workerAgents
-      .map((agent) => agent.cli_model?.trim() ?? "")
-      .filter((model) => model.length > 0),
-  )].sort((left, right) => left.localeCompare(right));
+  const modelOptions = [
+    ...new Set([
+      ...getAllCliModelOptions(),
+      ...workerAgents
+        .map((agent) => agent.cli_model?.trim() ?? "")
+        .filter((model) => model.length > 0),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
 
   const handleSave = async () => {
     setSaving(true);
@@ -138,6 +148,57 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
               </select>
               <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
                 Applied when a project's WORKFLOW.md does not explicitly set <code>workspace_mode</code>. <strong>Git worktree</strong> isolates each in_progress task in <code>.ao-worktrees/&lt;taskId&gt;</code> on its own branch so concurrent tasks on the same repo don't clobber each other's working tree. <strong>Shared</strong> runs every task directly in the main checkout (legacy behavior).
+              </p>
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>GitHub Write</h3>
+          <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
+            Enable this only for repos that should allow agent-side <code>git push</code> and <code>gh pr create</code>. When enabled, Codex runs with a more permissive sandbox for the active task, and optional shell environment passthrough can expose GitHub credentials to the sandbox.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>GitHub Write Mode</span>
+              <select
+                style={inputStyle}
+                value={local.github_write_mode ?? "disabled"}
+                onChange={(e) => update("github_write_mode", e.target.value)}
+              >
+                <option value="disabled">Disabled</option>
+                <option value="enabled">Enabled</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Disabled means the host will promote the review artifact after the run. Enabled lets the agent push and open PRs directly when the repo is allowed.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Allowed Repos</span>
+              <textarea
+                style={textareaStyle}
+                value={local.github_write_allowed_repos ?? ""}
+                onChange={(e) => update("github_write_allowed_repos", e.target.value)}
+                placeholder="owner/repo or https://github.com/owner/repo, one per line or comma-separated"
+              />
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Leave blank to allow any detected GitHub repository for this installation. Use one repo per line for stricter control.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Token Passthrough</span>
+              <select
+                style={inputStyle}
+                value={local.github_write_token_passthrough ?? "false"}
+                onChange={(e) => update("github_write_token_passthrough", e.target.value)}
+              >
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                When enabled, Codex inherits the shell environment so existing GitHub auth variables can reach the sandbox.
               </p>
             </label>
           </div>

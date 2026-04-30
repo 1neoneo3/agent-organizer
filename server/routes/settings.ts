@@ -26,6 +26,8 @@ const VALID_SETTINGS_KEYS = new Set([
 const SETTINGS_ENUM_VALUES: Record<string, readonly string[]> = {
   output_language: VALID_OUTPUT_LANGUAGES,
   default_workspace_mode: VALID_WORKSPACE_MODES,
+  github_write_mode: ["enabled", "disabled"],
+  github_write_token_passthrough: ["true", "false"],
 };
 
 const UpdateSettingsSchema = z.record(z.string(), z.string());

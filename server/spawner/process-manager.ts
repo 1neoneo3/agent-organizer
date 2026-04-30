@@ -71,6 +71,10 @@ const capturedSessionIds = new Map<string, string>(); // taskId -> claude sessio
 const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
 const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
 
+export function isForeignKeyViolation(error: unknown): boolean {
+  return error instanceof Error && /FOREIGN KEY constraint failed/i.test(error.message);
+}
+
 function formatWorkflowHookLog(
   phase: "before_run" | "after_run",
   result: WorkflowHookResult,
@@ -1352,10 +1356,7 @@ export async function spawnAgent(
       // a still-terminating process crashes the whole server with
       // `FOREIGN KEY constraint failed`. Any other DB error is still
       // surfaced so we don't silently hide real corruption.
-      const isFkViolation =
-        error instanceof Error &&
-        /FOREIGN KEY constraint failed/i.test(error.message);
-      if (!isFkViolation) {
+      if (!isForeignKeyViolation(error)) {
         throw error;
       }
     }
@@ -2088,7 +2089,13 @@ export async function spawnAgent(
     // of spawnStage (the stage that just completed). Pass spawnStage
     // explicitly so the "Process exited" marker belongs to the run that
     // actually produced it.
-    insertLogStmt.run(task.id, "system", `Process exited with code ${code}. Status: ${finalStatus}`, spawnStage, agent.id);
+    try {
+      insertLogStmt.run(task.id, "system", `Process exited with code ${code}. Status: ${finalStatus}`, spawnStage, agent.id);
+    } catch (error) {
+      if (!isForeignKeyViolation(error)) {
+        throw error;
+      }
+    }
 
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
     ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });

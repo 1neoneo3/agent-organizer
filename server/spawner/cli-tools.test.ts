@@ -31,4 +31,25 @@ describe("buildAgentArgs", () => {
       ],
     );
   });
+
+  it("adds shell environment inheritance when GitHub token passthrough is enabled", () => {
+    assert.deepEqual(
+      buildAgentArgs("codex", {
+        codexSandboxMode: "danger-full-access",
+        codexApprovalPolicy: "never",
+        shellEnvironmentInheritAll: true,
+      }),
+      [
+        "codex",
+        "exec",
+        "--json",
+        "--sandbox",
+        "danger-full-access",
+        "-c",
+        "approval_policy=never",
+        "-c",
+        "shell_environment_policy.inherit=all",
+      ],
+    );
+  });
 });

@@ -32,6 +32,9 @@ describe("loadProjectWorkflow", () => {
         "---",
         "codex_sandbox_mode: danger-full-access",
         "codex_approval_policy: never",
+        "github_write_mode: enabled",
+        "github_write_allowed_repos: [\"acme/widgets\", \"acme/docs\"]",
+        "github_write_token_passthrough: true",
         "e2e_execution: host",
         "e2e_command: pnpm test:e2e",
         "git_workflow: none",
@@ -51,6 +54,9 @@ describe("loadProjectWorkflow", () => {
     assert.ok(workflow);
     assert.equal(workflow.codexSandboxMode, "danger-full-access");
     assert.equal(workflow.codexApprovalPolicy, "never");
+    assert.equal(workflow.githubWriteMode, "enabled");
+    assert.equal(workflow.githubWriteAllowedRepos, "[\"acme/widgets\", \"acme/docs\"]");
+    assert.equal(workflow.githubWriteTokenPassthrough, true);
     assert.equal(workflow.e2eExecution, "host");
     assert.equal(workflow.e2eCommand, "pnpm test:e2e");
     assert.equal(workflow.gitWorkflow, "none");

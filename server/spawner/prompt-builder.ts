@@ -631,16 +631,6 @@ export function buildTaskPrompt(
         staticParts.push("5. **mainに直接コミットしない**");
         staticParts.push("");
       }
-    } else if (isEn) {
-      staticParts.push("## Git Workflow");
-      staticParts.push("");
-      staticParts.push("AO has already handed this task to an isolated git worktree and selected the task branch before this prompt starts.");
-      staticParts.push("When the task changes files, follow this workflow:");
-      staticParts.push("1. Stay on the current branch. Do not recreate/reset the branch from origin/main, run destructive resets, or switch away from the prepared worktree branch.");
-      staticParts.push("2. Commit changes (conventional commits format).");
-      staticParts.push("3. Do not push or create a PR from the sandbox; the host will promote the review artifact after completion.");
-      staticParts.push("4. **Never commit directly to main.**");
-      staticParts.push("");
     } else {
       staticParts.push("## Gitワークフロー");
       staticParts.push("");
@@ -648,32 +638,66 @@ export function buildTaskPrompt(
       staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
       staticParts.push("1. 現在のブランチに留まること。origin/main からのブランチ作り直し、破壊的な reset、準備済み worktree ブランチからの切り替えは禁止。");
       staticParts.push("2. 変更をコミット（conventional commits形式）");
+      staticParts.push("3. GitHub write は無効なので sandbox から push / PR 作成は行わないこと");
+      staticParts.push("4. 完了後は host が review artifact を promotion する");
+      staticParts.push("5. **mainに直接コミットしない**");
+      staticParts.push("");
+    }
+  } else if (githubWriteAllowed) {
+    if (isEn) {
+      const backgroundSectionLabel = "Background";
+      staticParts.push("## Git Workflow");
+      staticParts.push("");
+      staticParts.push("When the task changes files, follow this workflow:");
+      staticParts.push("1. **Always base the branch on the latest `origin/main`** — run exactly: `git fetch origin && git checkout -B <branch-name> origin/main`");
+      staticParts.push("   - This is mandatory even if you think the local main is up-to-date. Never base a new branch on a stale local ref.");
+      staticParts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
+      staticParts.push("2. Commit changes (conventional commits format).");
+      staticParts.push("3. Push the branch: `git push -u origin <branch-name>`");
+      staticParts.push("4. Create a PR: `gh pr create --title \"<type>: <description>\" --body \"<summary of changes>\"`");
+      staticParts.push(`   - **Important**: do not write a \`## ${backgroundSectionLabel}\` section in the PR body (the system injects it automatically — avoid duplication).`);
+      staticParts.push("   - Keep the PR body focused on \"Changes\" and \"Verification\" only.");
+      staticParts.push("5. **Never commit directly to main.**");
+      staticParts.push("");
+    } else {
+      staticParts.push("## Gitワークフロー");
+      staticParts.push("");
+      staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
+      staticParts.push("1. **必ず最新の `origin/main` をベースにブランチを作成する** — 正確に以下を実行: `git fetch origin && git checkout -B <branch-name> origin/main`");
+      staticParts.push("   - ローカルmainが最新と思っても例外なく実行すること。古いローカル参照を土台にしないこと");
+      staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
+      staticParts.push("2. 変更をコミット（conventional commits形式）");
+      staticParts.push("3. ブランチをプッシュ: `git push -u origin <branch-name>`");
+      staticParts.push("4. PRを作成: `gh pr create --title \"<type>: <description>\" --body \"<変更の概要>\"`");
+      staticParts.push("   - **重要**: PR本文に `## 背景` セクションを書かないこと（システムが自動挿入するため重複を避ける）");
+      staticParts.push("   - PR本文では「行った変更」「動作確認項目」のみ簡潔に記載");
+      staticParts.push("5. **mainに直接コミットしない**");
+      staticParts.push("");
+    }
+  } else {
+    if (isEn) {
+      staticParts.push("## Git Workflow");
+      staticParts.push("");
+      staticParts.push("When the task changes files, follow this workflow:");
+      staticParts.push("1. **Always base the branch on the latest `origin/main`** — run exactly: `git fetch origin && git checkout -B <branch-name> origin/main`");
+      staticParts.push("   - This is mandatory even if you think the local main is up-to-date. Never base a new branch on a stale local ref.");
+      staticParts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
+      staticParts.push("2. Commit changes (conventional commits format).");
+      staticParts.push("3. Do not push or create a PR from the sandbox; the host will promote the review artifact after completion.");
+      staticParts.push("4. **Never commit directly to main.**");
+      staticParts.push("");
+    } else {
+      staticParts.push("## Gitワークフロー");
+      staticParts.push("");
+      staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
+      staticParts.push("1. **必ず最新の `origin/main` をベースにブランチを作成する** — 正確に以下を実行: `git fetch origin && git checkout -B <branch-name> origin/main`");
+      staticParts.push("   - ローカルmainが最新と思っても例外なく実行すること。古いローカル参照を土台にしないこと");
+      staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
+      staticParts.push("2. 変更をコミット（conventional commits形式）");
       staticParts.push("3. sandbox から push / PR 作成は行わず、完了後の review artifact 促進にホストを使うこと");
       staticParts.push("4. **mainに直接コミットしない**");
       staticParts.push("");
     }
-  } else if (isEn) {
-    staticParts.push("## Git Workflow");
-    staticParts.push("");
-    staticParts.push("When the task changes files, follow this workflow:");
-    staticParts.push("1. **Always base the branch on the latest `origin/main`** — run exactly: `git fetch origin && git checkout -B <branch-name> origin/main`");
-    staticParts.push("   - This is mandatory even if you think the local main is up-to-date. Never base a new branch on a stale local ref.");
-    staticParts.push("   - Branch naming: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>`, etc.");
-    staticParts.push("2. Commit changes (conventional commits format).");
-    staticParts.push("3. Do not push or create a PR from the sandbox; the host will promote the review artifact after completion.");
-    staticParts.push("4. **Never commit directly to main.**");
-    staticParts.push("");
-  } else {
-    staticParts.push("## Gitワークフロー");
-    staticParts.push("");
-    staticParts.push("ファイル変更を伴う場合、以下のワークフローに従うこと:");
-    staticParts.push("1. **必ず最新の `origin/main` をベースにブランチを作成する** — 正確に以下を実行: `git fetch origin && git checkout -B <branch-name> origin/main`");
-    staticParts.push("   - ローカルmainが最新と思っても例外なく実行すること。古いローカル参照を土台にしないこと");
-    staticParts.push("   - ブランチ命名規則: `feat/<topic>`, `fix/<topic>`, `refactor/<topic>` 等");
-    staticParts.push("2. 変更をコミット（conventional commits形式）");
-    staticParts.push("3. sandbox から push / PR 作成は行わず、完了後の review artifact 促進にホストを使うこと");
-    staticParts.push("4. **mainに直接コミットしない**");
-    staticParts.push("");
   }
 
   // Inject relevant skills (static across tasks in a given environment).

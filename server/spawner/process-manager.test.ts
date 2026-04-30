@@ -19,6 +19,7 @@ import {
   isReviewRunTask,
   persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
+  isForeignKeyViolation,
   spawnAgent,
   spawnSecondaryReviewer,
   tryStartPendingSpawn,
@@ -206,6 +207,14 @@ describe("pending spawn helpers", () => {
     assert.equal(clearPendingSpawn("pending-helper-task"), true);
     assert.equal(getPendingSpawns().has("pending-helper-task"), false);
     assert.equal(tryStartPendingSpawn("pending-helper-task"), true);
+  });
+});
+
+describe("isForeignKeyViolation", () => {
+  it("detects SQLite foreign key errors and ignores other failures", () => {
+    assert.equal(isForeignKeyViolation(new Error("FOREIGN KEY constraint failed")), true);
+    assert.equal(isForeignKeyViolation(new Error("database is locked")), false);
+    assert.equal(isForeignKeyViolation("FOREIGN KEY constraint failed"), false);
   });
 });
 
@@ -769,6 +778,17 @@ describe("determineCompletionStatus", () => {
     const db = createDb();
     const task = insertTask(db, { status: "in_progress", review_count: 0, started_at: 10_000 });
 
+    insertAssistantLog(db, task.id, "[SELF_REVIEW:PASS]", 12_000);
+
+    const status = determineCompletionStatus(db, task);
+    assert.equal(status, "pr_review");
+  });
+
+  it("keeps self review separate from reviewer verdicts even when review_count is non-zero", () => {
+    const db = createDb();
+    const task = insertTask(db, { status: "in_progress", review_count: 1, started_at: 10_000 });
+
+    insertAssistantLog(db, task.id, "[REVIEW:PASS]", 11_000);
     insertAssistantLog(db, task.id, "[SELF_REVIEW:PASS]", 12_000);
 
     const status = determineCompletionStatus(db, task);

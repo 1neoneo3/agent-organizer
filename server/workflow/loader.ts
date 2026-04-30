@@ -14,6 +14,9 @@ export interface ProjectWorkflow {
   body: string;
   codexSandboxMode: CodexSandboxMode;
   codexApprovalPolicy: CodexApprovalPolicy;
+  githubWriteMode?: "enabled" | "disabled" | null;
+  githubWriteAllowedRepos?: string | null;
+  githubWriteTokenPassthrough?: boolean | null;
   e2eExecution: E2EExecutionMode;
   e2eCommand: string | null;
   gitWorkflow: "default" | "none";
@@ -71,6 +74,9 @@ const DEFAULT_WORKFLOW: ProjectWorkflow = {
   body: "",
   codexSandboxMode: "workspace-write",
   codexApprovalPolicy: "on-request",
+  githubWriteMode: null,
+  githubWriteAllowedRepos: null,
+  githubWriteTokenPassthrough: null,
   e2eExecution: "host",
   e2eCommand: null,
   gitWorkflow: "default",
@@ -157,6 +163,21 @@ function parseFrontmatter(raw: string): ProjectWorkflow {
           workflow.codexApprovalPolicy = value;
         }
         break;
+      case "github_write_mode":
+        if (value === "enabled" || value === "disabled") {
+          workflow.githubWriteMode = value;
+        }
+        break;
+      case "github_write_allowed_repos":
+        workflow.githubWriteAllowedRepos = value || null;
+        break;
+      case "github_write_token_passthrough": {
+        const parsed = parseBoolean(value);
+        if (parsed !== null) {
+          workflow.githubWriteTokenPassthrough = parsed;
+        }
+        break;
+      }
       case "e2e_execution":
         if (value === "agent" || value === "host" || value === "ci") {
           workflow.e2eExecution = value;

@@ -141,7 +141,7 @@ describe("buildTaskPrompt", () => {
       prompt.indexOf("## Available Skills"),
     );
     assert.match(prompt, /GitHub write is disabled/i);
-    assert.match(gitWorkflowSection, /review artifact 促進にホストを使うこと/);
+    assert.match(gitWorkflowSection, /host が review artifact を promotion する/);
     assert.doesNotMatch(gitWorkflowSection, /git push -u origin HEAD/);
     assert.doesNotMatch(gitWorkflowSection, /gh pr create/);
   });

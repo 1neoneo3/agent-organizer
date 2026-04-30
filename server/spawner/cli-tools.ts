@@ -51,6 +51,7 @@ export function buildAgentArgs(
     resumeSessionId?: string;
     codexSandboxMode?: CodexSandboxMode;
     codexApprovalPolicy?: CodexApprovalPolicy;
+    shellEnvironmentInheritAll?: boolean;
     allowedTools?: string[];
   }
 ): string[] {
@@ -61,6 +62,7 @@ export function buildAgentArgs(
     resumeSessionId,
     codexSandboxMode = "workspace-write",
     codexApprovalPolicy = "on-request",
+    shellEnvironmentInheritAll = false,
     allowedTools,
   } = opts ?? {};
 
@@ -114,6 +116,9 @@ export function buildAgentArgs(
       } else {
         args.push("--sandbox", codexSandboxMode);
         args.push("-c", `approval_policy=${codexApprovalPolicy}`);
+      }
+      if (shellEnvironmentInheritAll) {
+        args.push("-c", "shell_environment_policy.inherit=all");
       }
       return args;
     }
