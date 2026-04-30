@@ -1,13 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import { spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
-import { resolveStageAgentOverride } from "../spawner/stage-agent-resolver.js";
+import { resolveStageAgentSelection } from "../spawner/stage-agent-resolver.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
 import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { resolveActiveStages } from "../workflow/stage-pipeline.js";
+import { writeDispatchLog } from "./dispatch-logs.js";
 
 interface AutoDispatchOptions {
   autoAssign: boolean;
@@ -26,43 +27,68 @@ export function pickIdleAgent(db: DatabaseSync): Agent | undefined {
 
 /**
  * Pick an idle agent for an inbox task, honouring the stage-specific
- * `refinement_agent_role` / `refinement_agent_model` settings before
- * falling back to the legacy round-robin {@link pickIdleAgent}.
+ * `refinement_agent_role` / `refinement_agent_model` settings as a
+ * hard constraint when the task's first active stage is `refinement`.
  *
- * The override only applies when the task's first active workflow stage
- * is `refinement` — for workflows that skip refinement (e.g. small tasks
- * or `default_enable_refinement = false`), the override is not relevant
- * and the legacy fallback is used. This mirrors the dispatcher path in
- * `server/dispatch/auto-dispatcher.ts` (`resolveRefinementAgentForInbox`)
- * so both entry points (POST /tasks creation and the periodic dispatch
- * tick) make the same assignment choice.
+ * Behaviour matrix (mirrors the periodic dispatcher in
+ * `server/dispatch/auto-dispatcher.ts`):
  *
- * If no agent matches the role/model filter, or the matched agent is no
- * longer idle, the function silently falls back to `pickIdleAgent` to
- * preserve the existing throughput guarantee that a fresh task never
- * waits for a specific worker.
+ *  - First active stage is NOT `refinement` → the stage override does
+ *    not apply; fall through to the legacy round-robin
+ *    {@link pickIdleAgent}. This covers small tasks and projects with
+ *    `default_enable_refinement = false`.
+ *  - First active stage IS `refinement` and override is unconfigured
+ *    (both filters empty) → fall through to {@link pickIdleAgent}.
+ *  - First active stage IS `refinement` and override is configured but
+ *    no idle worker matches → return `undefined`. The task stays in
+ *    inbox and the next periodic dispatch tick retries. We deliberately
+ *    do NOT fall back to a non-matching worker: the user configured
+ *    the override as a constraint, and silently dispatching a fresh
+ *    task to the wrong worker just because a matching one is busy
+ *    would defeat the purpose of the setting.
+ *  - First active stage IS `refinement` and override matches → return
+ *    the matching agent.
  */
-export function pickInboxAgent(db: DatabaseSync, task: Task): Agent | undefined {
-  const override = resolveStageAgentOverride(
+export interface PickInboxAgentResult {
+  agent?: Agent;
+  skipReason?: string;
+}
+
+export function pickInboxAgent(db: DatabaseSync, task: Task): PickInboxAgentResult {
+  let workflow = null;
+  if (task.project_path) {
+    try {
+      workflow = loadProjectWorkflow(task.project_path);
+    } catch {
+      workflow = null;
+    }
+  }
+  const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
+  if (activeStages[0] !== "refinement") {
+    return { agent: pickIdleAgent(db) };
+  }
+
+  const result = resolveStageAgentSelection(
     db,
     "refinement_agent_role",
     "refinement_agent_model",
   );
-  if (override && override.status === "idle" && !override.current_task_id) {
-    let workflow = null;
-    if (task.project_path) {
-      try {
-        workflow = loadProjectWorkflow(task.project_path);
-      } catch {
-        workflow = null;
-      }
-    }
-    const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
-    if (activeStages[0] === "refinement") {
-      return override;
-    }
+  switch (result.status) {
+    case "unconfigured":
+      return { agent: pickIdleAgent(db) };
+    case "configured_match":
+      return { agent: result.agent };
+    case "configured_no_match":
+      return {
+        skipReason:
+          "skipped: refinement_agent_role/model is configured but no matching idle worker exists; will retry next tick",
+      };
+    case "configured_no_match_in_pool":
+      return {
+        skipReason:
+          "skipped: refinement_agent_role/model match was already taken in this tick; will retry next tick",
+      };
   }
-  return pickIdleAgent(db);
 }
 
 export function autoDispatchTask(
@@ -85,7 +111,11 @@ export function autoDispatchTask(
   }
 
   if (!task.assigned_agent_id && options.autoAssign) {
-    const idleAgent = pickInboxAgent(db, task);
+    const selection = pickInboxAgent(db, task);
+    if (selection.skipReason) {
+      writeDispatchLog(db, ws, task, selection.skipReason);
+    }
+    const idleAgent = selection.agent;
     if (idleAgent) {
       const assignTs = Date.now();
       db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(idleAgent.id, assignTs, task.id);

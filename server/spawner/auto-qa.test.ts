@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { triggerAutoQa } from "./auto-qa.js";
+import { describe, it, beforeEach } from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { triggerAutoQa, resolveQaAgent } from "./auto-qa.js";
 
 function createWsStub() {
   const sent: Array<{ type: string; payload: unknown; options?: unknown }> = [];
@@ -68,5 +69,154 @@ describe("triggerAutoQa", () => {
       id: "task-qa-max",
       status: "human_review",
     });
+  });
+});
+
+/**
+ * In-memory SQLite fixture covering only the columns the QA selector
+ * touches. Keeps the unit test independent of the full production
+ * schema so we do not need to seed every NOT NULL column on `agents`.
+ */
+function createSelectorFixture(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      agent_type TEXT NOT NULL DEFAULT 'worker',
+      status TEXT NOT NULL DEFAULT 'idle',
+      current_task_id TEXT,
+      role TEXT,
+      cli_model TEXT
+    );
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  return db;
+}
+
+function insertSelectorAgent(
+  db: DatabaseSync,
+  agent: {
+    id: string;
+    role?: string | null;
+    cli_model?: string | null;
+    status?: "idle" | "working" | "offline";
+    current_task_id?: string | null;
+    agent_type?: "worker" | "ceo";
+  },
+): void {
+  db.prepare(
+    "INSERT INTO agents (id, name, agent_type, status, current_task_id, role, cli_model) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    agent.id,
+    agent.id,
+    agent.agent_type ?? "worker",
+    agent.status ?? "idle",
+    agent.current_task_id ?? null,
+    agent.role ?? null,
+    agent.cli_model ?? null,
+  );
+}
+
+function setSelectorSetting(db: DatabaseSync, key: string, value: string): void {
+  db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(key, value);
+}
+
+describe("resolveQaAgent (selector unit tests)", () => {
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = createSelectorFixture();
+  });
+
+  it("returns the override match when qa_agent_role/model is configured and a worker matches", () => {
+    insertSelectorAgent(db, { id: "qa-tester", role: "tester", cli_model: "gpt-5.4" });
+    insertSelectorAgent(db, { id: "lead-1", role: "lead_engineer" });
+    setSelectorSetting(db, "qa_agent_role", "tester");
+    setSelectorSetting(db, "qa_agent_model", "gpt-5.4");
+
+    const result = resolveQaAgent(db, "implementer-id");
+    assert.equal(result.kind, "agent");
+    if (result.kind === "agent") {
+      assert.equal(result.agent?.id, "qa-tester");
+    }
+  });
+
+  it("strict mode: returns `skip` when override is configured but no idle worker matches", () => {
+    insertSelectorAgent(db, { id: "lead-1", role: "lead_engineer" });
+    setSelectorSetting(db, "qa_agent_role", "tester");
+
+    const result = resolveQaAgent(db, "implementer-id");
+    assert.equal(result.kind, "skip");
+    if (result.kind === "skip") {
+      assert.match(result.reason, /no matching idle worker/i);
+    }
+  });
+
+  it("strict mode: returns `skip` when only the implementer would match (excluded)", () => {
+    insertSelectorAgent(db, { id: "impl-as-tester", role: "tester" });
+    setSelectorSetting(db, "qa_agent_role", "tester");
+
+    const result = resolveQaAgent(db, "impl-as-tester");
+    assert.equal(result.kind, "skip");
+  });
+
+  it("falls back to a tester role when override is unconfigured", () => {
+    insertSelectorAgent(db, { id: "tester-1", role: "tester" });
+    insertSelectorAgent(db, { id: "lead-1", role: "lead_engineer" });
+    const result = resolveQaAgent(db, "implementer-id");
+    assert.equal(result.kind, "agent");
+    if (result.kind === "agent") {
+      assert.equal(result.agent?.id, "tester-1");
+    }
+  });
+
+  it("falls back to any idle worker when neither override nor a tester role is registered", () => {
+    insertSelectorAgent(db, { id: "lead-1", role: "lead_engineer" });
+    const result = resolveQaAgent(db, "implementer-id");
+    assert.equal(result.kind, "agent");
+    if (result.kind === "agent") {
+      assert.equal(result.agent?.id, "lead-1");
+    }
+  });
+
+  it("returns `agent: undefined` (no skip) when unconfigured and no idle worker exists", () => {
+    insertSelectorAgent(db, { id: "lead-1", role: "lead_engineer", status: "working" });
+    const result = resolveQaAgent(db, "implementer-id");
+    assert.equal(result.kind, "agent");
+    if (result.kind === "agent") {
+      assert.equal(result.agent, undefined);
+    }
+  });
+
+  it("excludes stale current_task_id pointers from unconfigured fallback", () => {
+    insertSelectorAgent(db, {
+      id: "stale-tester",
+      role: "tester",
+      status: "idle",
+      current_task_id: "stale-task",
+    });
+    insertSelectorAgent(db, { id: "lead-1", role: "lead_engineer" });
+    const result = resolveQaAgent(db, "implementer-id");
+    assert.equal(result.kind, "agent");
+    if (result.kind === "agent") {
+      assert.equal(result.agent?.id, "lead-1");
+    }
+  });
+
+  it("treats whitespace-only role/model settings as unconfigured", () => {
+    insertSelectorAgent(db, { id: "tester-1", role: "tester" });
+    setSelectorSetting(db, "qa_agent_role", "   ");
+    setSelectorSetting(db, "qa_agent_model", "   ");
+    const result = resolveQaAgent(db, "implementer-id");
+    assert.equal(result.kind, "agent");
+    if (result.kind === "agent") {
+      assert.equal(result.agent?.id, "tester-1");
+    }
   });
 });

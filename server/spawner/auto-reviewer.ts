@@ -3,7 +3,7 @@ import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { ReviewerRole } from "./prompt-builder.js";
 import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
-import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
+import { resolveStageAgentSelection } from "./stage-agent-resolver.js";
 
 /**
  * A single reviewer assigned to a task, together with the role they are
@@ -83,7 +83,17 @@ export async function triggerAutoReview(
   }
 
   // Assemble the review panel
-  const assignments = findReviewAgents(db, currentTask.assigned_agent_id);
+  const decision = resolveReviewPanel(db, currentTask.assigned_agent_id);
+  if (decision.kind === "skip") {
+    logSystem(db, currentTask.id, decision.reason);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: currentTask.id, kind: "system", message: `[Auto Review] ${decision.reason}` }],
+      { taskId: currentTask.id },
+    );
+    return;
+  }
+  const assignments = decision.assignments;
   if (assignments.length === 0) {
     logSystem(db, currentTask.id, "Auto review skipped: no idle review agent available");
     return;
@@ -171,55 +181,86 @@ export async function triggerAutoReview(
 }
 
 /**
- * Find the idle agents that should form the review panel for this task.
+ * Discriminated decision returned by {@link resolveReviewPanel}.
  *
- * Priority / panel composition:
- *  1. A `code_reviewer`-role agent (preferred primary reviewer).
- *  2. A `security_reviewer`-role agent, if one is idle and different from
- *     the code reviewer chosen above. This agent runs in parallel with the
- *     code reviewer.
- *  3. Fallback: if no `code_reviewer` role agent exists at all, fall back
- *     to any idle worker agent so the legacy single-reviewer flow keeps
- *     working. In that case the panel has a single entry with role
- *     `"code"` (the fallback agent plays the code-reviewer slot).
- *
- * The implementer (`implementerAgentId`) is always excluded so a task's
- * author cannot review their own work.
+ *  - `panel`: the review can run with the supplied assignments. If
+ *    `assignments` is empty no idle reviewer was found at all (legacy
+ *    "no idle review agent available" case); the caller logs and
+ *    returns.
+ *  - `skip`: the user configured `review_agent_role` / `_model` but no
+ *    matching idle worker is currently reachable. The caller must NOT
+ *    fall back to a default reviewer — instead it should log + return,
+ *    so the next pr_review trigger (e.g. after the configured worker
+ *    finishes its current task) can pick up the panel correctly.
  */
-export function findReviewAgents(
+export type ReviewPanelDecision =
+  | { kind: "panel"; assignments: ReviewerAssignment[] }
+  | { kind: "skip"; reason: string };
+
+/**
+ * Decide the review panel for a task. Honours the
+ * `review_agent_role` / `review_agent_model` override as a hard
+ * constraint when configured: matching worker → use, no match → skip.
+ * Without an override configured, falls back to the legacy role-based
+ * selection (code_reviewer → security_reviewer secondary slot →
+ * generic worker fallback).
+ *
+ * The implementer is always excluded so a task's author cannot review
+ * their own work.
+ */
+export function resolveReviewPanel(
   db: DatabaseSync,
   implementerAgentId: string | null,
-): ReviewerAssignment[] {
+): ReviewPanelDecision {
   const excludeId = implementerAgentId ?? "";
   const assignments: ReviewerAssignment[] = [];
 
-  // 0. Settings override: when `review_agent_role` and/or
-  // `review_agent_model` is configured and at least one idle worker
-  // matches, use a random matching worker as the primary code reviewer. The
-  // role-based code_reviewer slot is skipped so we do not end up with a
-  // panel of two code reviewers; the security_reviewer secondary slot
-  // still applies.
-  const overrideReviewer = resolveStageAgentOverride(
+  // 0. Settings override: stage-specific role/model is a hard
+  // constraint. If configured, only a matching worker is acceptable
+  // for the primary code slot — skipping is preferable to silently
+  // running review with the wrong agent.
+  const overrideResult = resolveStageAgentSelection(
     db,
     "review_agent_role",
     "review_agent_model",
-    [excludeId],
+    { excludeIds: [excludeId] },
   );
-  if (overrideReviewer) {
-    assignments.push({ agent: overrideReviewer, role: "code" });
+
+  if (overrideResult.status === "configured_no_match") {
+    return {
+      kind: "skip",
+      reason:
+        "Auto review skipped: review_agent_role/model is configured but no matching idle worker exists; will retry on the next pr_review trigger",
+    };
+  }
+  if (overrideResult.status === "configured_no_match_in_pool") {
+    // resolveReviewPanel does not pass a candidatePool, so this branch
+    // is unreachable from here. We still handle it explicitly so the
+    // exhaustiveness check for TypeScript narrows correctly and any
+    // future caller that does pass a pool gets sane behaviour.
+    return {
+      kind: "skip",
+      reason:
+        "Auto review skipped: review_agent_role/model match was already taken in this tick; will retry on the next pr_review trigger",
+    };
+  }
+  if (overrideResult.status === "configured_match") {
+    assignments.push({ agent: overrideResult.agent, role: "code" });
   }
 
   // 1. Primary slot: idle code_reviewer (excluding the implementer).
-  // Skipped when the settings override already filled the code slot.
-  const codeReviewer = overrideReviewer
-    ? undefined
-    : (db
-        .prepare(
-          "SELECT * FROM agents WHERE role = 'code_reviewer' AND status = 'idle' AND id != ? LIMIT 1",
-        )
-        .get(excludeId) as Agent | undefined);
-  if (codeReviewer) {
-    assignments.push({ agent: codeReviewer, role: "code" });
+  // Only consulted when the override is unconfigured — when configured
+  // we either have an override match (filled above) or have already
+  // returned `skip`.
+  if (overrideResult.status === "unconfigured") {
+    const codeReviewer = db
+      .prepare(
+        "SELECT * FROM agents WHERE role = 'code_reviewer' AND status = 'idle' AND id != ? LIMIT 1",
+      )
+      .get(excludeId) as Agent | undefined;
+    if (codeReviewer) {
+      assignments.push({ agent: codeReviewer, role: "code" });
+    }
   }
 
   // 2. Secondary slot: idle security_reviewer (excluding both the
@@ -240,8 +281,11 @@ export function findReviewAgents(
   // 3. Fallback: no code_reviewer role agent at all → pick any idle
   // worker for the code slot so the legacy flow still works. This path
   // also runs when a deployment has seeded only generic worker agents
-  // without roles.
-  if (assignments.every((a) => a.role !== "code")) {
+  // without roles. Only relevant for the unconfigured override path.
+  if (
+    overrideResult.status === "unconfigured"
+    && assignments.every((a) => a.role !== "code")
+  ) {
     const fallbackUsed = [excludeId, ...assignments.map((a) => a.agent.id)];
     const fallbackPlaceholders = fallbackUsed.map(() => "?").join(",");
     const anyIdle = db
@@ -255,7 +299,24 @@ export function findReviewAgents(
     }
   }
 
-  return assignments;
+  return { kind: "panel", assignments };
+}
+
+/**
+ * Backward-compatible wrapper that returns the assignments list only.
+ * `skip` decisions are flattened to an empty array — callers that need
+ * to distinguish "configured but no match" from "no idle reviewer at
+ * all" must use {@link resolveReviewPanel} instead.
+ *
+ * Kept so existing tests / call sites continue to work; new code should
+ * prefer the structured decision API.
+ */
+export function findReviewAgents(
+  db: DatabaseSync,
+  implementerAgentId: string | null,
+): ReviewerAssignment[] {
+  const decision = resolveReviewPanel(db, implementerAgentId);
+  return decision.kind === "panel" ? decision.assignments : [];
 }
 
 function getSetting(db: DatabaseSync, key: string): string | undefined {
