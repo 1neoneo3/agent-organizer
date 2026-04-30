@@ -8,6 +8,7 @@ import { parseFeedbackRequest } from "./feedback-validation.js";
 import { recordReadApi } from "../perf/metrics.js";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
+import { releaseAgentsForDeletedTask } from "../lifecycle/agent-pointer-reconcile.js";
 import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
@@ -576,6 +577,10 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     // referencing the now-deleted task id, crashing the server.
     killAgent(task.id);
     db.prepare("DELETE FROM tasks WHERE id = ?").run(req.params.id);
+    // Release any agent whose `current_task_id` still pointed at this task.
+    // `agents.current_task_id` has no FK cascade, so without this cleanup an
+    // agent could remain `working` forever, blocking auto-dispatch.
+    releaseAgentsForDeletedTask(db, ws, task.id);
     res.json({ deleted: true });
   });
 
