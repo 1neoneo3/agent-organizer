@@ -101,10 +101,11 @@ function createIntegrateChild(ctx: RuntimeContext, directive: Directive, tasks: 
   const existing = tasks.find((task) => task.controller_stage === "integrate");
   if (existing) return existing;
 
-  const verifyTaskNumbers = tasks
-    .filter((task) => task.controller_stage === "verify" && task.task_number)
+  const dependencyStage = tasks.some((task) => task.controller_stage === "verify") ? "verify" : "implement";
+  const dependencyTaskNumbers = tasks
+    .filter((task) => task.controller_stage === dependencyStage && task.task_number)
     .map((task) => task.task_number as string);
-  const dependsOnJson = verifyTaskNumbers.length > 0 ? JSON.stringify([...new Set(verifyTaskNumbers)]) : null;
+  const dependsOnJson = dependencyTaskNumbers.length > 0 ? JSON.stringify([...new Set(dependencyTaskNumbers)]) : null;
   const now = nowMs();
   const id = randomUUID();
   ctx.db.prepare(
@@ -167,8 +168,7 @@ function dbUpdateDirective(
          controller_stage = ?,
          aggregated_result = CASE
            WHEN ? IS NULL THEN aggregated_result
-           WHEN aggregated_result IS NULL OR aggregated_result = '' THEN ?
-           ELSE aggregated_result
+           ELSE ?
          END,
          completed_at = COALESCE(completed_at, ?),
          updated_at = ?
@@ -250,7 +250,7 @@ export function advanceControllerDirective(ctx: RuntimeContext, directiveId: str
   }
 
   const nextStage = nextStageWithTasks(currentStage, tasks);
-  if (!nextStage && currentStage === "verify") {
+  if (!nextStage && (currentStage === "implement" || currentStage === "verify")) {
     const integrateTask = createIntegrateChild(ctx, directive, tasks);
     return {
       directive: updateDirectiveStage(ctx, directive, "integrate", { status: "active" }),

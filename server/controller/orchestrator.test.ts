@@ -415,4 +415,48 @@ describe("controller orchestrator", () => {
     assert.equal(completed?.status, "completed");
     assert.match(completed?.aggregated_result ?? "", /Integrated result/);
   });
+
+  it("creates an integrate child after implement completes when verify stage is absent", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+    splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+      { task_number: "T01", title: "Implement A", controller_stage: "implement" },
+      { task_number: "T02", title: "Implement B", controller_stage: "implement" },
+    ]);
+    db.prepare("UPDATE tasks SET status = 'done' WHERE directive_id = ?").run(directive.id);
+
+    const advanced = reconcileControllerDirective(createCtx(db, ws), directive.id);
+    const integrateRows = db.prepare(
+      "SELECT status, task_number, depends_on FROM tasks WHERE directive_id = ? AND controller_stage = 'integrate'",
+    ).all(directive.id) as Array<{ status: string; task_number: string; depends_on: string | null }>;
+
+    assert.equal(advanced?.status, "active");
+    assert.equal(advanced?.controller_stage, "integrate");
+    assert.equal(integrateRows.length, 1);
+    assert.equal(integrateRows[0].depends_on, '["T01","T02"]');
+  });
+
+  it("overwrites aggregated_result when a new successful integrate result is reconciled", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db, {
+      controller_mode: 1,
+      status: "active",
+      controller_stage: "integrate",
+      aggregated_result: "Old result",
+    });
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+         id, title, status, directive_id, task_number, controller_stage, result, created_at, updated_at
+       ) VALUES ('integrate-task', 'Integrate', 'done', ?, 'T01', 'integrate', 'New result', ?, ?)`,
+    ).run(directive.id, now, now);
+
+    const completed = reconcileControllerDirective(createCtx(db, ws), directive.id);
+
+    assert.equal(completed?.status, "completed");
+    assert.match(completed?.aggregated_result ?? "", /New result/);
+    assert.doesNotMatch(completed?.aggregated_result ?? "", /Old result/);
+  });
 });
