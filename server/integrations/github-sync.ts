@@ -5,7 +5,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Task } from "../types/runtime.js";
 import { spawnAgent } from "../spawner/process-manager.js";
-import { autoDispatchTask } from "../tasks/auto-dispatch.js";
+import { handleSpawnFailure } from "../spawner/spawn-failures.js";
+import { dispatchAutoStartableTasks } from "../dispatch/auto-dispatcher.js";
 import {
   AUTO_ASSIGN_TASK_ON_CREATE,
   AUTO_RUN_TASK_ON_CREATE,
@@ -86,6 +87,7 @@ export function syncGithubIssues(
   const taskSpawner = options?.spawnAgent ?? spawnAgent;
   const openIssues = issues.filter((issue) => !issue.pull_request && issue.state === "open");
   const seen = new Set(openIssues.map((issue) => String(issue.number)));
+  const dispatchableTaskIds: string[] = [];
   let created = 0;
   let updated = 0;
   let cancelled = 0;
@@ -106,6 +108,9 @@ export function syncGithubIssues(
       ).run(title, description, projectPath, now, existing.id);
       const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(existing.id) as Task | undefined;
       if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+      if (autoAssign) {
+        dispatchableTaskIds.push(existing.id);
+      }
       updated++;
       continue;
     }
@@ -121,12 +126,37 @@ export function syncGithubIssues(
 
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
     if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
-    autoDispatchTask(db, ws, id, {
-      autoAssign,
-      autoRun,
-      spawnAgent: taskSpawner,
-    });
+    if (autoAssign) {
+      dispatchableTaskIds.push(id);
+    } else {
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
+      ).run(
+        id,
+        "GitHub sync skipped auto dispatch because auto-assign on create is disabled",
+      );
+    }
     created++;
+  }
+
+  if (dispatchableTaskIds.length > 0) {
+    dispatchAutoStartableTasks(db, ws, {
+      taskIds: new Set(dispatchableTaskIds),
+      startTask(task, agent) {
+        if (!autoRun) {
+          return;
+        }
+        taskSpawner(db, ws, agent, task).catch((error) => {
+          const handled = handleSpawnFailure(db, ws, task.id, error, {
+            source: "GitHub sync auto dispatch",
+          });
+          if (handled.handled) {
+            return;
+          }
+          console.error(`[github-sync] spawnAgent failed for task ${task.id}:`, error);
+        });
+      },
+    });
   }
 
   const staleTasks = db.prepare(

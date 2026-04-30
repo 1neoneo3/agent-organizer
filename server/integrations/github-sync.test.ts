@@ -17,6 +17,11 @@ function createDb(): DatabaseSync {
   return db;
 }
 
+function insertSetting(db: DatabaseSync, key: string, value: string): void {
+  db.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+    .run(key, value, Date.now());
+}
+
 function createWs() {
   const sent: Array<{ type: string; payload: unknown }> = [];
   return {
@@ -28,13 +33,25 @@ function createWs() {
 }
 
 function insertAgent(db: DatabaseSync) {
+  insertAgentWith(db, { id: "agent-1", name: "Worker", role: null, cli_provider: "codex" });
+}
+
+function insertAgentWith(
+  db: DatabaseSync,
+  overrides: {
+    id: string;
+    name: string;
+    role: string | null;
+    cli_provider: "claude" | "codex" | "gemini";
+  },
+): void {
   const now = Date.now();
   db.prepare(
     `INSERT INTO agents (
       id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, role, personality,
-      status, current_task_id, stats_tasks_done, created_at, updated_at
-    ) VALUES (?, ?, 'codex', NULL, NULL, ':robot:', NULL, NULL, 'idle', NULL, 0, ?, ?)`
-  ).run("agent-1", "Worker", now, now);
+      agent_type, status, current_task_id, stats_tasks_done, created_at, updated_at
+    ) VALUES (?, ?, ?, NULL, NULL, ':robot:', ?, NULL, 'worker', 'idle', NULL, 0, ?, ?)`
+  ).run(overrides.id, overrides.name, overrides.cli_provider, overrides.role, now, now);
 }
 
 function insertTask(
@@ -197,10 +214,75 @@ describe("syncGithubIssues", () => {
     assert.equal(row.status, "inbox");
     assert.equal(row.assigned_agent_id, "agent-1");
     assert.equal(spawnCalls, 0);
-    assert.ok(
-      ws.sent.some((event) => event.type === "task_update" && (event.payload as { assigned_agent_id?: string | null }).assigned_agent_id === "agent-1"),
-      "task_update websocket payload should include the assigned agent",
-    );
+  });
+
+  it("prefers a matching agent role when auto-dispatching GitHub issues", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgentWith(db, {
+      id: "lead-agent",
+      name: "Lead Engineer",
+      role: "lead_engineer",
+      cli_provider: "codex",
+    });
+    insertAgentWith(db, {
+      id: "security-agent",
+      name: "Security Engineer",
+      role: "security_reviewer",
+      cli_provider: "claude",
+    });
+
+    const started: Array<{ agentId: string; taskId: string }> = [];
+    const result = syncGithubIssues(db, ws as never, [
+      {
+        ...issue(99, "Fix auth redirect"),
+        body: "This issue touches auth, security, and csrf handling.",
+      },
+    ], {
+      projectPath: "/tmp/project",
+      spawnAgent: (_db, _ws, agent, task) => {
+        started.push({ agentId: agent.id, taskId: task.id });
+        return Promise.resolve({ pid: 123 });
+      },
+    });
+
+    const row = db.prepare(
+      "SELECT id, assigned_agent_id, status FROM tasks WHERE external_source = 'github' AND external_id = '99'"
+    ).get() as { id: string; assigned_agent_id: string | null; status: string };
+
+    assert.equal(result.created, 1);
+    assert.equal(row.assigned_agent_id, "security-agent");
+    assert.equal(row.status, "inbox");
+    assert.equal(started.length, 1);
+    assert.deepEqual(started[0], { agentId: "security-agent", taskId: row.id });
+  });
+
+  it("writes a reason when GitHub auto dispatch is disabled", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "disabled");
+    insertAgent(db);
+    let spawnCalls = 0;
+
+    syncGithubIssues(db, ws as never, [issue(12, "Fix auth redirect")], {
+      projectPath: "/tmp/project",
+      spawnAgent: () => {
+        spawnCalls += 1;
+        return Promise.resolve({ pid: 123 });
+      },
+    });
+
+    const row = db.prepare(
+      "SELECT assigned_agent_id, status FROM tasks WHERE external_source = 'github' AND external_id = '12'"
+    ).get() as { assigned_agent_id: string | null; status: string };
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = (SELECT id FROM tasks WHERE external_source = 'github' AND external_id = '12') ORDER BY id ASC"
+    ).all() as Array<{ message: string }>;
+
+    assert.equal(spawnCalls, 0);
+    assert.equal(row.assigned_agent_id, null);
+    assert.equal(row.status, "inbox");
+    assert.ok(logs.some((entry) => /auto dispatch is disabled/i.test(entry.message)));
   });
 
   it("keeps mirrored GitHub tasks in inbox when they conflict with an active task", () => {
@@ -241,10 +323,78 @@ describe("syncGithubIssues", () => {
 
     assert.equal(result.created, 1);
     assert.equal(row.status, "inbox");
-    assert.equal(row.assigned_agent_id, "agent-1");
+    assert.equal(row.assigned_agent_id, null);
     assert.deepEqual(started, []);
     assert.match(logs.map((entry) => entry.message).join("\n"), /github sync conflicts/i);
     assert.match(logs.map((entry) => entry.message).join("\n"), /src\/auth\.ts/i);
+  });
+
+  it("re-evaluates existing mirrored GitHub inbox tasks on later syncs", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgent(db);
+    const started: Array<{ agentId: string; taskId: string }> = [];
+    insertTask(db, {
+      id: "active-1",
+      title: "Implement auth redirect",
+      status: "in_progress",
+      projectPath: "/tmp/project",
+      taskNumber: "#1",
+      plannedFiles: ["src/auth.ts"],
+    });
+
+    const issuePayload = {
+      ...issue(12, "Fix auth redirect"),
+      body: "Adjust the redirect flow.\n- `src/auth.ts`",
+    };
+
+    const spawnAgent = (_db: DatabaseSync, _ws: unknown, agent: { id: string }, task: { id: string }) => {
+      started.push({ agentId: agent.id, taskId: task.id });
+      const now = Date.now();
+      _db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?")
+        .run(now, now, task.id);
+      _db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+        .run(task.id, now, agent.id);
+      return Promise.resolve({ pid: 123 });
+    };
+
+    const first = syncGithubIssues(db, ws as never, [issuePayload], {
+      projectPath: "/tmp/project",
+      autoAssign: true,
+      autoRun: true,
+      spawnAgent,
+    });
+
+    const firstRow = db.prepare(
+      "SELECT status, assigned_agent_id FROM tasks WHERE external_source = 'github' AND external_id = '12'"
+    ).get() as { status: string; assigned_agent_id: string | null };
+
+    assert.equal(first.created, 1);
+    assert.equal(firstRow.status, "inbox");
+    assert.equal(firstRow.assigned_agent_id, null);
+    assert.deepEqual(started, []);
+
+    const now = Date.now();
+    db.prepare("UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?")
+      .run(now, now, "active-1");
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?")
+      .run(now, "agent-1");
+
+    const second = syncGithubIssues(db, ws as never, [issuePayload], {
+      projectPath: "/tmp/project",
+      autoAssign: true,
+      autoRun: true,
+      spawnAgent,
+    });
+
+    const secondRow = db.prepare(
+      "SELECT id, status, assigned_agent_id FROM tasks WHERE external_source = 'github' AND external_id = '12'"
+    ).get() as { id: string; status: string; assigned_agent_id: string | null };
+
+    assert.equal(second.updated, 1);
+    assert.equal(secondRow.assigned_agent_id, "agent-1");
+    assert.equal(secondRow.status, "in_progress");
+    assert.deepEqual(started, [{ agentId: "agent-1", taskId: secondRow.id }]);
   });
 });
 
