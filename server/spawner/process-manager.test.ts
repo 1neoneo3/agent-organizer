@@ -16,6 +16,7 @@ import {
   extractRefinementPlanFromLogs,
   getPendingSpawns,
   initReviewerSession,
+  isHumanReviewRunTask,
   isReviewRunTask,
   persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
@@ -674,6 +675,32 @@ describe("isReviewRunTask", () => {
   it("keeps review mode when resuming from an interactive prompt raised during pr_review", () => {
     const task = insertTask(createDb(), { status: "in_progress", review_count: 3 });
     assert.equal(isReviewRunTask(task, "pr_review"), true);
+  });
+});
+
+describe("isHumanReviewRunTask", () => {
+  it("treats human_review tasks as human-review runs", () => {
+    const task = insertTask(createDb(), { status: "human_review" });
+    assert.equal(isHumanReviewRunTask(task), true);
+  });
+
+  it("does not flag pr_review tasks as human-review runs", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+    assert.equal(isHumanReviewRunTask(task), false);
+  });
+
+  it("does not flag in_progress tasks without prior human_review context", () => {
+    const task = insertTask(createDb(), { status: "in_progress" });
+    assert.equal(isHumanReviewRunTask(task), false);
+  });
+
+  it("keeps human-review mode when resuming from an interactive prompt raised during human_review", () => {
+    // Mirrors the isReviewRunTask resume case: when the agent suspends on an
+    // interactive prompt, the task can flip to in_progress while the spawn
+    // context still represents a human_review run. The previousStatus arg
+    // carries that context forward so prompt/tool selection stays consistent.
+    const task = insertTask(createDb(), { status: "in_progress" });
+    assert.equal(isHumanReviewRunTask(task, "human_review"), true);
   });
 });
 

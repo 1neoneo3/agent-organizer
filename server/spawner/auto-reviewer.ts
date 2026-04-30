@@ -71,6 +71,14 @@ export async function triggerAutoReview(
       "human_review",
     );
     ws.broadcast("task_update", { id: currentTask.id, status: "human_review" });
+    // Hand the task off to auto_human_review when the operator opted in.
+    // The trigger no-ops when the setting is off or the cap is exhausted,
+    // so this is safe to call unconditionally on every human_review entry.
+    const { triggerAutoHumanReview } = await import("./auto-human-reviewer.js");
+    const handoffTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(currentTask.id) as Task | undefined;
+    if (handoffTask) {
+      setTimeout(() => triggerAutoHumanReview(db, ws, handoffTask), 500);
+    }
     return;
   }
 

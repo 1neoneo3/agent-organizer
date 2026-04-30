@@ -44,6 +44,13 @@ export async function triggerAutoQa(
       "human_review",
     );
     ws.broadcast("task_update", { id: currentTask.id, status: "human_review" });
+    // Hand off to auto_human_review when enabled. Safe to call
+    // unconditionally — the trigger gates on the setting and the cap.
+    const { triggerAutoHumanReview } = await import("./auto-human-reviewer.js");
+    const handoffTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(currentTask.id) as Task | undefined;
+    if (handoffTask) {
+      setTimeout(() => triggerAutoHumanReview(db, ws, handoffTask), 500);
+    }
     return;
   }
 
