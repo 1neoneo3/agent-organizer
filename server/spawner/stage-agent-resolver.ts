@@ -99,7 +99,7 @@ export function resolveStageAgentSelection(
   const model = modelRow?.value?.trim() || "";
   if (!role && !model) return { status: "unconfigured" };
 
-  const where: string[] = ["agent_type = 'worker'", "status = 'idle'"];
+  const where: string[] = ["agent_type = 'worker'", "status = 'idle'", "current_task_id IS NULL"];
   const args: string[] = [];
 
   if (role) {

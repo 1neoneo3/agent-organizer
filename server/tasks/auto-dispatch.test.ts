@@ -278,7 +278,7 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     const task = insertTask(db, { project_path: null });
 
     const picked = pickInboxAgent(db, task);
-    assert.equal(picked?.id, "planner-1");
+    assert.equal(picked.agent?.id, "planner-1");
   });
 
   it("matches on cli_model when refinement_agent_model is configured", () => {
@@ -302,7 +302,7 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     const task = insertTask(db, { project_path: null });
 
     const picked = pickInboxAgent(db, task);
-    assert.equal(picked?.id, "planner-match");
+    assert.equal(picked.agent?.id, "planner-match");
   });
 
   it("falls back to pickIdleAgent when refinement is not in the active pipeline", () => {
@@ -316,7 +316,7 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
 
     const picked = pickInboxAgent(db, task);
     // pickIdleAgent orders by stats_tasks_done ASC, so lead-1 wins.
-    assert.equal(picked?.id, "lead-1");
+    assert.equal(picked.agent?.id, "lead-1");
   });
 
   it("returns undefined when the override is configured but no matching idle agent exists (strict mode)", () => {
@@ -330,7 +330,9 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
     const task = insertTask(db, { project_path: null });
 
-    assert.equal(pickInboxAgent(db, task), undefined);
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked.agent, undefined);
+    assert.match(picked.skipReason ?? "", /no matching idle worker/);
   });
 
   it("returns undefined when the override matches an agent that is currently busy (strict mode)", () => {
@@ -348,7 +350,9 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
     const task = insertTask(db, { project_path: null });
 
-    assert.equal(pickInboxAgent(db, task), undefined);
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked.agent, undefined);
+    assert.match(picked.skipReason ?? "", /no matching idle worker/);
   });
 
   it("returns undefined when no idle agent is available at all", () => {
@@ -365,7 +369,9 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     });
     const task = insertTask(db, { project_path: null });
 
-    assert.equal(pickInboxAgent(db, task), undefined);
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked.agent, undefined);
+    assert.match(picked.skipReason ?? "", /no matching idle worker/);
   });
 
   it("ignores the override when both role and model settings are empty", () => {
@@ -380,7 +386,7 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
 
     const picked = pickInboxAgent(db, task);
     // Empty filters → fallback to pickIdleAgent (lowest stats_tasks_done).
-    assert.equal(picked?.id, "lead-1");
+    assert.equal(picked.agent?.id, "lead-1");
   });
 
   it("does not select a ceo agent through the override path even when role matches", () => {
@@ -401,7 +407,27 @@ describe("pickInboxAgent (stage-specific refinement override)", () => {
     const task = insertTask(db, { project_path: null });
 
     const picked = pickInboxAgent(db, task);
-    assert.equal(picked?.id, "planner-worker");
+    assert.equal(picked.agent?.id, "planner-worker");
+  });
+
+  it("does not select a stale idle agent whose current_task_id is still set", () => {
+    const db = createDb();
+    setSetting(db, "default_enable_refinement", "true");
+    setSetting(db, "refinement_agent_role", "planner");
+
+    insertAgent(db, {
+      id: "stale-planner",
+      name: "Stale Planner",
+      role: "planner",
+      status: "idle",
+      current_task_id: "stale-task",
+    });
+    insertAgent(db, { id: "lead-1", name: "Lead", role: "lead_engineer" });
+    const task = insertTask(db, { project_path: null });
+
+    const picked = pickInboxAgent(db, task);
+    assert.equal(picked.agent, undefined);
+    assert.match(picked.skipReason ?? "", /no matching idle worker/);
   });
 });
 
@@ -448,5 +474,13 @@ describe("autoDispatchTask + refinement_agent settings (integration)", () => {
     };
     // Strict: configured_no_match must not silently fall back to lead-1.
     assert.equal(row.assigned_agent_id, null);
+
+    const log = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC LIMIT 1",
+    ).get("task-1") as { message: string } | undefined;
+    assert.match(log?.message ?? "", /no matching idle worker/);
+    const cliOutput = ws.sent.find((event) => event.type === "cli_output");
+    assert.ok(cliOutput, "skip reason should be broadcast to Activity immediately");
+    assert.match(JSON.stringify(cliOutput.payload), /no matching idle worker/);
   });
 });

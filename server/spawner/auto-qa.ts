@@ -51,6 +51,11 @@ export async function triggerAutoQa(
   const decision = resolveQaAgent(db, currentTask.assigned_agent_id);
   if (decision.kind === "skip") {
     logSystem(db, currentTask.id, decision.reason);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: currentTask.id, kind: "system", message: `[Auto QA] ${decision.reason}` }],
+      { taskId: currentTask.id },
+    );
     return;
   }
   const tester = decision.agent;
@@ -140,14 +145,14 @@ export function resolveQaAgent(
   // Unconfigured: legacy fallback.
   const testerByRole = db
     .prepare(
-      "SELECT * FROM agents WHERE role = 'tester' AND status = 'idle' AND id != ? LIMIT 1",
+      "SELECT * FROM agents WHERE role = 'tester' AND status = 'idle' AND current_task_id IS NULL AND id != ? LIMIT 1",
     )
     .get(implementerAgentId ?? "") as Agent | undefined;
   if (testerByRole) return { kind: "agent", agent: testerByRole };
 
   const anyIdle = db
     .prepare(
-      "SELECT * FROM agents WHERE status = 'idle' AND agent_type = 'worker' AND id != ? LIMIT 1",
+      "SELECT * FROM agents WHERE status = 'idle' AND current_task_id IS NULL AND agent_type = 'worker' AND id != ? LIMIT 1",
     )
     .get(implementerAgentId ?? "") as Agent | undefined;
 

@@ -540,6 +540,9 @@ describe("dispatchAutoStartableTasks", () => {
       logs.at(-1)?.message ?? "",
       /no matching idle worker/i,
     );
+    const cliOutput = ws.sent.find((event) => event.type === "cli_output");
+    assert.ok(cliOutput, "skip reason should be broadcast to Activity immediately");
+    assert.match(JSON.stringify(cliOutput.payload), /no matching idle worker/i);
   });
 
   it("skips a second refinement task when the only matching worker was already consumed in this tick", () => {
@@ -598,6 +601,11 @@ describe("dispatchAutoStartableTasks", () => {
       t2Logs.at(-1)?.message ?? "",
       /already taken in this tick/i,
     );
+    const t2CliOutput = ws.sent.find(
+      (event) => event.type === "cli_output" && JSON.stringify(event.payload).includes(t2.id),
+    );
+    assert.ok(t2CliOutput, "same-tick skip reason should be broadcast to Activity immediately");
+    assert.match(JSON.stringify(t2CliOutput.payload), /already taken in this tick/i);
   });
 
   it("dispatches a second matching planner to a second refinement task in the same tick (candidate pool reuse)", () => {

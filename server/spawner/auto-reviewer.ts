@@ -78,6 +78,11 @@ export async function triggerAutoReview(
   const decision = resolveReviewPanel(db, currentTask.assigned_agent_id);
   if (decision.kind === "skip") {
     logSystem(db, currentTask.id, decision.reason);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: currentTask.id, kind: "system", message: `[Auto Review] ${decision.reason}` }],
+      { taskId: currentTask.id },
+    );
     return;
   }
   const assignments = decision.assignments;

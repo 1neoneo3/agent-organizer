@@ -16,6 +16,7 @@ function createFixture(): DatabaseSync {
       name TEXT NOT NULL,
       agent_type TEXT NOT NULL DEFAULT 'worker',
       status TEXT NOT NULL DEFAULT 'idle',
+      current_task_id TEXT,
       role TEXT,
       cli_model TEXT
     );
@@ -34,16 +35,18 @@ function insertAgent(
     role?: string | null;
     cli_model?: string | null;
     status?: "idle" | "working" | "offline";
+    current_task_id?: string | null;
     agent_type?: "worker" | "ceo";
   },
 ): void {
   db.prepare(
-    "INSERT INTO agents (id, name, agent_type, status, role, cli_model) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO agents (id, name, agent_type, status, current_task_id, role, cli_model) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(
     agent.id,
     agent.id,
     agent.agent_type ?? "worker",
     agent.status ?? "idle",
+    agent.current_task_id ?? null,
     agent.role ?? null,
     agent.cli_model ?? null,
   );
@@ -119,6 +122,21 @@ describe("resolveTestGenAgent", () => {
     assert.equal(result.kind, "agent");
     if (result.kind === "agent") {
       assert.equal(result.agent, undefined);
+    }
+  });
+
+  it("excludes stale current_task_id pointers from unconfigured fallback", () => {
+    insertAgent(db, {
+      id: "stale-tester",
+      role: "tester",
+      status: "idle",
+      current_task_id: "stale-task",
+    });
+    insertAgent(db, { id: "lead-1", role: "lead_engineer" });
+    const result = resolveTestGenAgent(db, "implementer-id");
+    assert.equal(result.kind, "agent");
+    if (result.kind === "agent") {
+      assert.equal(result.agent?.id, "lead-1");
     }
   });
 

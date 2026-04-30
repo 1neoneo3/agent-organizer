@@ -8,6 +8,7 @@ import { pickTaskUpdate } from "../ws/update-payloads.js";
 import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { resolveActiveStages } from "../workflow/stage-pipeline.js";
+import { writeDispatchLog } from "./dispatch-logs.js";
 
 interface AutoDispatchOptions {
   autoAssign: boolean;
@@ -48,7 +49,12 @@ export function pickIdleAgent(db: DatabaseSync): Agent | undefined {
  *  - First active stage IS `refinement` and override matches → return
  *    the matching agent.
  */
-export function pickInboxAgent(db: DatabaseSync, task: Task): Agent | undefined {
+export interface PickInboxAgentResult {
+  agent?: Agent;
+  skipReason?: string;
+}
+
+export function pickInboxAgent(db: DatabaseSync, task: Task): PickInboxAgentResult {
   let workflow = null;
   if (task.project_path) {
     try {
@@ -59,7 +65,7 @@ export function pickInboxAgent(db: DatabaseSync, task: Task): Agent | undefined 
   }
   const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
   if (activeStages[0] !== "refinement") {
-    return pickIdleAgent(db);
+    return { agent: pickIdleAgent(db) };
   }
 
   const result = resolveStageAgentSelection(
@@ -69,15 +75,19 @@ export function pickInboxAgent(db: DatabaseSync, task: Task): Agent | undefined 
   );
   switch (result.status) {
     case "unconfigured":
-      return pickIdleAgent(db);
+      return { agent: pickIdleAgent(db) };
     case "configured_match":
-      return result.agent;
+      return { agent: result.agent };
     case "configured_no_match":
+      return {
+        skipReason:
+          "skipped: refinement_agent_role/model is configured but no matching idle worker exists; will retry next tick",
+      };
     case "configured_no_match_in_pool":
-      // Configured but no matching idle worker — leave the task in
-      // inbox so the periodic dispatcher can retry. autoDispatchTask
-      // will not assign anyone this round.
-      return undefined;
+      return {
+        skipReason:
+          "skipped: refinement_agent_role/model match was already taken in this tick; will retry next tick",
+      };
   }
 }
 
@@ -101,7 +111,11 @@ export function autoDispatchTask(
   }
 
   if (!task.assigned_agent_id && options.autoAssign) {
-    const idleAgent = pickInboxAgent(db, task);
+    const selection = pickInboxAgent(db, task);
+    if (selection.skipReason) {
+      writeDispatchLog(db, ws, task, selection.skipReason);
+    }
+    const idleAgent = selection.agent;
     if (idleAgent) {
       const assignTs = Date.now();
       db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(idleAgent.id, assignTs, task.id);
