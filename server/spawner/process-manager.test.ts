@@ -833,6 +833,22 @@ describe("resolveCompletionStatusAfterPromotion", () => {
     assert.match(resolution.blockedReason ?? "", /push failed/);
   });
 
+  it("keeps a reviewed task in pr_review when gh pr create failed", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
+      branchName: "issue/t4",
+      commitSha: "jkl012",
+      prUrl: null,
+      syncStatus: "pushed",
+      syncError: "pr failed: gh pr create exited with code 1",
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /pr failed/);
+  });
+
   it("keeps implementation tasks incomplete when review metadata is missing", () => {
     const task = insertTask(createDb(), { status: "in_progress", review_count: 0 });
 
@@ -847,6 +863,25 @@ describe("resolveCompletionStatusAfterPromotion", () => {
 
     assert.equal(resolution.status, "inbox");
     assert.match(resolution.blockedReason ?? "", /pr_url/);
+  });
+
+  it("blocks completion when review metadata is incomplete even without an explicit sync error", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
+      branchName: null,
+      commitSha: null,
+      prUrl: null,
+      syncStatus: "pushed",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /review_branch/);
+    assert.match(resolution.blockedReason ?? "", /review_commit_sha/);
+    assert.match(resolution.blockedReason ?? "", /pr_url/);
+    assert.match(resolution.blockedReason ?? "", /review_sync_status=pushed/);
   });
 
   it("allows completion when review artifact sync is fully ready", () => {
@@ -1449,4 +1484,3 @@ describe("persistRefinementPlanExtraction", () => {
     assert.equal(row.refinement_revision_completed_at, null, "must not stamp when no revision was requested");
   });
 });
-

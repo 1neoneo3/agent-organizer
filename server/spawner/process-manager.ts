@@ -1873,7 +1873,9 @@ export async function spawnAgent(
     const finishTime = Date.now();
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
-    let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewRun, workflow) : "cancelled";
+    const candidateStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewRun, workflow) : "cancelled";
+    let finalStatus = candidateStatus;
+    let promotion: ReviewArtifactPromotionResult | null = null;
 
     // Extract and store refinement plan when a refinement agent exits
     // — regardless of exit code. The agent may have been killed by
@@ -1898,6 +1900,74 @@ export async function spawnAgent(
           agent.id,
         );
       }
+    }
+
+    if (code === 0 && (candidateStatus === "test_generation" || candidateStatus === "qa_testing" || candidateStatus === "pr_review" || candidateStatus === "human_review" || candidateStatus === "done")) {
+      // Extract executed commands from task logs for PR verification section
+      const executedCommands = extractExecutedCommands(db, task.id, task.started_at ?? 0);
+      promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, {
+        executedCommands,
+        language: outputLanguage,
+      });
+
+      // Fallback: when promoteTaskReviewArtifact can't run (workspaceMode
+      // !== "git-worktree", or the agent created a nested repository
+      // inside project_path), it returns null pr_url / leaves repository
+      // detection to the caller. Scan the task's logs for any github.com
+      // URLs the agent produced and use them as a best-effort fill-in.
+      // This is also how newly-created repositories end up in the
+      // `repository_url` column, since the at-creation-time detection
+      // cannot know a path that does not yet exist.
+      //
+      // Scope the scan to the current run (`started_at` onward) so that
+      // URLs mentioned in a previous run of the same task cannot leak
+      // into the current run's detection.
+      const logScan = extractGithubArtifactsFromLogs(db, task.id, {
+        runStartedAt: task.started_at ?? null,
+      });
+      const fallbackPrUrl = promotion.prUrl ?? logScan.prUrl;
+      const fallbackRepoUrl = logScan.repositoryUrl;
+      const completionResolution = resolveCompletionStatusAfterPromotion(
+        completionTask,
+        candidateStatus,
+        isReviewRun,
+        promotion,
+      );
+      finalStatus = completionResolution.status;
+      const completionBlockReason = completionResolution.blockedReason;
+      const reviewSyncError = promotion.syncError ?? completionBlockReason;
+
+      db.prepare(
+        `UPDATE tasks
+         SET pr_url = COALESCE(?, pr_url),
+             repository_url = COALESCE(?, repository_url),
+             review_branch = ?,
+             review_commit_sha = ?,
+             review_sync_status = ?,
+             review_sync_error = ?,
+             updated_at = ?
+         WHERE id = ?`
+      ).run(
+        fallbackPrUrl,
+        fallbackRepoUrl,
+        promotion.branchName,
+        promotion.commitSha,
+        promotion.syncStatus,
+        reviewSyncError,
+        finishTime,
+        task.id,
+      );
+      // Status was UPDATEd to finalStatus above; keep this artifact-sync
+      // marker on the completing spawn's timeline rather than the next one.
+      insertLogStmt.run(
+        task.id,
+        "system",
+        reviewSyncError
+          ? `Review artifact sync: ${promotion.syncStatus} (${reviewSyncError})`
+          : `Review artifact sync: ${promotion.syncStatus}${promotion.prUrl ? ` (${promotion.prUrl})` : ""}`,
+        spawnStage,
+        agent.id,
+      );
     }
 
     // Artifact-based handoff: log structured context for the next phase agent
@@ -1935,65 +2005,6 @@ export async function spawnAgent(
     // explicitly so the "Process exited" marker belongs to the run that
     // actually produced it.
     insertLogStmt.run(task.id, "system", `Process exited with code ${code}. Status: ${finalStatus}`, spawnStage, agent.id);
-
-    if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "done")) {
-      // Extract executed commands from task logs for PR verification section
-      const executedCommands = extractExecutedCommands(db, task.id, task.started_at ?? 0);
-      const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, {
-        executedCommands,
-        language: outputLanguage,
-      });
-
-      // Fallback: when promoteTaskReviewArtifact can't run (workspaceMode
-      // !== "git-worktree", or the agent created a nested repository
-      // inside project_path), it returns null pr_url / leaves repository
-      // detection to the caller. Scan the task's logs for any github.com
-      // URLs the agent produced and use them as a best-effort fill-in.
-      // This is also how newly-created repositories end up in the
-      // `repository_url` column, since the at-creation-time detection
-      // cannot know a path that does not yet exist.
-      //
-      // Scope the scan to the current run (`started_at` onward) so that
-      // URLs mentioned in a previous run of the same task cannot leak
-      // into the current run's detection.
-      const logScan = extractGithubArtifactsFromLogs(db, task.id, {
-        runStartedAt: task.started_at ?? null,
-      });
-      const fallbackPrUrl = promotion.prUrl ?? logScan.prUrl;
-      const fallbackRepoUrl = logScan.repositoryUrl;
-
-      db.prepare(
-        `UPDATE tasks
-         SET pr_url = COALESCE(?, pr_url),
-             repository_url = COALESCE(?, repository_url),
-             review_branch = ?,
-             review_commit_sha = ?,
-             review_sync_status = ?,
-             review_sync_error = ?,
-             updated_at = ?
-         WHERE id = ?`
-      ).run(
-        fallbackPrUrl,
-        fallbackRepoUrl,
-        promotion.branchName,
-        promotion.commitSha,
-        promotion.syncStatus,
-        promotion.syncError,
-        finishTime,
-        task.id,
-      );
-      // Status was UPDATEd to finalStatus above; keep this artifact-sync
-      // marker on the completing spawn's timeline rather than the next one.
-      insertLogStmt.run(
-        task.id,
-        "system",
-        promotion.syncError
-          ? `Review artifact sync: ${promotion.syncStatus} (${promotion.syncError})`
-          : `Review artifact sync: ${promotion.syncStatus}${promotion.prUrl ? ` (${promotion.prUrl})` : ""}`,
-        spawnStage,
-        agent.id,
-      );
-    }
 
     const finishedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task | undefined;
     ws.broadcast("task_update", finishedTask ?? { id: task.id, status: finalStatus, completed_at: finishTime });
