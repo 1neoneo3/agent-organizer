@@ -39,10 +39,11 @@ function insertTaskWithPlannedFiles(
   taskNumber: string,
   status: string,
   plannedFiles: string[],
+  controllerStage: "implement" | "verify" | "integrate" | null = null,
 ): void {
   db.prepare(
-    "INSERT INTO tasks (id, title, status, task_size, task_number, planned_files) VALUES (?, ?, ?, 'small', ?, ?)",
-  ).run(id, `task ${taskNumber}`, status, taskNumber, JSON.stringify(plannedFiles));
+    "INSERT INTO tasks (id, title, status, task_size, task_number, planned_files, controller_stage) VALUES (?, ?, ?, 'small', ?, ?, ?)",
+  ).run(id, `task ${taskNumber}`, status, taskNumber, JSON.stringify(plannedFiles), controllerStage);
 }
 
 describe("parseDependsOn", () => {
@@ -254,6 +255,28 @@ describe("getFileConflicts", () => {
     const conflicts = getFileConflicts(db, {
       id: "tme",
       planned_files: JSON.stringify(["src/a.ts"]),
+    });
+    assert.deepStrictEqual(conflicts, []);
+  });
+
+  it("does not apply file-conflict gate to verify controller tasks", () => {
+    const db = createDb();
+    insertTaskWithPlannedFiles(db, "busy", "T01", "in_progress", ["src/a.ts"], "implement");
+    const conflicts = getFileConflicts(db, {
+      id: "tme",
+      planned_files: JSON.stringify(["src/a.ts"]),
+      controller_stage: "verify",
+    });
+    assert.deepStrictEqual(conflicts, []);
+  });
+
+  it("does not treat active verify controller tasks as file-conflict blockers", () => {
+    const db = createDb();
+    insertTaskWithPlannedFiles(db, "busy", "T01", "in_progress", ["src/a.ts"], "verify");
+    const conflicts = getFileConflicts(db, {
+      id: "tme",
+      planned_files: JSON.stringify(["src/a.ts"]),
+      controller_stage: "implement",
     });
     assert.deepStrictEqual(conflicts, []);
   });

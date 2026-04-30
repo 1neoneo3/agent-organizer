@@ -133,6 +133,7 @@ export async function decomposeDirective(
       const controllerStage = controllerStageForTask(t, controllerMode);
       const writeScope = controllerMode ? normalizeWriteScope(t.write_scope) : [];
       const writeScopeJson = writeScope.length > 0 ? JSON.stringify(writeScope) : null;
+      const plannedFilesJson = controllerStage === "implement" ? writeScopeJson : null;
       insertStmt.run(
         id,
         t.title,
@@ -145,7 +146,7 @@ export async function decomposeDirective(
         depsJson,
         controllerStage,
         writeScopeJson,
-        writeScopeJson,
+        plannedFilesJson,
         ts,
         ts,
       );

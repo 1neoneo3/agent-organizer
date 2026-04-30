@@ -108,6 +108,8 @@ describe("controller orchestrator", () => {
     assert.equal(result.directive.controller_stage, "implement");
     assert.equal(result.tasks.length, 3);
     assert.deepStrictEqual(JSON.parse(result.tasks[0].write_scope ?? "[]"), ["server/routes/directives.ts"]);
+    assert.deepStrictEqual(JSON.parse(result.tasks[0].planned_files ?? "[]"), ["server/routes/directives.ts"]);
+    assert.equal(result.tasks[1].planned_files, null);
     assert.equal(result.tasks[1].depends_on, '["T01"]');
     assert.ok(ws.sent.some((entry) => entry.type === "directive_update"));
     assert.equal(ws.sent.filter((entry) => entry.type === "task_update").length, 3);

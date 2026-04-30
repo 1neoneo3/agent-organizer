@@ -370,6 +370,58 @@ describe("dispatchAutoStartableTasks", () => {
     ]);
   });
 
+  it("dispatches controller verify children with overlapping write_scope in parallel", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "enable_controller_mode", "true");
+    insertAgent(db, { id: "agent-verify-a", name: "Verifier A", role: "lead_engineer" });
+    insertAgent(db, { id: "agent-verify-b", name: "Verifier B", role: "lead_engineer" });
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO directives (
+         id, title, content, status, controller_mode, controller_stage, created_at, updated_at
+       ) VALUES ('d-verify-overlap', 'Controller', 'Controller', 'active', 1, 'verify', ?, ?)`,
+    ).run(now, now);
+    const first = insertTask(db, {
+      title: "Verify first",
+      task_number: "T01",
+      external_source: null,
+      external_id: null,
+      directive_id: "d-verify-overlap",
+    });
+    const second = insertTask(db, {
+      title: "Verify second",
+      task_number: "T02",
+      external_source: null,
+      external_id: null,
+      directive_id: "d-verify-overlap",
+    });
+    db.prepare(
+      "UPDATE tasks SET controller_stage = 'verify', write_scope = ?, planned_files = ? WHERE id IN (?, ?)",
+    ).run('["server/shared.ts"]', '["server/shared.ts"]', first.id, second.id);
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, assignedAgent) {
+        const updatedAt = Date.now();
+        db.prepare("UPDATE tasks SET status = 'in_progress', started_at = ?, updated_at = ? WHERE id = ?")
+          .run(updatedAt, updatedAt, taskToStart.id);
+        db.prepare("UPDATE agents SET status = 'working', current_task_id = ?, updated_at = ? WHERE id = ?")
+          .run(taskToStart.id, updatedAt, assignedAgent.id);
+      },
+    });
+
+    const rows = db.prepare("SELECT task_number, status FROM tasks WHERE directive_id = 'd-verify-overlap' ORDER BY task_number").all() as Array<{
+      task_number: string;
+      status: string;
+    }>;
+    assert.equal(result.started, 2);
+    assert.deepStrictEqual(rows.map((row) => [row.task_number, row.status]), [
+      ["T01", "in_progress"],
+      ["T02", "in_progress"],
+    ]);
+  });
+
   it("does not throw when startTask deletes the task before writeDispatchLog runs (FK 787 race)", () => {
     const db = createDb();
     const ws = createWs();

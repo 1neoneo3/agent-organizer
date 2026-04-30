@@ -37,7 +37,12 @@ export async function triggerAutoQa(
   if (qaCount >= maxQaCount) {
     const now = Date.now();
     db.prepare("UPDATE tasks SET status = 'human_review', updated_at = ? WHERE id = ?").run(now, currentTask.id);
-    logSystem(db, currentTask.id, `Auto QA stopped: qa iterations (${qaCount}) reached max (${maxQaCount}). Moving to human_review — acceptance criteria not met after ${maxQaCount} attempts.`);
+    logSystem(
+      db,
+      currentTask.id,
+      `Auto QA stopped: qa iterations (${qaCount}) reached max (${maxQaCount}). Moving to human_review — acceptance criteria not met after ${maxQaCount} attempts.`,
+      "human_review",
+    );
     ws.broadcast("task_update", { id: currentTask.id, status: "human_review" });
     return;
   }
@@ -116,10 +121,17 @@ function getSetting(db: DatabaseSync, key: string): string | undefined {
   return row?.value;
 }
 
-function logSystem(db: DatabaseSync, taskId: string, message: string): void {
+function logSystem(
+  db: DatabaseSync,
+  taskId: string,
+  message: string,
+  stage: "qa_testing" | "human_review" = "qa_testing",
+): void {
   // Auto-QA always runs for qa_testing stage. Tag explicitly to avoid
-  // trigger-fallback race with a concurrent status UPDATE.
+  // trigger-fallback race with a concurrent status UPDATE. Escalation
+  // messages are tagged as human_review because they are emitted after
+  // the task has already crossed that transition.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, 'qa_testing')"
-  ).run(taskId, message);
+    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, ?)"
+  ).run(taskId, message, stage);
 }

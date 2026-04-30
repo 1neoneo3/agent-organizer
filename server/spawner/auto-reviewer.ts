@@ -68,6 +68,7 @@ export async function triggerAutoReview(
       db,
       currentTask.id,
       `Auto review stopped: review_count (${currentTask.review_count}) reached max (${maxReviewCount}). Moving to human_review — automatic review attempts exhausted, manual action required.`,
+      "human_review",
     );
     ws.broadcast("task_update", { id: currentTask.id, status: "human_review" });
     return;
@@ -254,11 +255,18 @@ function getSetting(db: DatabaseSync, key: string): string | undefined {
   return row?.value;
 }
 
-function logSystem(db: DatabaseSync, taskId: string, message: string): void {
+function logSystem(
+  db: DatabaseSync,
+  taskId: string,
+  message: string,
+  stage: "pr_review" | "human_review" = "pr_review",
+): void {
   // Auto-reviewer always runs for pr_review stage. Tag explicitly so the
   // trigger fallback cannot mis-stage if this INSERT races with a task
-  // status UPDATE in performFinalization.
+  // status UPDATE in performFinalization. Escalation messages are tagged
+  // as human_review because they are emitted after the task has already
+  // crossed that transition.
   db.prepare(
-    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, 'pr_review')"
-  ).run(taskId, message);
+    "INSERT INTO task_logs (task_id, kind, message, stage) VALUES (?, 'system', ?, ?)"
+  ).run(taskId, message, stage);
 }

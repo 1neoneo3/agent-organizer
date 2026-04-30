@@ -313,6 +313,7 @@ export function splitDirectiveIntoControllerTasks(
     const writeScope = normalizeScope(child.write_scope);
     const dependsOn = [...new Set(child.depends_on ?? [])];
     const writeScopeJson = writeScope.length > 0 ? JSON.stringify(writeScope) : null;
+    const plannedFilesJson = child.controller_stage === "implement" ? writeScopeJson : null;
     const dependsOnJson = dependsOn.length > 0 ? JSON.stringify(dependsOn) : null;
     const id = randomUUID();
     insertTask.run(
@@ -327,7 +328,7 @@ export function splitDirectiveIntoControllerTasks(
       dependsOnJson,
       child.controller_stage,
       writeScopeJson,
-      writeScopeJson,
+      plannedFilesJson,
       now,
       now,
     );

@@ -119,6 +119,7 @@ describe("triggerAutoReview", () => {
         ),
     );
     assert.ok(logCall, "expected system log explaining the promotion");
+    assert.equal(logCall.args[2], "human_review");
 
     // Must NOT have spawned a new review (no increment of review_count)
     const incrementCall = calls.find((c) =>

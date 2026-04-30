@@ -110,6 +110,16 @@ export interface FileConflict {
   overlapping_files: string[];
 }
 
+type FileConflictCandidate = {
+  id: string;
+  planned_files: string | null;
+  controller_stage?: string | null;
+};
+
+function shouldApplyFileConflictGate(task: { controller_stage?: string | null }): boolean {
+  return task.controller_stage == null || task.controller_stage === "implement";
+}
+
 /**
  * Stages at which a task is considered "actively editing files" and
  * therefore a file-conflict blocker for a downstream task. Refinement
@@ -145,26 +155,30 @@ const ACTIVE_EDITING_STAGES: readonly string[] = [
  */
 export function getFileConflicts(
   db: DatabaseSync,
-  task: { id: string; planned_files: string | null },
+  task: FileConflictCandidate,
 ): FileConflict[] {
+  if (!shouldApplyFileConflictGate(task)) return [];
+
   const mine = parsePlannedFiles(task.planned_files);
   if (mine.length === 0) return [];
 
   const placeholders = ACTIVE_EDITING_STAGES.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id, task_number, status, planned_files
+      `SELECT id, task_number, status, planned_files, controller_stage
        FROM tasks
        WHERE id != ?
          AND status IN (${placeholders})
          AND planned_files IS NOT NULL
-         AND planned_files <> ''`,
+         AND planned_files <> ''
+         AND (controller_stage IS NULL OR controller_stage = 'implement')`,
     )
     .all(task.id, ...ACTIVE_EDITING_STAGES) as Array<{
       id: string;
       task_number: string | null;
       status: string;
       planned_files: string | null;
+      controller_stage: string | null;
     }>;
 
   const conflicts: FileConflict[] = [];
@@ -218,7 +232,13 @@ export function isBlocked(blockers: TaskBlockers): boolean {
  */
 export function collectAllBlockers(
   db: DatabaseSync,
-  task: { id: string; depends_on: string | null; planned_files: string | null; directive_id?: string | null },
+  task: {
+    id: string;
+    depends_on: string | null;
+    planned_files: string | null;
+    directive_id?: string | null;
+    controller_stage?: string | null;
+  },
 ): TaskBlockers {
   return {
     dependencies: getBlockingDependencies(db, task),
