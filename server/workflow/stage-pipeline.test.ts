@@ -11,6 +11,7 @@ import {
   validateStatusTransition,
   aggregateCheckResults,
   aggregateReviewVerdicts,
+  aggregateSelfReviewVerdict,
   resolveCheckVerdictForTask,
   determineNextStage,
 } from "./stage-pipeline.js";
@@ -1088,5 +1089,89 @@ describe("aggregateReviewVerdicts", () => {
     const result = aggregateReviewVerdicts(db, "task-rv", 2000);
     assert.equal(result.needsChanges, false);
     assert.equal(result.allPassed, true, "legacy PASS should count as code role");
+  });
+});
+
+// --------------- aggregateSelfReviewVerdict ---------------
+
+describe("aggregateSelfReviewVerdict", () => {
+  it("returns null when no SELF_REVIEW marker exists", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "assistant", "implementation done", 3000);
+
+    const result = aggregateSelfReviewVerdict(db, "task-rv", 2000);
+    assert.equal(result, null);
+  });
+
+  it("detects [SELF_REVIEW:PASS] as passed", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "assistant", "all good [SELF_REVIEW:PASS]", 3000);
+
+    const result = aggregateSelfReviewVerdict(db, "task-rv", 2000);
+    assert.deepEqual(result, { verdict: "passed", reason: null });
+  });
+
+  it("detects [SELF_REVIEW:NEEDS_CHANGES] without reason", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "assistant", "[SELF_REVIEW:NEEDS_CHANGES]", 3000);
+
+    const result = aggregateSelfReviewVerdict(db, "task-rv", 2000);
+    assert.deepEqual(result, { verdict: "needs_changes", reason: null });
+  });
+
+  it("extracts reason from [SELF_REVIEW:NEEDS_CHANGES:<reason>]", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(
+      db,
+      "task-rv",
+      "assistant",
+      "[SELF_REVIEW:NEEDS_CHANGES:missing edge case tests]",
+      3000,
+    );
+
+    const result = aggregateSelfReviewVerdict(db, "task-rv", 2000);
+    assert.equal(result?.verdict, "needs_changes");
+    assert.equal(result?.reason, "missing edge case tests");
+  });
+
+  it("ignores SELF_REVIEW logs from before runStartedAt", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    // Old run's verdict should not leak into the current run.
+    insertLog(db, "task-rv", "assistant", "[SELF_REVIEW:NEEDS_CHANGES:old]", 1500);
+
+    const result = aggregateSelfReviewVerdict(db, "task-rv", 2000);
+    assert.equal(result, null);
+  });
+
+  it("only inspects assistant logs, not system logs", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    // Even though the marker text matches, kind='system' must be skipped.
+    insertLog(db, "task-rv", "system", "[SELF_REVIEW:PASS]", 3000);
+
+    const result = aggregateSelfReviewVerdict(db, "task-rv", 2000);
+    assert.equal(result, null);
+  });
+
+  it("prefers latest verdict — NEEDS_CHANGES wins when newest", () => {
+    const db = createRealDb();
+    insertTaskForVerdict(db);
+    insertLog(db, "task-rv", "assistant", "[SELF_REVIEW:PASS]", 3000);
+    insertLog(
+      db,
+      "task-rv",
+      "assistant",
+      "[SELF_REVIEW:NEEDS_CHANGES:found regression]",
+      3100,
+    );
+
+    const result = aggregateSelfReviewVerdict(db, "task-rv", 2000);
+    assert.equal(result?.verdict, "needs_changes");
+    assert.equal(result?.reason, "found regression");
   });
 });

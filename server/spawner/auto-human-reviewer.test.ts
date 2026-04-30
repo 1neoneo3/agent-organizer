@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { triggerAutoHumanReview, findHumanReviewAgent } from "./auto-human-reviewer.js";
+import {
+  triggerAutoHumanReview,
+  findHumanReviewAgent,
+  countAutoHumanReviewIterations,
+} from "./auto-human-reviewer.js";
 
 interface SettingsMap {
   [key: string]: string | undefined;
@@ -288,5 +292,147 @@ describe("findHumanReviewAgent", () => {
 
     const picked = findHumanReviewAgent(db as never, "impl");
     assert.equal(picked?.id, "worker");
+  });
+
+  it("returns undefined when no idle agents exist (excludes implementer)", () => {
+    const db = createDbStub({
+      task: undefined,
+      settings: {},
+      agents: [
+        // Only the implementer is idle — must be excluded so we get nothing.
+        {
+          id: "impl",
+          role: "code_reviewer",
+          status: "idle",
+          agent_type: "worker",
+        },
+      ],
+    });
+
+    const picked = findHumanReviewAgent(db as never, "impl");
+    assert.equal(picked, undefined);
+  });
+});
+
+describe("countAutoHumanReviewIterations", () => {
+  it("returns the count from the db iteration log query", () => {
+    const db = createDbStub({
+      task: undefined,
+      settings: {},
+      iterationLogCount: 3,
+    });
+
+    assert.equal(countAutoHumanReviewIterations(db as never, "any-task"), 3);
+  });
+
+  it("returns 0 when no started-log row is found", () => {
+    const db = createDbStub({
+      task: undefined,
+      settings: {},
+      // iterationLogCount omitted → defaults to 0 in the stub
+    });
+
+    assert.equal(countAutoHumanReviewIterations(db as never, "any-task"), 0);
+  });
+});
+
+describe("triggerAutoHumanReview — human_review_count edge cases", () => {
+  it("falls back to default cap (2) when human_review_count is non-numeric", async () => {
+    const db = createDbStub({
+      task: { id: "t-bad", status: "human_review", assigned_agent_id: "impl" },
+      settings: { auto_human_review: "true", human_review_count: "abc" },
+      // Already at 2 iterations — must be capped using the default of 2.
+      iterationLogCount: 2,
+      agents: [
+        {
+          id: "rev",
+          role: "code_reviewer",
+          status: "idle",
+          agent_type: "worker",
+        },
+      ],
+    });
+    const ws = createWsStub();
+
+    await triggerAutoHumanReview(db as never, ws as never, {
+      id: "t-bad",
+      status: "human_review",
+      assigned_agent_id: "impl",
+    } as never);
+
+    const capLog = db.inserts.find(
+      (i) =>
+        Array.isArray(i.args) &&
+        i.args.some(
+          (a) => typeof a === "string" && a.includes("reached max (2)"),
+        ),
+    );
+    assert.ok(capLog, "non-numeric setting must fall back to default cap of 2");
+  });
+
+  it("falls back to default cap when human_review_count is negative", async () => {
+    const db = createDbStub({
+      task: { id: "t-neg", status: "human_review", assigned_agent_id: "impl" },
+      settings: { auto_human_review: "true", human_review_count: "-1" },
+      iterationLogCount: 2,
+      agents: [
+        {
+          id: "rev",
+          role: "code_reviewer",
+          status: "idle",
+          agent_type: "worker",
+        },
+      ],
+    });
+    const ws = createWsStub();
+
+    await triggerAutoHumanReview(db as never, ws as never, {
+      id: "t-neg",
+      status: "human_review",
+      assigned_agent_id: "impl",
+    } as never);
+
+    // A negative cap must NOT silently disable the loop. We expect the
+    // default (2) to be applied so the cap-hit log appears.
+    const capLog = db.inserts.find(
+      (i) =>
+        Array.isArray(i.args) &&
+        i.args.some(
+          (a) => typeof a === "string" && a.includes("reached max (2)"),
+        ),
+    );
+    assert.ok(capLog, "negative setting must fall back to default cap");
+  });
+
+  it("respects a custom human_review_count when valid", async () => {
+    const db = createDbStub({
+      task: { id: "t-cap5", status: "human_review", assigned_agent_id: "impl" },
+      settings: { auto_human_review: "true", human_review_count: "5" },
+      iterationLogCount: 5,
+      agents: [
+        {
+          id: "rev",
+          role: "code_reviewer",
+          status: "idle",
+          agent_type: "worker",
+        },
+      ],
+    });
+    const ws = createWsStub();
+
+    await triggerAutoHumanReview(db as never, ws as never, {
+      id: "t-cap5",
+      status: "human_review",
+      assigned_agent_id: "impl",
+    } as never);
+
+    const capLog = db.inserts.find(
+      (i) =>
+        Array.isArray(i.args) &&
+        i.args.some(
+          (a) => typeof a === "string" && a.includes("reached max (5)"),
+        ),
+    );
+    assert.ok(capLog, "custom cap of 5 must be applied");
   });
 });
