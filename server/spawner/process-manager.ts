@@ -1963,7 +1963,14 @@ export async function spawnAgent(
     // actually produced it.
     insertLogStmt.run(task.id, "system", `Process exited with code ${code}. Status: ${finalStatus}`, spawnStage, agent.id);
 
-    if (code === 0 && (finalStatus === "test_generation" || finalStatus === "qa_testing" || finalStatus === "pr_review" || finalStatus === "human_review" || finalStatus === "done")) {
+    const shouldPromoteReviewArtifact =
+      !isHumanReviewRun &&
+      (finalStatus === "test_generation" ||
+        finalStatus === "qa_testing" ||
+        finalStatus === "pr_review" ||
+        finalStatus === "human_review" ||
+        finalStatus === "done");
+    if (code === 0 && shouldPromoteReviewArtifact) {
       // Extract executed commands from task logs for PR verification section
       const executedCommands = extractExecutedCommands(db, task.id, task.started_at ?? 0);
       const promotion = promoteTaskReviewArtifact(completionTask, workflow, workspace, {
@@ -2066,7 +2073,7 @@ export async function spawnAgent(
     // trigger function double-checks the setting and the iteration cap
     // before spawning, so this call is a no-op when the feature is off
     // and falls back to the legacy "wait for manual approval" behavior.
-    if (finalStatus === "human_review") {
+    if (finalStatus === "human_review" && !isHumanReviewRun) {
       const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
       setTimeout(() => triggerAutoHumanReview(db, ws, freshTask), 500);
     }

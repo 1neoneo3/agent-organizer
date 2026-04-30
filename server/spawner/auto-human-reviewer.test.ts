@@ -168,7 +168,7 @@ describe("triggerAutoHumanReview", () => {
   it("stops the loop and stays in human_review when iterations reach max", async () => {
     const db = createDbStub({
       task: { id: "t3", status: "human_review", assigned_agent_id: "impl" },
-      settings: { auto_human_review: "true", human_review_count: "2" },
+      settings: { auto_human_review: "true", human_review_auto_count: "2" },
       iterationLogCount: 2,
       agents: [
         {
@@ -336,11 +336,11 @@ describe("countAutoHumanReviewIterations", () => {
   });
 });
 
-describe("triggerAutoHumanReview — human_review_count edge cases", () => {
-  it("falls back to default cap (2) when human_review_count is non-numeric", async () => {
+describe("triggerAutoHumanReview — human_review_auto_count edge cases", () => {
+  it("falls back to default cap (2) when human_review_auto_count is non-numeric", async () => {
     const db = createDbStub({
       task: { id: "t-bad", status: "human_review", assigned_agent_id: "impl" },
-      settings: { auto_human_review: "true", human_review_count: "abc" },
+      settings: { auto_human_review: "true", human_review_auto_count: "abc" },
       // Already at 2 iterations — must be capped using the default of 2.
       iterationLogCount: 2,
       agents: [
@@ -370,11 +370,11 @@ describe("triggerAutoHumanReview — human_review_count edge cases", () => {
     assert.ok(capLog, "non-numeric setting must fall back to default cap of 2");
   });
 
-  it("falls back to default cap when human_review_count is negative", async () => {
+  it("clamps human_review_auto_count below 1 up to 1", async () => {
     const db = createDbStub({
       task: { id: "t-neg", status: "human_review", assigned_agent_id: "impl" },
-      settings: { auto_human_review: "true", human_review_count: "-1" },
-      iterationLogCount: 2,
+      settings: { auto_human_review: "true", human_review_auto_count: "-1" },
+      iterationLogCount: 1,
       agents: [
         {
           id: "rev",
@@ -392,22 +392,20 @@ describe("triggerAutoHumanReview — human_review_count edge cases", () => {
       assigned_agent_id: "impl",
     } as never);
 
-    // A negative cap must NOT silently disable the loop. We expect the
-    // default (2) to be applied so the cap-hit log appears.
     const capLog = db.inserts.find(
       (i) =>
         Array.isArray(i.args) &&
         i.args.some(
-          (a) => typeof a === "string" && a.includes("reached max (2)"),
+          (a) => typeof a === "string" && a.includes("reached max (1)"),
         ),
     );
-    assert.ok(capLog, "negative setting must fall back to default cap");
+    assert.ok(capLog, "negative setting must clamp to 1");
   });
 
-  it("respects a custom human_review_count when valid", async () => {
+  it("respects a custom human_review_auto_count when valid", async () => {
     const db = createDbStub({
       task: { id: "t-cap5", status: "human_review", assigned_agent_id: "impl" },
-      settings: { auto_human_review: "true", human_review_count: "5" },
+      settings: { auto_human_review: "true", human_review_auto_count: "5" },
       iterationLogCount: 5,
       agents: [
         {
@@ -434,5 +432,37 @@ describe("triggerAutoHumanReview — human_review_count edge cases", () => {
         ),
     );
     assert.ok(capLog, "custom cap of 5 must be applied");
+  });
+
+  it("clamps human_review_auto_count above 10 down to 10", async () => {
+    const db = createDbStub({
+      task: { id: "t-cap10", status: "human_review", assigned_agent_id: "impl" },
+      settings: { auto_human_review: "true", human_review_auto_count: "999" },
+      iterationLogCount: 10,
+      agents: [
+        {
+          id: "rev",
+          role: "code_reviewer",
+          status: "idle",
+          agent_type: "worker",
+        },
+      ],
+    });
+    const ws = createWsStub();
+
+    await triggerAutoHumanReview(db as never, ws as never, {
+      id: "t-cap10",
+      status: "human_review",
+      assigned_agent_id: "impl",
+    } as never);
+
+    const capLog = db.inserts.find(
+      (i) =>
+        Array.isArray(i.args) &&
+        i.args.some(
+          (a) => typeof a === "string" && a.includes("reached max (10)"),
+        ),
+    );
+    assert.ok(capLog, "custom cap must clamp at 10");
   });
 });

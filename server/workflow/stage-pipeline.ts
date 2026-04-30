@@ -11,6 +11,7 @@ import {
   isParallelImplTestEnabled,
 } from "./parallel-impl.js";
 import { getTaskSetting } from "../domain/task-settings.js";
+import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
 
 export { WORKFLOW_STAGES };
 export type { WorkflowStage };
@@ -376,7 +377,8 @@ export function determineNextStage(
     // always "none" and this gate is a structural no-op. A single
     // failing automated check forces rework regardless of what the
     // reviewer concluded — a broken tsc / lint / test is a hard block.
-    const checkVerdict = resolveCheckVerdictForTask(task.id);
+    const isHumanReviewRun = reviewStage === "human_review";
+    const checkVerdict = isHumanReviewRun ? "none" : resolveCheckVerdictForTask(task.id);
     if (checkVerdict === "fail") {
       recordFailedStage(db, task.id, reviewStage);
       return "in_progress";
@@ -389,15 +391,28 @@ export function determineNextStage(
     const { needsChanges, allPassed } = aggregateReviewVerdicts(db, task.id, runStartedAt);
 
     if (needsChanges) {
+      if (isHumanReviewRun) {
+        recordHumanReviewAutoMarker(db, task.id, "CLEARED", "Reviewer requested changes.");
+      }
       recordFailedStage(db, task.id, reviewStage);
       return "in_progress";
     }
 
     if (!allPassed) {
+      if (isHumanReviewRun) {
+        return "human_review";
+      }
       recordFailedStage(db, task.id, reviewStage);
       return "in_progress";
     }
     clearFailedStage(db, task.id);
+    if (isHumanReviewRun) {
+      const autoApprove = getSetting(db, "human_review_auto_approve", task.id) === "true";
+      if (!autoApprove) {
+        recordHumanReviewAutoMarker(db, task.id, "AWAITING_HUMAN", "Agent review passed; waiting for human approval.");
+        return "human_review";
+      }
+    }
     return nextStage(reviewStage, activeStages);
   }
 

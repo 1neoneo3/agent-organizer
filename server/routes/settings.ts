@@ -26,6 +26,12 @@ const VALID_SETTINGS_KEYS = new Set([
 const SETTINGS_ENUM_VALUES: Record<string, readonly string[]> = {
   output_language: VALID_OUTPUT_LANGUAGES,
   default_workspace_mode: VALID_WORKSPACE_MODES,
+  auto_human_review: ["true", "false"],
+  human_review_auto_approve: ["true", "false"],
+};
+
+const SETTINGS_NUMERIC_PATTERNS: Record<string, RegExp> = {
+  human_review_auto_count: /^\d+$/,
 };
 
 const UpdateSettingsSchema = z.record(z.string(), z.string());
@@ -65,6 +71,10 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
       const allowed = SETTINGS_ENUM_VALUES[key];
       if (allowed && !allowed.includes(value)) {
         invalidValues.push({ key, value, allowed });
+      }
+      const pattern = SETTINGS_NUMERIC_PATTERNS[key];
+      if (pattern && !pattern.test(value)) {
+        invalidValues.push({ key, value, allowed: ["integer >= 0"] });
       }
     }
     if (invalidValues.length > 0) {

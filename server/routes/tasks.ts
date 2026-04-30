@@ -44,6 +44,7 @@ import {
   TASK_OVERRIDABLE_KEYS,
   validateOverridesPatch,
 } from "../domain/task-settings.js";
+import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
 import { reconcileControllerDirective } from "../controller/orchestrator.js";
 
 // Accept overrides as a flat string→string record on create/update so
@@ -941,6 +942,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
     }
     recordFailedStage(db, task.id, task.status as "human_review" | "refinement");
+    if (!isRefinement) {
+      recordHumanReviewAutoMarker(db, task.id, "CLEARED", "Rejected by human reviewer.");
+    }
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} rejected: ${reason}. Returning to inbox.`);

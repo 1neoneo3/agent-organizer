@@ -902,10 +902,30 @@ describe("determineNextStage — human_review auto reviewer routing", () => {
     __clearLatestCheckResultsForTest("t-hr-1");
   });
 
-  it("advances to done on PASS verdict from human_review", () => {
+  it("parks in human_review on PASS when auto approve is disabled", () => {
     const db = createNextStageMockDb(humanReviewSettings, [
       { message: "[REVIEW:PASS]" },
     ]);
+    const task = {
+      ...makeReviewTask("t-hr-1"),
+      status: "human_review" as Task["status"],
+    };
+
+    const result = determineNextStage(db as never, task, true, baseWorkflow);
+    assert.strictEqual(result, "human_review");
+    assert.ok(
+      db.insertedLogs.some((l) =>
+        l.message.includes("[HUMAN_REVIEW_AUTO:AWAITING_HUMAN]"),
+      ),
+      "expected AWAITING_HUMAN marker after auto review PASS without auto-approve",
+    );
+  });
+
+  it("advances to done on PASS when human_review_auto_approve is enabled", () => {
+    const db = createNextStageMockDb(
+      { ...humanReviewSettings, human_review_auto_approve: "true" },
+      [{ message: "[REVIEW:PASS]" }],
+    );
     const task = {
       ...makeReviewTask("t-hr-1"),
       status: "human_review" as Task["status"],
@@ -935,7 +955,7 @@ describe("determineNextStage — human_review auto reviewer routing", () => {
     );
   });
 
-  it("returns to in_progress when reviewer left no verdict", () => {
+  it("stays in human_review when reviewer left no verdict", () => {
     const db = createNextStageMockDb(humanReviewSettings, []);
     const task = {
       ...makeReviewTask("t-hr-1"),
@@ -943,7 +963,24 @@ describe("determineNextStage — human_review auto reviewer routing", () => {
     };
 
     const result = determineNextStage(db as never, task, true, baseWorkflow);
-    assert.strictEqual(result, "in_progress");
+    assert.strictEqual(result, "human_review");
+  });
+
+  it("ignores stale auto-check failures during human_review", () => {
+    const db = createNextStageMockDb(
+      { ...humanReviewSettings, human_review_auto_approve: "true" },
+      [{ message: "[REVIEW:PASS]" }],
+    );
+    __setLatestCheckResultsForTest("t-hr-1", [
+      { kind: "types", ok: false, durationMs: 1, output: "stale failure" },
+    ]);
+    const task = {
+      ...makeReviewTask("t-hr-1"),
+      status: "human_review" as Task["status"],
+    };
+
+    const result = determineNextStage(db as never, task, true, baseWorkflow);
+    assert.strictEqual(result, "done");
   });
 });
 

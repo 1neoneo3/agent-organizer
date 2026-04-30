@@ -1,6 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
+import { getTaskSetting } from "../domain/task-settings.js";
+import {
+  getLatestHumanReviewAutoMarker,
+  recordHumanReviewAutoMarker,
+} from "../domain/human-review-auto.js";
 import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
 
 /**
@@ -12,12 +17,12 @@ import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
  * task requirements just like the pr_review reviewer panel would. The
  * verdict drives the next transition:
  *
- *   - `[REVIEW:code:PASS]`           → task advances to `done`
+ *   - `[REVIEW:code:PASS]`           → task advances according to `human_review_auto_approve`
  *   - `[REVIEW:code:NEEDS_CHANGES]`  → task bounces back to `in_progress`
  *
  * Loop budget is tracked via system logs (each `Auto Human Review
  * started` entry counts as one iteration) and bounded by the
- * `human_review_count` setting. When the cap is hit the loop stops and
+ * `human_review_auto_count` setting. When the cap is hit the loop stops and
  * the task stays in `human_review` so a real human can take over.
  */
 export const HUMAN_REVIEW_PANEL_ROLE = "code" as const;
@@ -42,15 +47,21 @@ export async function triggerAutoHumanReview(
     return;
   }
 
-  const autoHumanReview = getSetting(db, "auto_human_review") ?? "false";
+  const autoHumanReview = getSetting(db, "auto_human_review", currentTask.id) ?? "false";
   if (autoHumanReview !== "true") {
     logSystem(db, currentTask.id, "Auto Human Review skipped: disabled in settings");
     return;
   }
 
-  const maxIterations = resolveMaxIterations(db);
+  const latestMarker = getLatestHumanReviewAutoMarker(db, currentTask.id);
+  if (latestMarker === "AWAITING_HUMAN" || latestMarker === "EXHAUSTED") {
+    return;
+  }
+
+  const maxIterations = resolveMaxIterations(db, currentTask.id);
   const iterations = countAutoHumanReviewIterations(db, currentTask.id);
   if (iterations >= maxIterations) {
+    recordHumanReviewAutoMarker(db, currentTask.id, "EXHAUSTED");
     logSystem(
       db,
       currentTask.id,
@@ -78,6 +89,7 @@ export async function triggerAutoHumanReview(
     currentTask.id,
     `${STARTED_LOG_PREFIX}: agent="${reviewer.name}" (${reviewer.id})`,
   );
+  recordHumanReviewAutoMarker(db, currentTask.id, "STARTED", `agent="${reviewer.name}" (${reviewer.id})`);
   ws.broadcast(
     "cli_output",
     [
@@ -111,18 +123,20 @@ export function countAutoHumanReviewIterations(
 ): number {
   const row = db
     .prepare(
-      "SELECT COUNT(*) AS cnt FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE ?",
+      "SELECT COUNT(*) AS cnt FROM task_logs WHERE task_id = ? AND kind = 'system' AND (message LIKE ? OR message LIKE ?)",
     )
-    .get(taskId, `${STARTED_LOG_PREFIX}%`) as { cnt: number } | undefined;
+    .get(taskId, `${STARTED_LOG_PREFIX}%`, "[HUMAN_REVIEW_AUTO:STARTED]%") as { cnt: number } | undefined;
   return row?.cnt ?? 0;
 }
 
-function resolveMaxIterations(db: DatabaseSync): number {
-  const raw = getSetting(db, "human_review_count");
+export function resolveMaxIterations(db: DatabaseSync, taskId?: string | null): number {
+  const raw =
+    getSetting(db, "human_review_auto_count", taskId) ??
+    getSetting(db, "human_review_count", taskId);
   if (!raw) return DEFAULT_HUMAN_REVIEW_COUNT;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_HUMAN_REVIEW_COUNT;
-  return parsed;
+  if (!Number.isFinite(parsed)) return DEFAULT_HUMAN_REVIEW_COUNT;
+  return Math.min(10, Math.max(1, Math.floor(parsed)));
 }
 
 /**
@@ -161,9 +175,8 @@ export function findHumanReviewAgent(
   return anyIdle;
 }
 
-function getSetting(db: DatabaseSync, key: string): string | undefined {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
-  return row?.value;
+function getSetting(db: DatabaseSync, key: string, taskId?: string | null): string | undefined {
+  return getTaskSetting(db, key, taskId);
 }
 
 function logSystem(db: DatabaseSync, taskId: string, message: string): void {
