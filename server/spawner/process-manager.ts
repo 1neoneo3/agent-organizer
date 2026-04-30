@@ -2104,10 +2104,6 @@ function getReviewArtifactCompletionBlockReason(
     return "review artifact promotion was not executed";
   }
 
-  if (promotion.syncStatus === "not_applicable") {
-    return null;
-  }
-
   if (promotion.syncError) {
     return promotion.syncError;
   }

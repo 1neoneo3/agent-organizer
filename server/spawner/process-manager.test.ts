@@ -884,6 +884,86 @@ describe("resolveCompletionStatusAfterPromotion", () => {
     assert.match(resolution.blockedReason ?? "", /review_sync_status=pushed/);
   });
 
+  it("sends implementation runs back to inbox when promotion is incomplete", () => {
+    const task = insertTask(createDb(), { status: "in_progress", review_count: 0 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", false, {
+      branchName: "issue/t5",
+      commitSha: "mno345",
+      prUrl: "https://github.com/example/repo/pull/5",
+      syncStatus: "pushed",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "inbox");
+    assert.match(resolution.blockedReason ?? "", /review_sync_status=pushed/);
+  });
+
+  it("blocks completion when review_branch is empty even if other artifact fields exist", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
+      branchName: "",
+      commitSha: "abc123",
+      prUrl: "https://github.com/example/repo/pull/6",
+      syncStatus: "pr_open",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /review_branch/);
+  });
+
+  it("blocks completion when review_commit_sha is empty even if other artifact fields exist", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
+      branchName: "issue/t6",
+      commitSha: "",
+      prUrl: "https://github.com/example/repo/pull/6",
+      syncStatus: "pr_open",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /review_commit_sha/);
+  });
+
+  it("blocks completion when pr_url is empty even if other artifact fields exist", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
+      branchName: "issue/t7",
+      commitSha: "def456",
+      prUrl: "",
+      syncStatus: "pr_open",
+      syncError: null,
+      baseBranch: "main",
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /pr_url/);
+  });
+
+  it("blocks completion when review artifact sync is not applicable", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+
+    const resolution = resolveCompletionStatusAfterPromotion(task, "done", true, {
+      branchName: null,
+      commitSha: null,
+      prUrl: null,
+      syncStatus: "not_applicable",
+      syncError: null,
+      baseBranch: null,
+    });
+
+    assert.equal(resolution.status, "pr_review");
+    assert.match(resolution.blockedReason ?? "", /review_sync_status=not_applicable/);
+  });
+
   it("allows completion when review artifact sync is fully ready", () => {
     const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
 
