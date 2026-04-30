@@ -887,6 +887,65 @@ describe("determineNextStage — pr_review gating by check verdict", () => {
   });
 });
 
+describe("determineNextStage — human_review auto reviewer routing", () => {
+  const humanReviewSettings = {
+    qa_mode: "disabled",
+    review_mode: "pr_only",
+    default_enable_human_review: "true",
+  };
+
+  beforeEach(() => {
+    __clearLatestCheckResultsForTest("t-hr-1");
+  });
+  afterEach(() => {
+    __clearLatestCheckResultsForTest("t-hr-1");
+  });
+
+  it("advances to done on PASS verdict from human_review", () => {
+    const db = createNextStageMockDb(humanReviewSettings, [
+      { message: "[REVIEW:PASS]" },
+    ]);
+    const task = {
+      ...makeReviewTask("t-hr-1"),
+      status: "human_review" as Task["status"],
+    };
+
+    const result = determineNextStage(db as never, task, true, baseWorkflow);
+    assert.strictEqual(result, "done");
+  });
+
+  it("returns to in_progress and records FAIL_AT:human_review on NEEDS_CHANGES", () => {
+    const db = createNextStageMockDb(humanReviewSettings, [
+      { message: "[REVIEW:NEEDS_CHANGES] missing tests" },
+    ]);
+    const task = {
+      ...makeReviewTask("t-hr-1"),
+      status: "human_review" as Task["status"],
+    };
+
+    const result = determineNextStage(db as never, task, true, baseWorkflow);
+    assert.strictEqual(result, "in_progress");
+
+    assert.ok(
+      db.insertedLogs.some((l) =>
+        l.message.includes("[FAIL_AT:human_review]"),
+      ),
+      "expected [FAIL_AT:human_review] marker on human_review NEEDS_CHANGES",
+    );
+  });
+
+  it("returns to in_progress when reviewer left no verdict", () => {
+    const db = createNextStageMockDb(humanReviewSettings, []);
+    const task = {
+      ...makeReviewTask("t-hr-1"),
+      status: "human_review" as Task["status"],
+    };
+
+    const result = determineNextStage(db as never, task, true, baseWorkflow);
+    assert.strictEqual(result, "in_progress");
+  });
+});
+
 // --------------- aggregateReviewVerdicts ---------------
 
 function createRealDb(): DatabaseSync {

@@ -18,6 +18,7 @@ import {
 } from "./prompt-builder.js";
 import { triggerAutoReview } from "./auto-reviewer.js";
 import { triggerAutoQa } from "./auto-qa.js";
+import { triggerAutoHumanReview } from "./auto-human-reviewer.js";
 import { triggerAutoTestGen } from "./auto-test-gen.js";
 import {
   isParallelImplTestEnabled,
@@ -738,6 +739,21 @@ export function isReviewRunTask(
   return task.status === "pr_review" || previousStatus === "pr_review";
 }
 
+/**
+ * Detects an automatic human-review run, which structurally behaves
+ * like a `pr_review` reviewer run (read-only tools, review prompt,
+ * verdict tags) but is tagged separately so the stage-pipeline can
+ * route the next status correctly. The `auto_human_review` setting
+ * gates the trigger; this helper is purely structural and is consulted
+ * once an agent has already been spawned for a `human_review` task.
+ */
+export function isHumanReviewRunTask(
+  task: Pick<Task, "status">,
+  previousStatus?: Task["status"] | string,
+): boolean {
+  return task.status === "human_review" || previousStatus === "human_review";
+}
+
 export async function spawnAgent(
   db: DatabaseSync,
   ws: WsHub,
@@ -792,6 +808,14 @@ export async function spawnAgent(
   const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
 
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
+  const isHumanReviewRun = isHumanReviewRunTask(task, options?.previousStatus);
+  // Human review reuses the reviewer prompt + read-only tool set; this
+  // flag covers the cross-cutting paths (prompt selection, tool gating,
+  // handoff context) so they don't need to know about the new stage
+  // individually. The narrower `isReviewRun` flag stays pr_review-only
+  // because pr_review entry triggers auto-checks (tsc/lint/tests) which
+  // must NOT run for human_review.
+  const isReviewLikeRun = isReviewRun || isHumanReviewRun;
 
   const isQaRun = task.status === "qa_testing";
   // A parallel tester spawn runs the test_generation prompt even though
@@ -841,6 +865,7 @@ export async function spawnAgent(
     isParallelTester ? "test_generation"
     : isRefinementRun ? "refinement"
     : isReviewRun ? "pr_review"
+    : isHumanReviewRun ? "human_review"
     : isQaRun ? "qa_testing"
     : isTestGenRun ? "test_generation"
     : "in_progress";
@@ -872,7 +897,7 @@ export async function spawnAgent(
   // enabled the agent must Write/Edit the plan file and run git + gh,
   // so we fall back to the default (implementer) tool set.
   const allowedTools =
-    isReviewRun || isQaRun || (isRefinementRun && !refinementAsPr)
+    isReviewLikeRun || isQaRun || (isRefinementRun && !refinementAsPr)
       ? REVIEW_ALLOWED_TOOLS
       : undefined;
 
@@ -887,7 +912,7 @@ export async function spawnAgent(
 
   // Extract handoff context for QA/review agents
   let handoffContext = "";
-  if ((isQaRun || isReviewRun || isTestGenRun || isRefinementRun) && !isContinue) {
+  if ((isQaRun || isReviewLikeRun || isTestGenRun || isRefinementRun) && !isContinue) {
     const handoffs = db.prepare(
       "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[HANDOFF]%' ORDER BY created_at DESC LIMIT 3"
     ).all(task.id) as Array<{ message: string }>;
@@ -911,7 +936,7 @@ export async function spawnAgent(
   try {
     // Run Explore phase before Implement (if enabled and applicable)
     let exploreContext = "";
-    if (!isContinue && !isQaRun && !isReviewRun && !isTestGenRun && !isRefinementRun) {
+    if (!isContinue && !isQaRun && !isReviewLikeRun && !isTestGenRun && !isRefinementRun) {
       // Check for existing explore result (from previous run)
       const existingExplore = db.prepare(
         "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[EXPLORE]%' ORDER BY created_at DESC LIMIT 1"
@@ -949,7 +974,7 @@ export async function spawnAgent(
             }) + handoffContext
           : (isQaRun
             ? buildQaPrompt(task, workflow?.projectType ?? "generic", outputLanguage) + handoffContext
-            : (isReviewRun
+            : (isReviewLikeRun
               ? buildReviewPrompt(task, {
                   reviewerRole: options?.reviewerRole ?? "code",
                   language: outputLanguage,
@@ -1042,11 +1067,12 @@ export async function spawnAgent(
       db.prepare(
         "UPDATE tasks SET status = ?, assigned_agent_id = ?, started_at = ?, completed_at = NULL, updated_at = ? WHERE id = ?",
       ).run(startUpdate.status, startUpdate.assigned_agent_id, startUpdate.started_at, startUpdate.updated_at, task.id);
-    } else if (isReviewRun || isQaRun || isTestGenRun) {
+    } else if (isReviewLikeRun || isQaRun || isTestGenRun) {
       // Reviewer / QA / test-generation agents must NOT overwrite
       // assigned_agent_id — the implementer "owns" the task lifecycle
       // and orphan recovery relies on assigned_agent_id to respawn the
-      // correct agent after a rework transition (pr_review → in_progress).
+      // correct agent after a rework transition (pr_review / human_review
+      // → in_progress).
       db.prepare(
         "UPDATE tasks SET started_at = ?, completed_at = NULL, updated_at = ? WHERE id = ?",
       ).run(startUpdate.started_at, startUpdate.updated_at, task.id);
@@ -1082,7 +1108,7 @@ export async function spawnAgent(
     // exists, or a DONE marker is already present.
     if (
       parallelImplEnabled &&
-      !isReviewRun &&
+      !isReviewLikeRun &&
       !isQaRun &&
       !isTestGenRun &&
       !isRefinementRun
@@ -1874,7 +1900,7 @@ export async function spawnAgent(
     const finishTime = Date.now();
     const completionTask =
       (db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined) ?? task;
-    let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewRun, workflow) : "cancelled";
+    let finalStatus = code === 0 ? determineCompletionStatus(db, completionTask, isReviewLikeRun, workflow) : "cancelled";
 
     // Extract and store refinement plan when a refinement agent exits
     // — regardless of exit code. The agent may have been killed by
@@ -2035,7 +2061,15 @@ export async function spawnAgent(
       setTimeout(() => triggerAutoReview(db, ws, freshTask), 500);
     }
 
-    // human_review: no agent trigger — waits for human approval via API
+    // Trigger auto-human-review if task landed in human_review and the
+    // operator has opted in via the `auto_human_review` setting. The
+    // trigger function double-checks the setting and the iteration cap
+    // before spawning, so this call is a no-op when the feature is off
+    // and falls back to the legacy "wait for manual approval" behavior.
+    if (finalStatus === "human_review") {
+      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+      setTimeout(() => triggerAutoHumanReview(db, ws, freshTask), 500);
+    }
 
     // Terminal-status worktree cleanup. Only `done` is treated as
     // truly terminal here — `cancelled` is reachable from /tasks/:id/stop
@@ -2132,7 +2166,13 @@ export function resolveCompletionStatusAfterPromotion(
   }
 
   if (candidateStatus === "done" && (reviewRun || task.status === "pr_review")) {
-    return { status: "pr_review", blockedReason };
+    // Demote a failing artifact back to the most recent review stage so
+    // the task does not silently complete with a broken push state. Stay
+    // at human_review when that's where the run originated, otherwise
+    // fall back to the pr_review re-review path.
+    const demoted: Task["status"] =
+      task.status === "human_review" ? "human_review" : "pr_review";
+    return { status: demoted, blockedReason };
   }
 
   return {

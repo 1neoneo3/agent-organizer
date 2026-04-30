@@ -306,6 +306,36 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
               </p>
             </label>
 
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Auto Human Review</span>
+              <select
+                style={inputStyle}
+                value={local.auto_human_review ?? "false"}
+                onChange={(e) => update("auto_human_review", e.target.value)}
+              >
+                <option value="false">Disabled (wait for manual approval)</option>
+                <option value="true">Enabled (agent reviews requirements)</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                When enabled, an agent automatically reviews tasks that reach Human Review against the task requirements. A passing review advances the task to <code>done</code>; a failing review bounces it back to <code>in_progress</code> for rework. The reviewer agent loop is bounded by <strong>Human Review Count</strong> below — once the cap is reached, the task stays in <code>human_review</code> for a real human to decide. Requires <strong>Human Review Stage</strong> to be enabled.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Human Review Count</span>
+              <input
+                type="number"
+                style={inputStyle}
+                value={local.human_review_count ?? "2"}
+                onChange={(e) => update("human_review_count", e.target.value)}
+                min={0}
+                max={5}
+              />
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Maximum auto-human-review iterations before stopping the loop and leaving the task in <code>human_review</code>. Independent from <strong>Review Count</strong> (which governs PR review).
+              </p>
+            </label>
+
           </div>
         </section>
 

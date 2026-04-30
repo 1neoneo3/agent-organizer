@@ -137,7 +137,6 @@ export const SETTINGS_DEFAULTS = {
   auto_review: "true" as const, // "true" | "false" — auto-trigger review agent on pr_review
   auto_qa: "true" as const, // "true" | "false" — auto-trigger QA agent on qa_testing
   auto_dispatch_mode: "all_inbox" as const, // "disabled" | "github_only" | "all_inbox"
-  enable_controller_mode: "false" as const, // "true" | "false" — opt-in directive controller orchestration
   // Phase 1: run tsc / lint / tests / e2e in parallel at pr_review entry.
   // Enabled by default so new installations benefit immediately; the
   // module is a no-op unless at least one `check_*_cmd` is configured
@@ -157,6 +156,21 @@ export const SETTINGS_DEFAULTS = {
   // the Settings UI (SSOT); operators who previously relied on
   // WORKFLOW.md-only toggles should move those flags to Settings.
   default_enable_human_review: "false" as const, // "true" | "false" — require human approval before done
+  // When `default_enable_human_review` puts a task in human_review, the
+  // legacy behavior is to wait for a human approve/reject. Turning this
+  // on instead spawns a reviewer agent that grades the work against the
+  // task requirements: a PASS verdict advances the task to `done`, while
+  // a NEEDS_CHANGES verdict bounces it back to `in_progress` so the
+  // implementer can rework. Loop budget is bounded by `human_review_count`
+  // (separate from `review_count` which governs pr_review iterations) so
+  // automatic human-review attempts cannot starve out manual approval.
+  auto_human_review: "false" as const, // "true" | "false"
+  // Maximum auto-human-review iterations before stopping the loop and
+  // leaving the task in `human_review` for a real human to decide. The
+  // counter is independent from `review_count` because human_review and
+  // pr_review escalate via different paths and exhausting one should not
+  // prevent the other from running.
+  human_review_count: "2" as const,
   // Re-spawn recovery for refinement runs that never produced a plan.
   // When enabled, spawnAgent will re-enter refinement mode even if the
   // task has moved forward to in_progress, provided `refinement_plan`
