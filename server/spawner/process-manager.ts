@@ -44,6 +44,7 @@ import { getHeartbeatManager } from "./heartbeat-manager.js";
 import { getLogBatchWriter } from "../db/log-batch-writer.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode, tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
+import type { ReviewSyncStatus } from "../workflow/review-artifact.js";
 import {
   runWorkflowHooks,
   type WorkflowHookResult,
@@ -124,6 +125,7 @@ interface ReviewerSession {
 const reviewerSessions = new Map<string, ReviewerSession>();
 
 const MAX_CONTEXT_RESETS = 3;
+const SUCCESSFUL_REVIEW_SYNC_STATUSES: ReadonlySet<ReviewSyncStatus> = new Set(["pr_open"]);
 
 /**
  * Create a reviewer-panel coordination session for a task. Must be
@@ -2112,7 +2114,9 @@ function getReviewArtifactCompletionBlockReason(
   if (!promotion.branchName) missingFields.push("review_branch");
   if (!promotion.commitSha) missingFields.push("review_commit_sha");
   if (!promotion.prUrl) missingFields.push("pr_url");
-  if (promotion.syncStatus !== "pr_open") missingFields.push(`review_sync_status=${promotion.syncStatus}`);
+  if (!SUCCESSFUL_REVIEW_SYNC_STATUSES.has(promotion.syncStatus)) {
+    missingFields.push(`review_sync_status=${promotion.syncStatus}`);
+  }
 
   return missingFields.length > 0
     ? `review artifact incomplete: ${missingFields.join(", ")}`

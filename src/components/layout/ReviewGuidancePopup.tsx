@@ -2,7 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { TaskSummary } from "../../types/index.js";
 import { collectReviewTransitions, type ReviewTransition } from "../../hooks/state-updates.js";
 
-type ReviewTask = Pick<TaskSummary, "id" | "title" | "status" | "updated_at">;
+type ReviewTask = Pick<
+  TaskSummary,
+  | "id"
+  | "title"
+  | "status"
+  | "updated_at"
+  | "pr_url"
+  | "review_branch"
+  | "review_commit_sha"
+  | "review_sync_status"
+  | "review_sync_error"
+>;
 
 interface ReviewGuidancePopupProps {
   tasks: ReviewTask[];
@@ -27,6 +38,11 @@ const REVIEW_GUIDE: Record<"pr_review", { title: string; checks: string[]; actio
 
 interface QueueItem extends ReviewTransition {
   key: string;
+  pr_url: string | null;
+  review_branch: string | null;
+  review_commit_sha: string | null;
+  review_sync_status: string | null;
+  review_sync_error: string | null;
 }
 
 function toReviewTask(task: ReviewTask): TaskSummary {
@@ -40,15 +56,15 @@ function toReviewTask(task: ReviewTask): TaskSummary {
     task_size: "small",
     task_number: null,
     depends_on: null,
-    pr_url: null,
+    pr_url: task.pr_url ?? null,
     review_count: 0,
     directive_id: null,
     external_source: null,
     external_id: null,
-    review_branch: null,
-    review_commit_sha: null,
-    review_sync_status: null,
-    review_sync_error: null,
+    review_branch: task.review_branch ?? null,
+    review_commit_sha: task.review_commit_sha ?? null,
+    review_sync_status: task.review_sync_status ?? null,
+    review_sync_error: task.review_sync_error ?? null,
     repository_url: null,
     settings_overrides: null,
     started_at: null,
@@ -77,10 +93,18 @@ export function ReviewGuidancePopup({ tasks, onNavigateToTask }: ReviewGuidanceP
       return;
     }
 
-    const transitions = collectReviewTransitions(previousTasksRef.current, normalizedTasks).map((transition) => ({
-      ...transition,
-      key: `${transition.taskId}:${transition.to}:${normalizedTasks.find((task) => task.id === transition.taskId)?.updated_at ?? 0}`,
-    }));
+    const transitions = collectReviewTransitions(previousTasksRef.current, normalizedTasks).map((transition) => {
+      const currentTask = normalizedTasks.find((task) => task.id === transition.taskId);
+      return {
+        ...transition,
+        key: `${transition.taskId}:${transition.to}:${currentTask?.updated_at ?? 0}`,
+        pr_url: currentTask?.pr_url ?? null,
+        review_branch: currentTask?.review_branch ?? null,
+        review_commit_sha: currentTask?.review_commit_sha ?? null,
+        review_sync_status: currentTask?.review_sync_status ?? null,
+        review_sync_error: currentTask?.review_sync_error ?? null,
+      };
+    });
     previousTasksRef.current = normalizedTasks;
 
     if (transitions.length === 0) {
@@ -105,7 +129,15 @@ export function ReviewGuidancePopup({ tasks, onNavigateToTask }: ReviewGuidanceP
     return null;
   }
 
+  const currentTask = normalizedTasks.find((task) => task.id === current.taskId);
   const guide = REVIEW_GUIDE[current.to];
+  const reviewTarget = {
+    branch: currentTask?.review_branch ?? null,
+    commitSha: currentTask?.review_commit_sha ?? null,
+    prUrl: currentTask?.pr_url ?? null,
+    syncStatus: currentTask?.review_sync_status ?? null,
+    syncError: currentTask?.review_sync_error ?? null,
+  };
 
   const closeCurrent = () => {
     setQueue((prev) => prev.slice(1));
@@ -149,6 +181,18 @@ export function ReviewGuidancePopup({ tasks, onNavigateToTask }: ReviewGuidanceP
               ))}
             </ul>
           </div>
+          {(reviewTarget.branch || reviewTarget.commitSha || reviewTarget.prUrl || reviewTarget.syncStatus || reviewTarget.syncError) && (
+            <div>
+              <div className="eb-label" style={{ marginBottom: "4px", color: "var(--eb-highlight)" }}>Review Target</div>
+              <div style={{ display: "grid", gap: "4px", fontSize: "11px" }}>
+                {reviewTarget.branch && <div>Branch: <span style={{ fontFamily: "var(--font-mono)" }}>{reviewTarget.branch}</span></div>}
+                {reviewTarget.commitSha && <div>Commit SHA: <span style={{ fontFamily: "var(--font-mono)" }}>{reviewTarget.commitSha}</span></div>}
+                {reviewTarget.prUrl && <div>PR URL: <span style={{ overflowWrap: "anywhere", wordBreak: "break-all" }}>{reviewTarget.prUrl}</span></div>}
+                {reviewTarget.syncStatus && <div>Sync status: {reviewTarget.syncStatus}</div>}
+                {reviewTarget.syncError && <div>Sync error: {reviewTarget.syncError}</div>}
+              </div>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "4px" }}>
             <button className="eb-btn" type="button" data-testid="review-guidance-close" onClick={closeCurrent}>
               LATER

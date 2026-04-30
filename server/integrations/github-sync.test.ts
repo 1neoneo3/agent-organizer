@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
-import { resolveGitHubSyncToken, syncGithubIssues, type GitHubIssue } from "./github-sync.js";
+import {
+  fetchGitHubIssues,
+  resolveGitHubSyncToken,
+  startGithubIssueSync,
+  syncGithubIssues,
+  type GitHubIssue,
+} from "./github-sync.js";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -168,6 +174,35 @@ describe("syncGithubIssues", () => {
     assert.deepEqual(started, [{ agentId: "agent-1", taskId: row.id }]);
   });
 
+  it("assigns an idle agent to mirrored inbox tasks even when auto-run is disabled", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgent(db);
+    let spawnCalls = 0;
+
+    const result = syncGithubIssues(db, ws as never, [issue(12)], {
+      projectPath: "/tmp/project",
+      autoAssign: true,
+      autoRun: false,
+      spawnAgent: () => {
+        spawnCalls += 1;
+        return Promise.resolve({ pid: 123 });
+      },
+    });
+    const row = db.prepare(
+      "SELECT id, status, assigned_agent_id FROM tasks WHERE external_source = 'github' AND external_id = '12'"
+    ).get() as { id: string; status: string; assigned_agent_id: string | null };
+
+    assert.equal(result.created, 1);
+    assert.equal(row.status, "inbox");
+    assert.equal(row.assigned_agent_id, "agent-1");
+    assert.equal(spawnCalls, 0);
+    assert.ok(
+      ws.sent.some((event) => event.type === "task_update" && (event.payload as { assigned_agent_id?: string | null }).assigned_agent_id === "agent-1"),
+      "task_update websocket payload should include the assigned agent",
+    );
+  });
+
   it("keeps mirrored GitHub tasks in inbox when they conflict with an active task", () => {
     const db = createDb();
     const ws = createWs();
@@ -213,6 +248,32 @@ describe("syncGithubIssues", () => {
   });
 });
 
+describe("fetchGitHubIssues", () => {
+  it("omits Authorization when token is blank", async () => {
+    const fetchMock = mock.method(globalThis, "fetch", async (
+      _input: Parameters<typeof fetch>[0],
+      init: Parameters<typeof fetch>[1],
+    ) => {
+      const headers = new Headers((init as RequestInit | undefined)?.headers);
+      assert.equal(headers.has("authorization"), false);
+      assert.equal(headers.get("accept"), "application/vnd.github+json");
+      assert.equal(headers.get("user-agent"), "agent-organizer-github-sync");
+
+      return new Response("[]", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    try {
+      const issues = await fetchGitHubIssues("example/repo", "");
+      assert.deepEqual(issues, []);
+    } finally {
+      fetchMock.mock.restore();
+    }
+  });
+});
+
 describe("resolveGitHubSyncToken", () => {
   it("prefers the configured env token", () => {
     let readCalls = 0;
@@ -230,5 +291,44 @@ describe("resolveGitHubSyncToken", () => {
     const token = resolveGitHubSyncToken("", () => "gh-token\n");
 
     assert.equal(token, "gh-token");
+  });
+});
+
+describe("startGithubIssueSync", () => {
+  it("starts polling even when the initial token is blank", async () => {
+    const db = createDb();
+    const ws = createWs();
+    const scheduled: Array<() => void> = [];
+
+    startGithubIssueSync(
+      db,
+      ws as never,
+      async (repo, token) => {
+        assert.equal(repo, "example/repo");
+        assert.equal(token, "");
+        return [issue(42, "Public issue")];
+      },
+      {
+        resolveRepo: () => "example/repo",
+        resolveToken: () => "",
+        schedule: ((handler: Parameters<typeof setInterval>[0]) => {
+          scheduled.push(() => {
+            if (typeof handler === "function") {
+              handler();
+            }
+          });
+          return 1 as never;
+        }) as unknown as typeof setInterval,
+      },
+    );
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(scheduled.length, 1);
+    const row = db.prepare(
+      "SELECT title FROM tasks WHERE external_source = 'github' AND external_id = '42'",
+    ).get() as { title: string } | undefined;
+
+    assert.equal(row?.title, "[GH #42] Public issue");
   });
 });

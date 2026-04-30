@@ -147,12 +147,16 @@ export function syncGithubIssues(
 }
 
 export async function fetchGitHubIssues(repo: string, token: string): Promise<GitHubIssue[]> {
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "agent-organizer-github-sync",
+  };
+  if (token.trim()) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(`https://api.github.com/repos/${repo}/issues?state=open&per_page=100`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "User-Agent": "agent-organizer-github-sync",
-    },
+    headers,
   });
 
   if (!response.ok) {
@@ -166,31 +170,46 @@ export function startGithubIssueSync(
   db: DatabaseSync,
   ws: WsHub,
   fetcher: (repo: string, token: string) => Promise<GitHubIssue[]> = fetchGitHubIssues,
+  options?: {
+    resolveRepo?: () => string;
+    resolveToken?: () => string;
+    schedule?: typeof setInterval;
+  },
 ): ReturnType<typeof setInterval> | null {
-  const token = resolveGitHubSyncToken(GITHUB_SYNC_TOKEN);
   if (!GITHUB_SYNC_ENABLED) {
     return null;
   }
 
-  if (!GITHUB_SYNC_REPO || !token) {
-    console.warn("[github-sync] disabled: missing repo or token", {
-      hasRepo: Boolean(GITHUB_SYNC_REPO),
-      hasToken: Boolean(token),
-    });
+  const resolveRepo = options?.resolveRepo ?? (() => GITHUB_SYNC_REPO);
+  const resolveToken = options?.resolveToken ?? (() => resolveGitHubSyncToken(GITHUB_SYNC_TOKEN));
+  const schedule = options?.schedule ?? setInterval;
+  const repo = resolveRepo().trim();
+
+  if (!repo) {
+    console.warn("[github-sync] disabled: missing repo", { hasRepo: Boolean(repo) });
     return null;
   }
 
+  let inFlight = false;
   const run = async () => {
+    if (inFlight) {
+      return;
+    }
+
+    inFlight = true;
     try {
-      const issues = await fetcher(GITHUB_SYNC_REPO, token);
+      const token = resolveToken().trim();
+      const issues = await fetcher(repo, token);
       syncGithubIssues(db, ws, issues, { projectPath: GITHUB_SYNC_PROJECT_PATH });
     } catch (error) {
       console.error("[github-sync]", error);
+    } finally {
+      inFlight = false;
     }
   };
 
   void run();
-  return setInterval(() => {
+  return schedule(() => {
     void run();
   }, GITHUB_SYNC_INTERVAL_MS);
 }
