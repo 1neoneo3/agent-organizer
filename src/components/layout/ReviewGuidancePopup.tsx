@@ -38,11 +38,6 @@ const REVIEW_GUIDE: Record<"pr_review", { title: string; checks: string[]; actio
 
 interface QueueItem extends ReviewTransition {
   key: string;
-  pr_url: string | null;
-  review_branch: string | null;
-  review_commit_sha: string | null;
-  review_sync_status: string | null;
-  review_sync_error: string | null;
 }
 
 function toReviewTask(task: ReviewTask): TaskSummary {
@@ -98,11 +93,6 @@ export function ReviewGuidancePopup({ tasks, onNavigateToTask }: ReviewGuidanceP
       return {
         ...transition,
         key: `${transition.taskId}:${transition.to}:${currentTask?.updated_at ?? 0}`,
-        pr_url: currentTask?.pr_url ?? null,
-        review_branch: currentTask?.review_branch ?? null,
-        review_commit_sha: currentTask?.review_commit_sha ?? null,
-        review_sync_status: currentTask?.review_sync_status ?? null,
-        review_sync_error: currentTask?.review_sync_error ?? null,
       };
     });
     previousTasksRef.current = normalizedTasks;

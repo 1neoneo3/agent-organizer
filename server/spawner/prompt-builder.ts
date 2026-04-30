@@ -1194,6 +1194,52 @@ export function buildReviewPrompt(
     parts.push("");
   }
 
+  const hasReviewArtifact =
+    Boolean(task.review_branch) ||
+    Boolean(task.review_commit_sha) ||
+    Boolean(task.pr_url) ||
+    Boolean(task.review_sync_status) ||
+    Boolean(task.review_sync_error);
+
+  if (hasReviewArtifact) {
+    const artifactHeading = language === "en" ? "## Review Target" : "## レビュー対象";
+    const artifactLead = language === "en"
+      ? "Review this exact artifact. Do not use `main` as the review target."
+      : "以下の成果物を正確にレビューする。`main` をレビュー対象にしないこと。";
+    const branchLabel = language === "en" ? "Branch" : "ブランチ";
+    const commitLabel = "Commit SHA";
+    const syncLabel = language === "en" ? "Sync status" : "同期状態";
+    const syncErrorLabel = language === "en" ? "Sync error" : "同期エラー";
+    const missingLabel = language === "en"
+      ? "Review artifact is not fully ready yet."
+      : "レビュー対象の成果物がまだ完全には揃っていない。";
+
+    parts.push(artifactHeading);
+    parts.push("");
+    parts.push(artifactLead);
+    parts.push("");
+    if (task.review_branch) {
+      parts.push(`- ${branchLabel}: \`${task.review_branch}\``);
+    }
+    if (task.review_commit_sha) {
+      parts.push(`- ${commitLabel}: \`${task.review_commit_sha}\``);
+    }
+    if (task.pr_url) {
+      parts.push(`- PR URL: ${task.pr_url}`);
+    }
+    if (task.review_sync_status) {
+      parts.push(`- ${syncLabel}: ${task.review_sync_status}`);
+    }
+    if (task.review_sync_error) {
+      parts.push(`- ${syncErrorLabel}: ${task.review_sync_error}`);
+    }
+    if (task.review_sync_status !== "pr_open") {
+      parts.push("");
+      parts.push(missingLabel);
+    }
+    parts.push("");
+  }
+
   parts.push("## スプリント契約の参照");
   parts.push("タスクログから ---SPRINT CONTRACT--- ブロックを確認してください。");
   parts.push("実装が記載された成果物と受け入れ基準を満たしているか検証してください。");

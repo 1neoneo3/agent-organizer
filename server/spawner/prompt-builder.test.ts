@@ -347,6 +347,47 @@ describe("buildReviewPrompt", () => {
     assert.match(prompt, /Scope:\s+\[X\/5\]/);
     assert.match(prompt, /Scope が 1-2.*必ず NEEDS_CHANGES/);
   });
+
+  it("pins the exact review target when review artifact metadata is available", () => {
+    const prompt = buildReviewPrompt({
+      id: "task-review-target",
+      title: "Promote worktree to PR",
+      description: "Keep the review target fixed.",
+      project_path: "/tmp/project",
+      task_size: "small",
+      review_branch: "feat/t12-promote-worktree",
+      review_commit_sha: "abc123def456",
+      pr_url: "https://github.com/acme/repo/pull/12",
+      review_sync_status: "pr_open",
+      review_sync_error: null,
+    } as never);
+
+    assert.match(prompt, /## レビュー対象/);
+    assert.match(prompt, /`main` をレビュー対象にしないこと/);
+    assert.match(prompt, /- ブランチ: `feat\/t12-promote-worktree`/);
+    assert.match(prompt, /- Commit SHA: `abc123def456`/);
+    assert.match(prompt, /- PR URL: https:\/\/github\.com\/acme\/repo\/pull\/12/);
+    assert.match(prompt, /- 同期状態: pr_open/);
+  });
+
+  it("warns when the review artifact is not fully ready", () => {
+    const prompt = buildReviewPrompt({
+      id: "task-review-wip",
+      title: "Promote worktree to PR",
+      description: "Keep the review target fixed.",
+      project_path: "/tmp/project",
+      task_size: "small",
+      review_branch: "feat/t12-promote-worktree",
+      review_commit_sha: "abc123def456",
+      pr_url: null,
+      review_sync_status: "local_commit_ready",
+      review_sync_error: "push failed: permission denied",
+    } as never);
+
+    assert.match(prompt, /レビュー対象の成果物がまだ完全には揃っていない。/);
+    assert.match(prompt, /- 同期状態: local_commit_ready/);
+    assert.match(prompt, /- 同期エラー: push failed: permission denied/);
+  });
 });
 
 describe("buildQaPrompt", () => {
