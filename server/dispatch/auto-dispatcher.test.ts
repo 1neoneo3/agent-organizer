@@ -247,6 +247,44 @@ describe("dispatchAutoStartableTasks", () => {
     assert.match(logs[0].message, /github-synced tasks only/i);
   });
 
+  it("skips GitHub inbox tasks that semantically conflict with an active task", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertAgent(db, { name: "Available Engineer", role: "lead_engineer" });
+    insertTask(db, {
+      id: "active-1",
+      title: "Implement auth redirect",
+      status: "in_progress",
+      task_number: "#1",
+      planned_files: JSON.stringify(["src/auth.ts"]),
+      external_source: null,
+      external_id: null,
+    });
+    const task = insertTask(db, {
+      title: "Fix auth redirect",
+      description: "Update redirect handling.\n- `src/auth.ts`",
+      project_path: "/tmp/agent-organizer",
+      task_number: "#2",
+      external_source: "github",
+    });
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask() {
+        throw new Error("should not start");
+      },
+    });
+
+    const logs = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id ASC"
+    ).all(task.id) as Array<{ message: string }>;
+
+    assert.equal(result.started, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0].message, /github sync conflicts/i);
+  });
+
   it("does not throw when startTask deletes the task before writeDispatchLog runs (FK 787 race)", () => {
     const db = createDb();
     const ws = createWs();

@@ -13,6 +13,10 @@ import {
   formatAllBlockers,
   isBlocked,
 } from "../domain/task-dependencies.js";
+import {
+  formatGitHubInboxConflicts,
+  getGitHubInboxConflicts,
+} from "../tasks/auto-dispatch.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
 
@@ -310,6 +314,13 @@ export function dispatchAutoStartableTasks(
     if (isBlocked(blockers)) {
       summary.skipped += 1;
       writeDispatchLog(db, task, `blocked (${formatAllBlockers(blockers)})`);
+      continue;
+    }
+
+    const githubConflicts = getGitHubInboxConflicts(db, task);
+    if (githubConflicts.length > 0) {
+      summary.skipped += 1;
+      writeDispatchLog(db, task, `blocked (github sync conflicts: ${formatGitHubInboxConflicts(githubConflicts)})`);
       continue;
     }
 
