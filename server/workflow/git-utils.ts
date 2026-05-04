@@ -14,6 +14,7 @@ export interface RepositoryIdentity {
   resolvedGitToplevel: string | null;
   actualRepositoryUrl: string | null;
   expectedRepositoryUrl: string | null;
+  expectedRepositoryUrls: string[];
 }
 
 export class RepositoryIdentityError extends Error {
@@ -74,10 +75,46 @@ export function normalizeGitUrl(raw: string | null | undefined): string | null {
   return null;
 }
 
+export type ExpectedRepositoryInput = string | string[] | null | undefined;
+
 function normalizeComparableGitUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  const normalized = normalizeGitUrl(raw) ?? raw.trim().replace(/\.git$/, "");
-  return normalized || null;
+  const normalized = normalizeGitUrl(raw) ?? raw.trim();
+  const comparable = normalized.replace(/\/+$/, "").replace(/\.git$/, "");
+  return comparable || null;
+}
+
+export function parseExpectedRepositoryUrls(
+  repositoryUrls: string | null | undefined,
+  repositoryUrl: string | null | undefined,
+): string[] {
+  const fromArray: string[] = [];
+  if (repositoryUrls?.trim()) {
+    try {
+      const parsed = JSON.parse(repositoryUrls) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const value of parsed) {
+          if (typeof value !== "string") continue;
+          const normalized = normalizeComparableGitUrl(value);
+          if (normalized) fromArray.push(normalized);
+        }
+      }
+    } catch {
+      // Invalid legacy JSON falls back to the single repository_url field.
+    }
+  }
+  const preferred = fromArray.length > 0
+    ? fromArray
+    : [normalizeComparableGitUrl(repositoryUrl)].filter((v): v is string => Boolean(v));
+  return Array.from(new Set(preferred));
+}
+
+function normalizeExpectedRepositoryInput(input: ExpectedRepositoryInput): string[] {
+  const rawValues = Array.isArray(input) ? input : [input];
+  const normalized = rawValues
+    .map((value) => typeof value === "string" ? normalizeComparableGitUrl(value) : null)
+    .filter((value): value is string => Boolean(value));
+  return Array.from(new Set(normalized));
 }
 
 export function redactGitUrl(raw: string | null | undefined): string | null {
@@ -113,15 +150,16 @@ function formatRepositoryIdentityError(reason: string, identity: RepositoryIdent
     `project_path=${identity.projectPath}`,
     `git_toplevel=${identity.gitToplevel ?? "null"}`,
     `actual_repository_url=${redactGitUrl(identity.actualRepositoryUrl) ?? "null"}`,
-    `expected_repository_url=${redactGitUrl(identity.expectedRepositoryUrl) ?? "null"}`,
+    `expected_repository_url=${identity.expectedRepositoryUrls.map((url) => redactGitUrl(url)).join(",") || "null"}`,
   ].join("; ");
 }
 
 export function inspectRepositoryIdentity(
   taskId: string,
   projectPath: string,
-  expectedRepositoryUrl?: string | null,
+  expectedRepositoryUrl?: ExpectedRepositoryInput,
 ): RepositoryIdentity {
+  const expectedRepositoryUrls = normalizeExpectedRepositoryInput(expectedRepositoryUrl);
   let resolvedProjectPath: string | null = null;
   try {
     resolvedProjectPath = realpathSync(projectPath);
@@ -133,7 +171,8 @@ export function inspectRepositoryIdentity(
       gitToplevel: null,
       resolvedGitToplevel: null,
       actualRepositoryUrl: null,
-      expectedRepositoryUrl: normalizeComparableGitUrl(expectedRepositoryUrl),
+      expectedRepositoryUrl: expectedRepositoryUrls[0] ?? null,
+      expectedRepositoryUrls,
     };
   }
 
@@ -151,7 +190,9 @@ export function inspectRepositoryIdentity(
     ? runGit(resolvedProjectPath, ["remote", "get-url", "origin"])
     : null;
   const actualRepositoryUrl = normalizeComparableGitUrl(rawRemote);
-  const expected = normalizeComparableGitUrl(expectedRepositoryUrl) ?? actualRepositoryUrl;
+  const expected = expectedRepositoryUrls.length > 0
+    ? expectedRepositoryUrls
+    : actualRepositoryUrl ? [actualRepositoryUrl] : [];
 
   return {
     taskId,
@@ -160,14 +201,15 @@ export function inspectRepositoryIdentity(
     gitToplevel,
     resolvedGitToplevel,
     actualRepositoryUrl,
-    expectedRepositoryUrl: expected,
+    expectedRepositoryUrl: expected[0] ?? null,
+    expectedRepositoryUrls: expected,
   };
 }
 
 export function assertRepositoryIdentity(
   taskId: string,
   projectPath: string,
-  expectedRepositoryUrl?: string | null,
+  expectedRepositoryUrl?: ExpectedRepositoryInput,
 ): RepositoryIdentity {
   const identity = inspectRepositoryIdentity(taskId, projectPath, expectedRepositoryUrl);
 
@@ -187,7 +229,7 @@ export function assertRepositoryIdentity(
     );
   }
 
-  if (!identity.actualRepositoryUrl || !identity.expectedRepositoryUrl) {
+  if (!identity.actualRepositoryUrl || identity.expectedRepositoryUrls.length === 0) {
     throw new RepositoryIdentityError(
       "workspace_not_git_repository",
       identity,
@@ -195,7 +237,7 @@ export function assertRepositoryIdentity(
     );
   }
 
-  if (identity.actualRepositoryUrl !== identity.expectedRepositoryUrl) {
+  if (!identity.expectedRepositoryUrls.includes(identity.actualRepositoryUrl)) {
     throw new RepositoryIdentityError(
       "workspace_repository_mismatch",
       identity,

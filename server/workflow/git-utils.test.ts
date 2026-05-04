@@ -9,6 +9,7 @@ import {
   assertRepositoryIdentity,
   detectRepositoryUrl,
   normalizeGitUrl,
+  parseExpectedRepositoryUrls,
   redactGitUrl,
 } from "./git-utils.js";
 
@@ -159,6 +160,44 @@ describe("detectRepositoryUrl", () => {
 
   it("returns null for empty input", () => {
     assert.equal(detectRepositoryUrl(""), null);
+  });
+});
+
+describe("parseExpectedRepositoryUrls", () => {
+  it("prefers repository_urls over a stale repository_url", () => {
+    assert.deepEqual(
+      parseExpectedRepositoryUrls(
+        JSON.stringify([
+          "git@github.com:acme/widget.git",
+          "https://github.com/acme/other.git",
+        ]),
+        "https://github.com/acme/stale",
+      ),
+      [
+        "https://github.com/acme/widget",
+        "https://github.com/acme/other",
+      ],
+    );
+  });
+
+  it("falls back to repository_url when repository_urls is invalid legacy JSON", () => {
+    assert.deepEqual(
+      parseExpectedRepositoryUrls("not-json", "https://github.com/acme/widget.git"),
+      ["https://github.com/acme/widget"],
+    );
+  });
+
+  it("normalizes trailing slash and .git variants", () => {
+    assert.deepEqual(
+      parseExpectedRepositoryUrls(
+        JSON.stringify([
+          "https://github.com/acme/widget.git/",
+          "https://github.com/acme/widget/",
+        ]),
+        null,
+      ),
+      ["https://github.com/acme/widget"],
+    );
   });
 });
 

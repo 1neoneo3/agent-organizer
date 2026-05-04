@@ -189,6 +189,48 @@ describe("prepareTaskWorkspace", () => {
     );
   });
 
+  it("accepts repository_urls over a stale repository_url", () => {
+    const repo = initRepo();
+
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-repository-urls",
+        title: "Use repository urls",
+        task_number: "#423",
+        project_path: repo,
+        repository_url: "https://github.com/example/stale-repo",
+        repository_urls: JSON.stringify([repo]),
+      } as never,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write" as const,
+        codexApprovalPolicy: "on-request" as const,
+        e2eExecution: "host" as const,
+        e2eCommand: null,
+        gitWorkflow: "default" as const,
+        workspaceMode: "git-worktree" as const,
+        branchPrefix: "issue",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+    );
+
+    assert.equal(workspace.rootPath, repo);
+    assert.equal(existsSync(workspace.cwd), true);
+    assert.equal(git(workspace.cwd, "rev-parse", "--abbrev-ref", "HEAD"), workspace.branchName);
+  });
+
   it("does not move dirty non-main branch changes into the task worktree", () => {
     const repo = initRepo();
     git(repo, "checkout", "-b", "codex/current-thread");
@@ -1043,7 +1085,22 @@ describe("reconcileAoWorktrees", () => {
     assert.equal(result.preserved.length, 0);
   });
 
-  it("scans filesystem-only .ao-worktrees directories that git worktree list misses", () => {
+  it("removes empty filesystem-only .ao-worktrees directories that git worktree list misses", () => {
+    const repo = initRepo();
+    const db = createDb();
+    const orphanId = randomUUID();
+    const orphanPath = join(repo, ".ao-worktrees", orphanId);
+    mkdirSync(orphanPath, { recursive: true });
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+
+    assert.equal(result.scanned, 1);
+    assert.equal(result.removed.length, 1);
+    assert.equal(result.removed[0]?.taskId, orphanId);
+    assert.equal(existsSync(orphanPath), false);
+  });
+
+  it("preserves non-empty filesystem-only non-git directories for manual cleanup", () => {
     const repo = initRepo();
     const db = createDb();
     const orphanId = randomUUID();
@@ -1054,9 +1111,11 @@ describe("reconcileAoWorktrees", () => {
     const result = reconcileAoWorktrees(db, { cwd: repo });
 
     assert.equal(result.scanned, 1);
-    assert.equal(result.removed.length, 1);
-    assert.equal(result.removed[0]?.taskId, orphanId);
-    assert.equal(existsSync(orphanPath), false);
+    assert.equal(result.removed.length, 0);
+    assert.equal(result.preserved.length, 1);
+    assert.equal(result.preserved[0]?.taskId, orphanId);
+    assert.match(result.preserved[0]?.details ?? "", /not empty/);
+    assert.equal(existsSync(orphanPath), true);
   });
 
   it("preserves filesystem-only git worktrees for manual cleanup", () => {

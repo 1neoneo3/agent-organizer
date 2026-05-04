@@ -9,6 +9,7 @@ import { SpawnPreflightError } from "../spawner/spawn-failures.js";
 import {
   RepositoryIdentityError,
   assertRepositoryIdentity,
+  parseExpectedRepositoryUrls,
 } from "./git-utils.js";
 
 export interface TaskWorkspace {
@@ -39,7 +40,11 @@ function assertTaskRepositoryIdentity(
   projectPath: string,
 ): ReturnType<typeof assertRepositoryIdentity> {
   try {
-    return assertRepositoryIdentity(task.id, projectPath, task.repository_url);
+    return assertRepositoryIdentity(
+      task.id,
+      projectPath,
+      parseExpectedRepositoryUrls(task.repository_urls, task.repository_url),
+    );
   } catch (error) {
     if (error instanceof RepositoryIdentityError) {
       throw new SpawnPreflightError(error.code, error.message, false);
@@ -338,17 +343,29 @@ export function prepareTaskWorkspace(
       }
     }
     assertTaskRepositoryIdentity(
-      { ...task, repository_url: sourceIdentity.expectedRepositoryUrl } as Task,
+      {
+        ...task,
+        repository_url: sourceIdentity.expectedRepositoryUrl,
+        repository_urls: JSON.stringify(sourceIdentity.expectedRepositoryUrls),
+      } as Task,
       worktreePath,
     );
   } else {
     assertTaskRepositoryIdentity(
-      { ...task, repository_url: sourceIdentity.expectedRepositoryUrl } as Task,
+      {
+        ...task,
+        repository_url: sourceIdentity.expectedRepositoryUrl,
+        repository_urls: JSON.stringify(sourceIdentity.expectedRepositoryUrls),
+      } as Task,
       worktreePath,
     );
     ensureWorktreeOnBranch(worktreePath, branchName, task.id);
     assertTaskRepositoryIdentity(
-      { ...task, repository_url: sourceIdentity.expectedRepositoryUrl } as Task,
+      {
+        ...task,
+        repository_url: sourceIdentity.expectedRepositoryUrl,
+        repository_urls: JSON.stringify(sourceIdentity.expectedRepositoryUrls),
+      } as Task,
       worktreePath,
     );
   }
@@ -663,6 +680,22 @@ export function reconcileAoWorktrees(
           ...entry,
           reason: "remove-failed",
           details: "filesystem-only git worktree is not registered in this repository; preserved for manual cleanup",
+        });
+        continue;
+      }
+      let entries: string[];
+      try {
+        entries = readdirSync(wt.path);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result.preserved.push({ ...entry, reason: "remove-failed", details: message });
+        continue;
+      }
+      if (entries.length > 0) {
+        result.preserved.push({
+          ...entry,
+          reason: "remove-failed",
+          details: "filesystem-only non-git directory is not empty; preserved for manual cleanup",
         });
         continue;
       }

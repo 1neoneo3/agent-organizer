@@ -1,7 +1,27 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Task } from "../types/runtime.js";
 import { promoteTaskReviewArtifact } from "./review-artifact.js";
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf-8" }).trim();
+}
+
+function initRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "ao-review-artifact-"));
+  git(dir, "init", "-b", "main");
+  git(dir, "config", "user.email", "ao@example.com");
+  git(dir, "config", "user.name", "Agent Organizer");
+  writeFileSync(join(dir, "README.md"), "hello\n");
+  git(dir, "add", "README.md");
+  git(dir, "commit", "-m", "init");
+  git(dir, "remote", "add", "origin", dir);
+  return dir;
+}
 
 describe("promoteTaskReviewArtifact", () => {
   const task = {
@@ -356,5 +376,72 @@ describe("promoteTaskReviewArtifact", () => {
     assert.match(result.syncError ?? "", /repository preflight failed/);
     assert.match(result.syncError ?? "", /expected_repository_url=https:\/\/github.com\/example\/repo/);
     assert.equal(calls.length, 0);
+  });
+
+  it("uses repository_urls over stale repository_url for repository guard", () => {
+    const repo = initRepo();
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const outputs = new Map<string, string>([
+      ["git rev-parse --abbrev-ref HEAD", "issue/t12-review-artifact-promotion"],
+      ["git status --short", " M changed.ts"],
+      ["git rev-parse HEAD", "abc123"],
+      ["git symbolic-ref refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+      ["gh pr list --head issue/t12-review-artifact-promotion --state all --json url --limit 1", "[]"],
+    ]);
+    const exec = (command: string, args: string[]) => {
+      calls.push({ command, args });
+      const key = `${command} ${args.join(" ")}`;
+      if (outputs.has(key)) {
+        return outputs.get(key)!;
+      }
+      if (key.startsWith("git add") || key.startsWith("git commit") || key.startsWith("git push")) {
+        return "";
+      }
+      if (command === "gh" && args[0] === "pr" && args[1] === "create") {
+        return "https://github.com/example/repo/pull/3";
+      }
+      throw new Error(`unexpected command: ${key}`);
+    };
+
+    const result = promoteTaskReviewArtifact(
+      {
+        ...task,
+        repository_url: "https://github.com/example/stale-repo",
+        repository_urls: JSON.stringify([repo]),
+      } as Task,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write",
+        codexApprovalPolicy: "on-request",
+        e2eExecution: "host",
+        e2eCommand: null,
+        gitWorkflow: "default",
+        workspaceMode: "git-worktree",
+        branchPrefix: "issue",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+      {
+        cwd: repo,
+        branchName: "issue/t12-review-artifact-promotion",
+        rootPath: repo,
+      },
+      { exec: exec as never },
+    );
+
+    assert.equal(result.syncStatus, "pr_open");
+    assert.equal(result.syncError, null);
+    assert.equal(calls.some((call) => call.command === "git" && call.args[0] === "commit"), true);
   });
 });

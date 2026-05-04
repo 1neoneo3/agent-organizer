@@ -6,6 +6,7 @@ import type { OutputLanguage } from "../config/runtime.js";
 import {
   RepositoryIdentityError,
   assertRepositoryIdentity,
+  parseExpectedRepositoryUrls,
 } from "./git-utils.js";
 
 const DEFAULT_LANGUAGE: OutputLanguage = "ja";
@@ -212,7 +213,11 @@ export function promoteTaskReviewArtifact(
 
   if (!options?.skipRepositoryGuard) {
     try {
-      assertRepositoryIdentity(task.id, workspace.cwd, task.repository_url);
+      assertRepositoryIdentity(
+        task.id,
+        workspace.cwd,
+        parseExpectedRepositoryUrls(task.repository_urls, task.repository_url),
+      );
     } catch (error) {
       result.syncError = `repository preflight failed: ${
         error instanceof RepositoryIdentityError || error instanceof Error
