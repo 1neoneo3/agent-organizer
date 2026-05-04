@@ -92,8 +92,8 @@ test.describe("Task Detail Display — Description / Implementation Plan separat
     setRefinementPlan(task.id, REFINEMENT_PLAN_MARKDOWN);
 
     await page.goto("/");
-    await page.waitForSelector("text=TOWN MAP");
-    await page.click("text=Description vs Plan Display E2E");
+    await expect(page.getByRole("link", { name: "Tasks" })).toBeVisible();
+    await page.getByText("Description vs Plan Display E2E").click();
 
     const descriptionSection = page.getByTestId("task-description-section");
     const planSection = page.getByTestId("refinement-plan-section");
@@ -143,8 +143,8 @@ test.describe("Task Detail Display — Description / Implementation Plan separat
     setRefinementPlan(task.id, REFINEMENT_PLAN_MARKDOWN);
 
     await page.goto("/");
-    await page.waitForSelector("text=TOWN MAP");
-    await page.click("text=Simultaneous Sections E2E");
+    await expect(page.getByRole("link", { name: "Tasks" })).toBeVisible();
+    await page.getByText("Simultaneous Sections E2E").click();
 
     // The Description tab is active by default. Both sections should be
     // mounted and visible at the same time on this tab — no tab switch is
