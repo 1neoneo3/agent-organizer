@@ -167,6 +167,39 @@ describe("directive controller API", () => {
     }
   });
 
+  it("rejects controller split for completed directives", async () => {
+    const { db, server, baseUrl } = await setupServer();
+    setControllerMode(db, true);
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO directives (
+         id, title, content, status, completed_at, created_at, updated_at
+       ) VALUES ('d-completed', 'Done', 'Done', 'completed', ?, ?, ?)`,
+    ).run(now, now, now);
+
+    try {
+      const response = await fetch(`${baseUrl}/directives/d-completed/controller/split`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          children: [{ task_number: "T01", title: "Implement", controller_stage: "implement" }],
+        }),
+      });
+      assert.equal(response.status, 409);
+      const body = (await response.json()) as { error: string };
+      assert.equal(body.error, "directive_completed");
+
+      const directive = db.prepare("SELECT status, completed_at FROM directives WHERE id = 'd-completed'")
+        .get() as { status: string; completed_at: number | null };
+      assert.equal(directive.status, "completed");
+      assert.equal(directive.completed_at, now);
+      const count = db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE directive_id = 'd-completed'").get() as { n: number };
+      assert.equal(count.n, 0);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("advances stage only when safety conditions are met", async () => {
     const { db, server, baseUrl } = await setupServer();
     setControllerMode(db, true);

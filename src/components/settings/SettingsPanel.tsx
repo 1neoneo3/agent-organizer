@@ -373,6 +373,26 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         </section>
 
         <section>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Controller</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Controller Mode</span>
+              <select
+                style={inputStyle}
+                value={local.enable_controller_mode ?? "false"}
+                onChange={(e) => update("enable_controller_mode", e.target.value)}
+              >
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Enables directive controller orchestration: staged implement, verify, and integrate child tasks with stage gates. Leave disabled to preserve the legacy directive/task flow.
+              </p>
+            </label>
+          </div>
+        </section>
+
+        <section>
           <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Stage-Specific Agent Assignments</h3>
           <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
             Override the default role-based agent selection for each workflow stage. When a stage has a role and/or model filter, the system chooses a random idle worker that matches the configured combination. The filter is treated as a <strong>hard constraint</strong>: if no idle worker matches at dispatch time the stage is skipped and retried on the next tick rather than falling back to a non-matching agent. Leave both fields empty to use the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.

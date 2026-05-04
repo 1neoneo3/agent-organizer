@@ -6,6 +6,10 @@ import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
 export const CONTROLLER_STAGES = ["implement", "verify", "integrate"] as const;
 export type ControllerStage = (typeof CONTROLLER_STAGES)[number];
 
+const CONTROLLER_STAGE_ORDER = new Map<ControllerStage, number>(
+  CONTROLLER_STAGES.map((stage, index) => [stage, index]),
+);
+
 export interface ControllerChildInput {
   task_number: string;
   title: string;
@@ -291,10 +295,22 @@ export function splitDirectiveIntoControllerTasks(
   }
 
   const validTaskNumbers = new Set(children.map((child) => child.task_number));
+  const childrenByTaskNumber = new Map(children.map((child) => [child.task_number, child]));
   for (const child of children) {
     const invalidDep = (child.depends_on ?? []).find((dep) => !validTaskNumbers.has(dep));
     if (invalidDep) {
       throw new Error(`${child.task_number} depends_on unknown task_number: ${invalidDep}`);
+    }
+    const futureStageDep = (child.depends_on ?? []).find((dep) => {
+      const dependency = childrenByTaskNumber.get(dep);
+      if (!dependency) return false;
+      return CONTROLLER_STAGE_ORDER.get(dependency.controller_stage)! > CONTROLLER_STAGE_ORDER.get(child.controller_stage)!;
+    });
+    if (futureStageDep) {
+      const dependency = childrenByTaskNumber.get(futureStageDep)!;
+      throw new Error(
+        `${child.task_number} depends_on later controller stage: ${futureStageDep} (${dependency.controller_stage})`,
+      );
     }
   }
 

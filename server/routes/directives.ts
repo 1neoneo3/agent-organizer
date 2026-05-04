@@ -181,6 +181,7 @@ export function createDirectivesRouter(ctx: RuntimeContext): Router {
     const directive = db.prepare("SELECT * FROM directives WHERE id = ?").get(req.params.id) as Directive | undefined;
     if (!directive) return res.status(404).json({ error: "not_found" });
     if (directive.status === "cancelled") return res.status(409).json({ error: "directive_cancelled" });
+    if (directive.status === "completed") return res.status(409).json({ error: "directive_completed" });
 
     const existingControllerTasks = db.prepare(
       "SELECT id FROM tasks WHERE directive_id = ? AND controller_stage IS NOT NULL LIMIT 1",

@@ -194,6 +194,29 @@ describe("controller orchestrator", () => {
     assert.equal(created.n, 0);
   });
 
+  it("rejects splits whose depends_on points to a later controller stage", () => {
+    const db = createDb();
+    const ws = createWs();
+    const directive = insertDirective(db);
+
+    assert.throws(
+      () =>
+        splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+          {
+            task_number: "T01",
+            title: "Implement",
+            controller_stage: "implement",
+            depends_on: ["T02"],
+          },
+          { task_number: "T02", title: "Verify", controller_stage: "verify" },
+        ]),
+      /depends_on later controller stage/,
+    );
+
+    const created = db.prepare("SELECT COUNT(*) AS n FROM tasks").get() as { n: number };
+    assert.equal(created.n, 0);
+  });
+
   it("allows split with serial implement children that share a write_scope file", () => {
     const db = createDb();
     const ws = createWs();

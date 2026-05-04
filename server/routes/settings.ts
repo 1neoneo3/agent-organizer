@@ -28,6 +28,7 @@ const SETTINGS_ENUM_VALUES: Record<string, readonly string[]> = {
   default_workspace_mode: VALID_WORKSPACE_MODES,
   auto_human_review: ["true", "false"],
   human_review_auto_approve: ["true", "false"],
+  enable_controller_mode: ["true", "false"],
 };
 
 const SETTINGS_NUMERIC_PATTERNS: Record<string, RegExp> = {
