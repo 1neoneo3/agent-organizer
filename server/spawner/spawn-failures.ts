@@ -10,7 +10,10 @@ export type SpawnFailureCode =
   | "runtime_provider_overloaded"
   | "runtime_auth_expired"
   | "runtime_oom"
-  | "runtime_playwright_mcp_failed";
+  | "runtime_playwright_mcp_failed"
+  | "workspace_not_git_repository"
+  | "workspace_project_path_not_toplevel"
+  | "workspace_repository_mismatch";
 
 export class SpawnFailureError extends Error {
   readonly code: SpawnFailureCode;

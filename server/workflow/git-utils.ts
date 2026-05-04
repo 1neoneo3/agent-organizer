@@ -1,6 +1,34 @@
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 
+export type RepositoryIdentityFailureCode =
+  | "workspace_not_git_repository"
+  | "workspace_project_path_not_toplevel"
+  | "workspace_repository_mismatch";
+
+export interface RepositoryIdentity {
+  taskId: string;
+  projectPath: string;
+  resolvedProjectPath: string | null;
+  gitToplevel: string | null;
+  resolvedGitToplevel: string | null;
+  actualRepositoryUrl: string | null;
+  expectedRepositoryUrl: string | null;
+  expectedRepositoryUrls: string[];
+}
+
+export class RepositoryIdentityError extends Error {
+  readonly code: RepositoryIdentityFailureCode;
+  readonly identity: RepositoryIdentity;
+
+  constructor(code: RepositoryIdentityFailureCode, identity: RepositoryIdentity, reason: string) {
+    super(formatRepositoryIdentityError(reason, identity));
+    this.name = "RepositoryIdentityError";
+    this.code = code;
+    this.identity = identity;
+  }
+}
+
 /**
  * Normalize a raw git remote URL to a canonical HTTPS form suitable for
  * display and clicking.
@@ -45,6 +73,179 @@ export function normalizeGitUrl(raw: string | null | undefined): string | null {
   }
 
   return null;
+}
+
+export type ExpectedRepositoryInput = string | string[] | null | undefined;
+
+function normalizeComparableGitUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const normalized = normalizeGitUrl(raw) ?? raw.trim();
+  const comparable = normalized.replace(/\/+$/, "").replace(/\.git$/, "");
+  return comparable || null;
+}
+
+export function parseExpectedRepositoryUrls(
+  repositoryUrls: string | null | undefined,
+  repositoryUrl: string | null | undefined,
+): string[] {
+  const fromArray: string[] = [];
+  if (repositoryUrls?.trim()) {
+    try {
+      const parsed = JSON.parse(repositoryUrls) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const value of parsed) {
+          if (typeof value !== "string") continue;
+          const normalized = normalizeComparableGitUrl(value);
+          if (normalized) fromArray.push(normalized);
+        }
+      }
+    } catch {
+      // Invalid legacy JSON falls back to the single repository_url field.
+    }
+  }
+  const preferred = fromArray.length > 0
+    ? fromArray
+    : [normalizeComparableGitUrl(repositoryUrl)].filter((v): v is string => Boolean(v));
+  return Array.from(new Set(preferred));
+}
+
+function normalizeExpectedRepositoryInput(input: ExpectedRepositoryInput): string[] {
+  const rawValues = Array.isArray(input) ? input : [input];
+  const normalized = rawValues
+    .map((value) => typeof value === "string" ? normalizeComparableGitUrl(value) : null)
+    .filter((value): value is string => Boolean(value));
+  return Array.from(new Set(normalized));
+}
+
+export function redactGitUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.username || url.password) {
+      url.username = "redacted";
+      url.password = "";
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return trimmed.replace(/(https?:\/\/)[^/@\s]+@/i, "$1redacted@");
+  }
+}
+
+function runGit(projectPath: string, args: string[]): string | null {
+  const result = spawnSync("git", ["-C", projectPath, ...args], {
+    timeout: 2000,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) return null;
+  const stdout = result.stdout.trim();
+  return stdout || null;
+}
+
+function formatRepositoryIdentityError(reason: string, identity: RepositoryIdentity): string {
+  return [
+    reason,
+    `task_id=${identity.taskId}`,
+    `project_path=${identity.projectPath}`,
+    `git_toplevel=${identity.gitToplevel ?? "null"}`,
+    `actual_repository_url=${redactGitUrl(identity.actualRepositoryUrl) ?? "null"}`,
+    `expected_repository_url=${identity.expectedRepositoryUrls.map((url) => redactGitUrl(url)).join(",") || "null"}`,
+  ].join("; ");
+}
+
+export function inspectRepositoryIdentity(
+  taskId: string,
+  projectPath: string,
+  expectedRepositoryUrl?: ExpectedRepositoryInput,
+): RepositoryIdentity {
+  const expectedRepositoryUrls = normalizeExpectedRepositoryInput(expectedRepositoryUrl);
+  let resolvedProjectPath: string | null = null;
+  try {
+    resolvedProjectPath = realpathSync(projectPath);
+  } catch {
+    return {
+      taskId,
+      projectPath,
+      resolvedProjectPath: null,
+      gitToplevel: null,
+      resolvedGitToplevel: null,
+      actualRepositoryUrl: null,
+      expectedRepositoryUrl: expectedRepositoryUrls[0] ?? null,
+      expectedRepositoryUrls,
+    };
+  }
+
+  const gitToplevel = runGit(resolvedProjectPath, ["rev-parse", "--show-toplevel"]);
+  let resolvedGitToplevel: string | null = null;
+  if (gitToplevel) {
+    try {
+      resolvedGitToplevel = realpathSync(gitToplevel);
+    } catch {
+      resolvedGitToplevel = null;
+    }
+  }
+
+  const rawRemote = gitToplevel
+    ? runGit(resolvedProjectPath, ["remote", "get-url", "origin"])
+    : null;
+  const actualRepositoryUrl = normalizeComparableGitUrl(rawRemote);
+  const expected = expectedRepositoryUrls.length > 0
+    ? expectedRepositoryUrls
+    : actualRepositoryUrl ? [actualRepositoryUrl] : [];
+
+  return {
+    taskId,
+    projectPath,
+    resolvedProjectPath,
+    gitToplevel,
+    resolvedGitToplevel,
+    actualRepositoryUrl,
+    expectedRepositoryUrl: expected[0] ?? null,
+    expectedRepositoryUrls: expected,
+  };
+}
+
+export function assertRepositoryIdentity(
+  taskId: string,
+  projectPath: string,
+  expectedRepositoryUrl?: ExpectedRepositoryInput,
+): RepositoryIdentity {
+  const identity = inspectRepositoryIdentity(taskId, projectPath, expectedRepositoryUrl);
+
+  if (!identity.resolvedProjectPath || !identity.gitToplevel || !identity.resolvedGitToplevel) {
+    throw new RepositoryIdentityError(
+      "workspace_not_git_repository",
+      identity,
+      "project_path is not a git repository",
+    );
+  }
+
+  if (identity.resolvedProjectPath !== identity.resolvedGitToplevel) {
+    throw new RepositoryIdentityError(
+      "workspace_project_path_not_toplevel",
+      identity,
+      "project_path must be the git toplevel",
+    );
+  }
+
+  if (!identity.actualRepositoryUrl || identity.expectedRepositoryUrls.length === 0) {
+    throw new RepositoryIdentityError(
+      "workspace_not_git_repository",
+      identity,
+      "repository_url could not be auto-detected from origin",
+    );
+  }
+
+  if (!identity.expectedRepositoryUrls.includes(identity.actualRepositoryUrl)) {
+    throw new RepositoryIdentityError(
+      "workspace_repository_mismatch",
+      identity,
+      "repository_url does not match project_path origin",
+    );
+  }
+
+  return identity;
 }
 
 /**

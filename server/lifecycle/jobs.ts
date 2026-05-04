@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
-import { handleSpawnFailure } from "../spawner/spawn-failures.js";
+import { SpawnPreflightError, handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
@@ -186,6 +186,11 @@ export function recoverInProgressOrphans(
             source: "Orphan recovery auto-respawn",
           });
           if (handled.handled) {
+            if (error instanceof SpawnPreflightError) {
+              db.prepare(
+                "UPDATE tasks SET auto_respawn_count = ? WHERE id = ?",
+              ).run(task.auto_respawn_count, task.id);
+            }
             return;
           }
           const msg = error instanceof Error ? error.message : String(error);

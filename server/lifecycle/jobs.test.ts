@@ -8,7 +8,7 @@ import {
   recoverInProgressOrphans,
   recoverStuckAutoStages,
 } from "./jobs.js";
-import { createHookFailureFromCommands } from "../spawner/spawn-failures.js";
+import { SpawnPreflightError, createHookFailureFromCommands } from "../spawner/spawn-failures.js";
 
 // ---- Test doubles ---------------------------------------------------------
 
@@ -490,6 +490,39 @@ describe("recoverInProgressOrphans", () => {
     const finishSpawn = resolveSpawn as () => void;
     finishSpawn();
     await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it("rolls back auto_respawn_count when auto-respawn fails with non-retryable workspace preflight", async () => {
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const fakeSpawn = (() => Promise.reject(
+      new SpawnPreflightError(
+        "workspace_repository_mismatch",
+        "repository_url does not match project_path origin; task_id=t1; project_path=/repo; git_toplevel=/repo; actual_repository_url=https://github.com/acme/wrong; expected_repository_url=https://github.com/acme/right",
+        false,
+      ),
+    )) as never;
+
+    recoverInProgressOrphans(db, ws as never, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const row = db.prepare("SELECT status, auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
+      status: string;
+      auto_respawn_count: number;
+    };
+    assert.equal(row.status, "human_review");
+    assert.equal(row.auto_respawn_count, 0);
+
+    const log = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = 't1' AND message LIKE '%expected_repository_url=%' ORDER BY id DESC LIMIT 1",
+    ).get() as { message: string } | undefined;
+    assert.ok(log?.message);
   });
 
   it("allows a new auto-respawn only after the previous in-flight respawn settles", async () => {

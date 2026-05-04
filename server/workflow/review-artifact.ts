@@ -3,6 +3,11 @@ import type { Task } from "../types/runtime.js";
 import type { ProjectWorkflow } from "./loader.js";
 import type { TaskWorkspace } from "./workspace-manager.js";
 import type { OutputLanguage } from "../config/runtime.js";
+import {
+  RepositoryIdentityError,
+  assertRepositoryIdentity,
+  parseExpectedRepositoryUrls,
+} from "./git-utils.js";
 
 const DEFAULT_LANGUAGE: OutputLanguage = "ja";
 
@@ -40,6 +45,7 @@ interface PromoteOptions {
    * behavior.
    */
   language?: OutputLanguage;
+  skipRepositoryGuard?: boolean;
 }
 
 function runCommand(
@@ -203,6 +209,23 @@ export function promoteTaskReviewArtifact(
       ...result,
       syncStatus: "not_applicable",
     };
+  }
+
+  if (!options?.skipRepositoryGuard) {
+    try {
+      assertRepositoryIdentity(
+        task.id,
+        workspace.cwd,
+        parseExpectedRepositoryUrls(task.repository_urls, task.repository_url),
+      );
+    } catch (error) {
+      result.syncError = `repository preflight failed: ${
+        error instanceof RepositoryIdentityError || error instanceof Error
+          ? error.message
+          : String(error)
+      }`;
+      return result;
+    }
   }
 
   try {

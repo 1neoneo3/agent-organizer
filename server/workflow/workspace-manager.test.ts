@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -22,6 +22,7 @@ function initRepo(): string {
   writeFileSync(join(dir, ".gitignore"), ".ao-worktrees/\n");
   git(dir, "add", "README.md", ".gitignore");
   git(dir, "commit", "-m", "init");
+  git(dir, "remote", "add", "origin", dir);
   return dir;
 }
 
@@ -102,6 +103,130 @@ describe("prepareTaskWorkspace", () => {
 
     assert.equal(workspace.rootPath, repo);
     assert.match(workspace.branchName ?? "", /^feat\/t42-add-workflow-support$/);
+    assert.equal(existsSync(workspace.cwd), true);
+    assert.equal(git(workspace.cwd, "rev-parse", "--abbrev-ref", "HEAD"), workspace.branchName);
+  });
+
+  it("rejects a project_path that is not the git toplevel before creating a worktree", () => {
+    const repo = initRepo();
+    const child = join(repo, "workspace");
+    mkdirSync(child);
+
+    assert.throws(
+      () => prepareTaskWorkspace(
+        {
+          id: "task-child-path",
+          title: "Child path",
+          task_number: "#421",
+          project_path: child,
+        } as never,
+        {
+          body: "",
+          codexSandboxMode: "workspace-write" as const,
+          codexApprovalPolicy: "on-request" as const,
+          e2eExecution: "host" as const,
+          e2eCommand: null,
+          gitWorkflow: "default" as const,
+          workspaceMode: "git-worktree" as const,
+          branchPrefix: "issue",
+          beforeRun: [],
+          afterRun: [],
+          includeTask: true,
+          includeReview: true,
+          includeDecompose: true,
+          enableRefinement: null,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
+        },
+      ),
+      /project_path must be the git toplevel; task_id=task-child-path/,
+    );
+    assert.equal(existsSync(join(repo, ".ao-worktrees", "task-child-path")), false);
+  });
+
+  it("rejects tasks whose expected repository_url does not match project_path origin", () => {
+    const repo = initRepo();
+
+    assert.throws(
+      () => prepareTaskWorkspace(
+        {
+          id: "task-mismatch",
+          title: "Remote mismatch",
+          task_number: "#422",
+          project_path: repo,
+          repository_url: "https://github.com/example/other-repo",
+        } as never,
+        {
+          body: "",
+          codexSandboxMode: "workspace-write" as const,
+          codexApprovalPolicy: "on-request" as const,
+          e2eExecution: "host" as const,
+          e2eCommand: null,
+          gitWorkflow: "default" as const,
+          workspaceMode: "git-worktree" as const,
+          branchPrefix: "issue",
+          beforeRun: [],
+          afterRun: [],
+          includeTask: true,
+          includeReview: true,
+          includeDecompose: true,
+          enableRefinement: null,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
+        },
+      ),
+      /repository_url does not match project_path origin; task_id=task-mismatch/,
+    );
+  });
+
+  it("accepts repository_urls over a stale repository_url", () => {
+    const repo = initRepo();
+
+    const workspace = prepareTaskWorkspace(
+      {
+        id: "task-repository-urls",
+        title: "Use repository urls",
+        task_number: "#423",
+        project_path: repo,
+        repository_url: "https://github.com/example/stale-repo",
+        repository_urls: JSON.stringify([repo]),
+      } as never,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write" as const,
+        codexApprovalPolicy: "on-request" as const,
+        e2eExecution: "host" as const,
+        e2eCommand: null,
+        gitWorkflow: "default" as const,
+        workspaceMode: "git-worktree" as const,
+        branchPrefix: "issue",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+    );
+
+    assert.equal(workspace.rootPath, repo);
     assert.equal(existsSync(workspace.cwd), true);
     assert.equal(git(workspace.cwd, "rev-parse", "--abbrev-ref", "HEAD"), workspace.branchName);
   });
@@ -247,6 +372,50 @@ describe("prepareTaskWorkspace", () => {
     );
     assert.equal(readFileSync(join(preparedAgain.cwd, "WIP.md"), "utf-8"), "worktree wip\n");
     assert.doesNotMatch(git(repo, "stash", "list"), /AO worktree handoff: task-existing-worktree/);
+  });
+
+  it("rejects an existing task worktree that belongs to a different repository", () => {
+    const expectedRepo = initRepo();
+    const foreignRepo = initRepo();
+    const taskId = "task-foreign-worktree";
+    const foreignPath = join(expectedRepo, ".ao-worktrees", taskId);
+    mkdirSync(join(expectedRepo, ".ao-worktrees"), { recursive: true });
+    git(foreignRepo, "worktree", "add", "-b", "foreign/task", foreignPath, "main");
+
+    assert.throws(
+      () => prepareTaskWorkspace(
+        {
+          id: taskId,
+          title: "Foreign worktree",
+          task_number: "#444",
+          project_path: expectedRepo,
+        } as never,
+        {
+          body: "",
+          codexSandboxMode: "workspace-write" as const,
+          codexApprovalPolicy: "on-request" as const,
+          e2eExecution: "host" as const,
+          e2eCommand: null,
+          gitWorkflow: "default" as const,
+          workspaceMode: "git-worktree" as const,
+          branchPrefix: "issue",
+          beforeRun: [],
+          afterRun: [],
+          includeTask: true,
+          includeReview: true,
+          includeDecompose: true,
+          enableRefinement: null,
+          enableTestGeneration: false,
+          enableHumanReview: false,
+          projectType: "generic" as const,
+          checkTypesCmd: null,
+          checkLintCmd: null,
+          checkTestsCmd: null,
+          checkE2eCmd: null,
+        },
+      ),
+      /repository_url does not match project_path origin; task_id=task-foreign-worktree/,
+    );
   });
 
   it("uses a configured conventional branch prefix when provided", () => {
@@ -566,16 +735,12 @@ describe("prepareTaskWorkspace — origin/main enforcement", () => {
     assert.equal(worktreeHead, upstreamHead);
   });
 
-  it("falls back to local main when no origin remote is configured", () => {
-    // initRepo produces a repo with no remote — simulating minimal test fixtures.
+  it("rejects git-worktree mode when origin remote is missing", () => {
     const repo = initRepo();
-    const localMainHead = git(repo, "rev-parse", "main");
-    git(repo, "checkout", "-b", "feature/local-only-work");
-    writeFileSync(join(repo, "LOCAL_ONLY.md"), "local feature branch\n");
-    git(repo, "add", "LOCAL_ONLY.md");
-    git(repo, "commit", "-m", "local feature branch work");
+    git(repo, "remote", "remove", "origin");
 
-    const workspace = prepareTaskWorkspace(
+    assert.throws(
+      () => prepareTaskWorkspace(
       {
         id: "task-no-origin",
         title: "No origin",
@@ -605,11 +770,9 @@ describe("prepareTaskWorkspace — origin/main enforcement", () => {
         checkTestsCmd: null,
         checkE2eCmd: null,
       } as never,
+      ),
+      /repository_url could not be auto-detected from origin/,
     );
-
-    const worktreeHead = git(workspace.cwd, "rev-parse", "HEAD");
-    assert.equal(worktreeHead, localMainHead);
-    assert.equal(existsSync(join(workspace.cwd, "LOCAL_ONLY.md")), false);
   });
 });
 
@@ -920,6 +1083,58 @@ describe("reconcileAoWorktrees", () => {
     assert.equal(result.removed.length, 0);
     assert.equal(result.kept.length, 0);
     assert.equal(result.preserved.length, 0);
+  });
+
+  it("removes empty filesystem-only .ao-worktrees directories that git worktree list misses", () => {
+    const repo = initRepo();
+    const db = createDb();
+    const orphanId = randomUUID();
+    const orphanPath = join(repo, ".ao-worktrees", orphanId);
+    mkdirSync(orphanPath, { recursive: true });
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+
+    assert.equal(result.scanned, 1);
+    assert.equal(result.removed.length, 1);
+    assert.equal(result.removed[0]?.taskId, orphanId);
+    assert.equal(existsSync(orphanPath), false);
+  });
+
+  it("preserves non-empty filesystem-only non-git directories for manual cleanup", () => {
+    const repo = initRepo();
+    const db = createDb();
+    const orphanId = randomUUID();
+    const orphanPath = join(repo, ".ao-worktrees", orphanId);
+    mkdirSync(orphanPath, { recursive: true });
+    writeFileSync(join(orphanPath, "NOTE.md"), "stale directory\n");
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+
+    assert.equal(result.scanned, 1);
+    assert.equal(result.removed.length, 0);
+    assert.equal(result.preserved.length, 1);
+    assert.equal(result.preserved[0]?.taskId, orphanId);
+    assert.match(result.preserved[0]?.details ?? "", /not empty/);
+    assert.equal(existsSync(orphanPath), true);
+  });
+
+  it("preserves filesystem-only git worktrees for manual cleanup", () => {
+    const repo = initRepo();
+    const foreignRepo = initRepo();
+    const db = createDb();
+    const foreignId = randomUUID();
+    const foreignPath = join(repo, ".ao-worktrees", foreignId);
+    mkdirSync(join(repo, ".ao-worktrees"), { recursive: true });
+    git(foreignRepo, "worktree", "add", "-b", `foreign/${foreignId}`, foreignPath, "main");
+
+    const result = reconcileAoWorktrees(db, { cwd: repo });
+
+    assert.equal(result.scanned, 1);
+    assert.equal(result.removed.length, 0);
+    assert.equal(result.preserved.length, 1);
+    assert.equal(result.preserved[0]?.taskId, foreignId);
+    assert.match(result.preserved[0]?.details ?? "", /not registered in this repository/);
+    assert.equal(existsSync(foreignPath), true);
   });
 
   it("returns an empty result when cwd is not a git repository", () => {
