@@ -1,10 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { Task } from "../types/runtime.js";
 import { loadProjectWorkflow, type ProjectWorkflow } from "./loader.js";
 import { SETTINGS_DEFAULTS, isWorkspaceMode, type WorkspaceMode } from "../config/runtime.js";
+import { SpawnPreflightError } from "../spawner/spawn-failures.js";
+import {
+  RepositoryIdentityError,
+  assertRepositoryIdentity,
+} from "./git-utils.js";
 
 export interface TaskWorkspace {
   cwd: string;
@@ -27,6 +32,20 @@ function runGit(cwd: string, args: string[]): string {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
+}
+
+function assertTaskRepositoryIdentity(
+  task: Task,
+  projectPath: string,
+): ReturnType<typeof assertRepositoryIdentity> {
+  try {
+    return assertRepositoryIdentity(task.id, projectPath, task.repository_url);
+  } catch (error) {
+    if (error instanceof RepositoryIdentityError) {
+      throw new SpawnPreflightError(error.code, error.message, false);
+    }
+    throw error;
+  }
 }
 
 interface StoredStash {
@@ -293,7 +312,8 @@ export function prepareTaskWorkspace(
     };
   }
 
-  const repoRoot = runGit(projectPath, ["rev-parse", "--show-toplevel"]);
+  const sourceIdentity = assertTaskRepositoryIdentity(task, projectPath);
+  const repoRoot = sourceIdentity.gitToplevel!;
   const branchPrefix = workflow?.branchPrefix ?? "ao";
   const branchName = buildBranchName(task, branchPrefix);
   const worktreeRoot = join(repoRoot, ".ao-worktrees");
@@ -317,8 +337,20 @@ export function prepareTaskWorkspace(
         throw error;
       }
     }
+    assertTaskRepositoryIdentity(
+      { ...task, repository_url: sourceIdentity.expectedRepositoryUrl } as Task,
+      worktreePath,
+    );
   } else {
+    assertTaskRepositoryIdentity(
+      { ...task, repository_url: sourceIdentity.expectedRepositoryUrl } as Task,
+      worktreePath,
+    );
     ensureWorktreeOnBranch(worktreePath, branchName, task.id);
+    assertTaskRepositoryIdentity(
+      { ...task, repository_url: sourceIdentity.expectedRepositoryUrl } as Task,
+      worktreePath,
+    );
   }
 
   return {
@@ -471,6 +503,7 @@ export interface ReconcileWorktreesOptions {
 interface RawWorktreeEntry {
   path: string;
   branchRef: string | null;
+  source: "git" | "filesystem";
 }
 
 function listGitWorktrees(repoRoot: string): RawWorktreeEntry[] {
@@ -484,7 +517,7 @@ function listGitWorktrees(repoRoot: string): RawWorktreeEntry[] {
   let current: { path?: string; branchRef?: string | null } = {};
   const flush = () => {
     if (current.path) {
-      entries.push({ path: current.path, branchRef: current.branchRef ?? null });
+      entries.push({ path: current.path, branchRef: current.branchRef ?? null, source: "git" });
     }
     current = {};
   };
@@ -499,6 +532,27 @@ function listGitWorktrees(repoRoot: string): RawWorktreeEntry[] {
     }
   }
   flush();
+  return entries;
+}
+
+function listFilesystemAoWorktrees(repoRoot: string, knownPaths: Set<string>): RawWorktreeEntry[] {
+  const root = join(repoRoot, ".ao-worktrees");
+  if (!existsSync(root)) return [];
+
+  const entries: RawWorktreeEntry[] = [];
+  for (const name of readdirSync(root)) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) {
+      continue;
+    }
+    const worktreePath = join(root, name);
+    if (knownPaths.has(worktreePath)) continue;
+    try {
+      if (!statSync(worktreePath).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    entries.push({ path: worktreePath, branchRef: null, source: "filesystem" });
+  }
   return entries;
 }
 
@@ -567,7 +621,14 @@ export function reconcileAoWorktrees(
 
   const taskLookup = db.prepare("SELECT id, status FROM tasks WHERE id = ?");
 
-  for (const wt of listGitWorktrees(repoRoot)) {
+  const gitWorktrees = listGitWorktrees(repoRoot);
+  const knownWorktreePaths = new Set(gitWorktrees.map((wt) => wt.path));
+  const allWorktrees = [
+    ...gitWorktrees,
+    ...listFilesystemAoWorktrees(repoRoot, knownWorktreePaths),
+  ];
+
+  for (const wt of allWorktrees) {
     const taskId = extractAoTaskId(wt.path);
     if (!taskId) continue;
     result.scanned += 1;
@@ -596,12 +657,30 @@ export function reconcileAoWorktrees(
       continue;
     }
 
-    try {
-      runGit(repoRoot, ["worktree", "remove", "--force", wt.path]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      result.preserved.push({ ...entry, reason: "remove-failed", details: message });
-      continue;
+    if (wt.source === "filesystem") {
+      if (existsSync(join(wt.path, ".git"))) {
+        result.preserved.push({
+          ...entry,
+          reason: "remove-failed",
+          details: "filesystem-only git worktree is not registered in this repository; preserved for manual cleanup",
+        });
+        continue;
+      }
+      try {
+        rmSync(wt.path, { recursive: true, force: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result.preserved.push({ ...entry, reason: "remove-failed", details: message });
+        continue;
+      }
+    } else {
+      try {
+        runGit(repoRoot, ["worktree", "remove", "--force", wt.path]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result.preserved.push({ ...entry, reason: "remove-failed", details: message });
+        continue;
+      }
     }
 
     if (branchName) {

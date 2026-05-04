@@ -106,6 +106,22 @@ function resolveRepositoryUrl(
   return null;
 }
 
+function logRepositoryAutoDetectWarning(
+  db: RuntimeContext["db"],
+  taskId: string,
+  projectPath: string | null | undefined,
+  repositoryUrl: string | null,
+): void {
+  if (!projectPath || repositoryUrl) return;
+  db.prepare(
+    "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+  ).run(
+    taskId,
+    `[Repository Warning] repository_url could not be auto-detected for project_path=${projectPath}. ` +
+      "git-worktree execution will require project_path to be the git toplevel with origin configured, or an explicit repository_url.",
+  );
+}
+
 function resolveTaskOutputLanguage(
   db: RuntimeContext["db"],
   taskId: string,
@@ -430,6 +446,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       `INSERT INTO tasks (id, title, description, assigned_agent_id, project_path, priority, task_size, task_number, repository_url, repository_urls, settings_overrides, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(id, title, description ?? null, assigned_agent_id ?? null, project_path ?? null, priority, task_size, taskNumber, primaryRepoUrl, urlsJson, overridesJson, now, now);
+    logRepositoryAutoDetectWarning(db, id, project_path ?? null, primaryRepoUrl);
 
     let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
     ws.broadcast("task_update", buildTaskSummaryUpdate(task));
@@ -501,6 +518,10 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     ) {
       updates.repository_url = updates.project_path ? detectRepositoryUrl(updates.project_path) : null;
     }
+    const shouldWarnRepositoryAutoDetect =
+      updates.project_path !== undefined &&
+      updates.project_path !== existingTask.project_path &&
+      updates.repository_url === null;
 
     const now = Date.now();
     const fields: string[] = [];
@@ -547,6 +568,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).run(...(values as Array<string | number | null>));
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as unknown as Task;
+    if (shouldWarnRepositoryAutoDetect) {
+      logRepositoryAutoDetectWarning(db, task.id, task.project_path, task.repository_url);
+    }
     if (task.directive_id && task.controller_stage) {
       reconcileControllerDirective(ctx, task.directive_id);
     }

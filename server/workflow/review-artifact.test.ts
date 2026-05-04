@@ -99,7 +99,7 @@ describe("promoteTaskReviewArtifact", () => {
         branchName: "issue/t12-review-artifact-promotion",
         rootPath: "/tmp/repo",
       },
-      { exec: exec as never },
+      { exec: exec as never, skipRepositoryGuard: true },
     );
 
     assert.equal(result.branchName, "issue/t12-review-artifact-promotion");
@@ -166,7 +166,7 @@ describe("promoteTaskReviewArtifact", () => {
         branchName: "issue/t12-en-test",
         rootPath: "/tmp/repo",
       },
-      { exec: exec as never, language: "en" },
+      { exec: exec as never, language: "en", skipRepositoryGuard: true },
     );
 
     assert.equal(result.syncStatus, "pr_open");
@@ -235,7 +235,7 @@ describe("promoteTaskReviewArtifact", () => {
         branchName: "issue/t12-ja-test",
         rootPath: "/tmp/repo",
       },
-      { exec: exec as never },
+      { exec: exec as never, skipRepositoryGuard: true },
     );
 
     assert.equal(result.syncStatus, "pr_open");
@@ -301,10 +301,60 @@ describe("promoteTaskReviewArtifact", () => {
         exec: exec as never,
         executedCommands: ["npm run build", "npm test"],
         language: "en",
+        skipRepositoryGuard: true,
       },
     );
 
     assert.match(capturedPrBody, /\[x\] `npm run build`/);
     assert.match(capturedPrBody, /\[x\] `npm test`/);
+  });
+
+  it("stops before commit, push, or PR creation when repository guard fails", () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const exec = (command: string, args: string[]) => {
+      calls.push({ command, args });
+      throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
+    };
+
+    const result = promoteTaskReviewArtifact(
+      {
+        ...task,
+        repository_url: "https://github.com/example/repo",
+      } as Task,
+      {
+        body: "",
+        codexSandboxMode: "workspace-write",
+        codexApprovalPolicy: "on-request",
+        e2eExecution: "host",
+        e2eCommand: null,
+        gitWorkflow: "default",
+        workspaceMode: "git-worktree",
+        branchPrefix: "issue",
+        beforeRun: [],
+        afterRun: [],
+        includeTask: true,
+        includeReview: true,
+        includeDecompose: true,
+        enableRefinement: null,
+        enableTestGeneration: false,
+        enableHumanReview: false,
+        projectType: "generic" as const,
+        checkTypesCmd: null,
+        checkLintCmd: null,
+        checkTestsCmd: null,
+        checkE2eCmd: null,
+      },
+      {
+        cwd: "/tmp/not-a-review-worktree",
+        branchName: "issue/t12-review-artifact-promotion",
+        rootPath: "/tmp/repo",
+      },
+      { exec: exec as never },
+    );
+
+    assert.equal(result.syncStatus, "pending");
+    assert.match(result.syncError ?? "", /repository preflight failed/);
+    assert.match(result.syncError ?? "", /expected_repository_url=https:\/\/github.com\/example\/repo/);
+    assert.equal(calls.length, 0);
   });
 });

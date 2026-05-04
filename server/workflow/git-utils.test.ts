@@ -4,7 +4,13 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { detectRepositoryUrl, normalizeGitUrl } from "./git-utils.js";
+import {
+  RepositoryIdentityError,
+  assertRepositoryIdentity,
+  detectRepositoryUrl,
+  normalizeGitUrl,
+  redactGitUrl,
+} from "./git-utils.js";
 
 describe("normalizeGitUrl", () => {
   it("returns null for empty / nullish input", () => {
@@ -153,5 +159,51 @@ describe("detectRepositoryUrl", () => {
 
   it("returns null for empty input", () => {
     assert.equal(detectRepositoryUrl(""), null);
+  });
+});
+
+describe("assertRepositoryIdentity", () => {
+  function initGitRepo(dir: string, origin: string): void {
+    spawnSync("git", ["-C", dir, "init", "-q"], { encoding: "utf8" });
+    spawnSync("git", ["-C", dir, "remote", "add", "origin", origin], {
+      encoding: "utf8",
+    });
+  }
+
+  it("accepts a git toplevel whose origin matches the expected repository", () => {
+    const root = mkdtempSync(join(tmpdir(), "ao-git-identity-"));
+    initGitRepo(root, "git@github.com:acme/widget.git");
+
+    const identity = assertRepositoryIdentity("task-identity", root, "https://github.com/acme/widget");
+
+    assert.equal(identity.actualRepositoryUrl, "https://github.com/acme/widget");
+    assert.equal(identity.expectedRepositoryUrl, "https://github.com/acme/widget");
+  });
+
+  it("rejects non-toplevel paths with task and repository details", () => {
+    const root = mkdtempSync(join(tmpdir(), "ao-git-identity-parent-"));
+    initGitRepo(root, "git@github.com:acme/parent.git");
+    const child = join(root, "workspace");
+    mkdirSync(child);
+
+    assert.throws(
+      () => assertRepositoryIdentity("task-child", child, "https://github.com/acme/parent"),
+      (error) => {
+        assert.ok(error instanceof RepositoryIdentityError);
+        assert.equal(error.code, "workspace_project_path_not_toplevel");
+        assert.match(error.message, /task_id=task-child/);
+        assert.match(error.message, /project_path=/);
+        assert.match(error.message, /git_toplevel=/);
+        assert.match(error.message, /expected_repository_url=https:\/\/github.com\/acme\/parent/);
+        return true;
+      },
+    );
+  });
+
+  it("redacts credentials in diagnostic URLs", () => {
+    assert.equal(
+      redactGitUrl("https://token@example.com/acme/repo.git"),
+      "https://redacted@example.com/acme/repo.git",
+    );
   });
 });

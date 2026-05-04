@@ -82,4 +82,31 @@ describe("PUT /tasks/:id — title validation regressions", () => {
       await closeServer(server);
     }
   });
+
+  it("logs a repository warning when updated project_path cannot auto-detect repository_url", async () => {
+    const { db, server, baseUrl } = await setupServer();
+    const now = Date.now();
+    const projectPath = mkdtempSync(join(tmpdir(), "ao-update-non-git-"));
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, task_number, created_at, updated_at)
+       VALUES (?, ?, 'inbox', 'small', ?, ?, ?)`,
+    ).run("task-update-warning", "Original title", "#11", now, now);
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/task-update-warning`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project_path: projectPath }),
+      });
+
+      assert.equal(response.status, 200);
+      const log = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '[Repository Warning]%' ORDER BY id DESC LIMIT 1",
+      ).get("task-update-warning") as { message: string } | undefined;
+      assert.match(log?.message ?? "", /repository_url could not be auto-detected/);
+      assert.match(log?.message ?? "", new RegExp(projectPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    } finally {
+      await closeServer(server);
+    }
+  });
 });
