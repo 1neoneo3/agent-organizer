@@ -198,6 +198,24 @@ describe("extractPlannedFilesFromPlan", () => {
     assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
   });
 
+  it("merges bullet, table, and JSON array paths from the same section", () => {
+    const plan = [
+      "## planned_files",
+      "",
+      "- `src/a.ts` — bullet",
+      "| `src/b.ts` | table |",
+      "[",
+      '  "./src/a.ts",',
+      '  "src/c.ts"',
+      "]",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+    ]);
+  });
+
   it("accepts a parenthesized bilingual annotation after the heading", () => {
     // Refinement plans authored by JA agents commonly include a bilingual
     // hint, e.g. `## 変更対象ファイル (Files to Modify)`. The strict

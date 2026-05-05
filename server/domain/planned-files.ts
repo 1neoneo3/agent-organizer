@@ -96,12 +96,16 @@ function normalizePathList(entries: unknown[]): string[] {
   const seen = new Set<string>();
   for (const entry of entries) {
     if (typeof entry !== "string") continue;
-    const norm = normalizePath(entry);
-    if (norm.length === 0 || seen.has(norm)) continue;
-    seen.add(norm);
-    out.push(norm);
+    pushNormalizedPath(out, seen, entry);
   }
   return out;
+}
+
+function pushNormalizedPath(out: string[], seen: Set<string>, raw: string): void {
+  const norm = normalizePath(raw);
+  if (norm.length === 0 || seen.has(norm)) return;
+  seen.add(norm);
+  out.push(norm);
 }
 
 function parsePathJsonArray(raw: string): string[] {
@@ -160,14 +164,12 @@ export function extractPlannedFilesFromPlan(plan: string | null | undefined): st
   for (const line of sectionBody.split("\n")) {
     const m = BULLET_PATH_RE.exec(line) ?? TABLE_FIRST_CELL_PATH_RE.exec(line);
     if (!m) continue;
-    const norm = normalizePath(m[1]);
-    if (norm.length === 0) continue;
-    if (seen.has(norm)) continue;
-    seen.add(norm);
-    out.push(norm);
+    pushNormalizedPath(out, seen, m[1]);
   }
-  if (out.length > 0) return out;
-  return extractJsonArrayPaths(sectionBody);
+  for (const path of extractJsonArrayPaths(sectionBody)) {
+    pushNormalizedPath(out, seen, path);
+  }
+  return out;
 }
 
 /**
