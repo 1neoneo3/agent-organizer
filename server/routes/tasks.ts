@@ -9,6 +9,7 @@ import { recordReadApi } from "../perf/metrics.js";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
 import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
 import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
+import { isGuardedStage } from "../spawner/stage-agent-resolver.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
 import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
@@ -244,6 +245,45 @@ export function resolveImplementerAgentForExecution(
     return { ok: false, error: "no_implementer_available" };
   }
   return { ok: true, agent: fallbackAgent, source: "fallback" };
+}
+
+type ResumeAgentResolutionResult =
+  | { ok: true; agent: Agent; previousStatus: string }
+  | { ok: false; error: "agent_not_found" | "agent_busy" | "no_runner_available" };
+
+function isRunnableStageRunner(agent: Agent): boolean {
+  return agent.status === "idle" && agent.agent_type === "worker" && agent.current_task_id === null;
+}
+
+function resolveAgentForResume(
+  db: RuntimeContext["db"],
+  task: Task,
+  previousStatus: string,
+  preferredRunnerAgentId?: string | null,
+): ResumeAgentResolutionResult {
+  if (!isGuardedStage(previousStatus)) {
+    const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined);
+    return resolution.ok
+      ? { ok: true, agent: resolution.agent, previousStatus }
+      : { ok: false, error: resolution.error === "agent_busy" ? "agent_busy" : "no_runner_available" };
+  }
+
+  const runnerId = preferredRunnerAgentId ?? task.assigned_agent_id;
+  if (!runnerId) {
+    return { ok: false, error: "no_runner_available" };
+  }
+
+  const runner = db.prepare("SELECT * FROM agents WHERE id = ?").get(runnerId) as Agent | undefined;
+  if (!runner) {
+    return { ok: false, error: "agent_not_found" };
+  }
+  if (runner.status === "working") {
+    return { ok: false, error: "agent_busy" };
+  }
+  if (!isRunnableStageRunner(runner)) {
+    return { ok: false, error: "no_runner_available" };
+  }
+  return { ok: true, agent: runner, previousStatus };
 }
 
 function sendMeasuredJson(
@@ -1286,6 +1326,12 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         }
         return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
       }
+    } else if (isGuardedStage(previousStatus)) {
+      const resolution = resolveAgentForResume(db, task, previousStatus);
+      if (!resolution.ok) {
+        return res.json({ sent: true, restarted: false, feedback_path: feedbackPath, resolution: resolution.error });
+      }
+      agent = resolution.agent;
     } else {
       const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined);
       if (!resolution.ok) {
@@ -1309,6 +1355,11 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         ).run(task.id, `[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.`);
         db.prepare("UPDATE tasks SET status = 'refinement', updated_at = ? WHERE id = ?").run(now, task.id);
       }
+    } else if (isGuardedStage(previousStatus)) {
+      db.prepare(
+        "UPDATE tasks SET completed_at = NULL, auto_respawn_count = 0, updated_at = ? WHERE id = ?",
+      ).run(now, task.id);
+      ws.broadcast("task_update", { id: task.id, status: previousStatus, assigned_agent_id: task.assigned_agent_id });
     } else {
       // Manual feedback-rework is an explicit user intent — reset the
       // auto-respawn counter so a mid-rework crash gets a full retry budget.
@@ -1384,20 +1435,31 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     ws.broadcast("interactive_prompt_resolved", { task_id: task.id });
     ws.broadcast("cli_output", [{ task_id: task.id, kind: "system", message: `User responded to ${promptType}. Restarting agent...` }], { taskId: task.id });
 
-    // Find agent and respawn with --resume
-    const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined);
+    const resumeStage = pending.spawnStage ?? task.status;
+    const resolution = resolveAgentForResume(db, task, resumeStage, pending.runnerAgentId);
     if (!resolution.ok) {
       return res.json({ sent: true, restarted: false, resolution: resolution.error });
     }
 
     const agent = resolution.agent;
 
-    // Ensure task is in_progress
-    db.prepare("UPDATE tasks SET status = 'in_progress', assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(agent.id, now, task.id);
-    ws.broadcast("task_update", { id: task.id, status: "in_progress", assigned_agent_id: agent.id });
+    if (isGuardedStage(resumeStage)) {
+      db.prepare("UPDATE tasks SET completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
+      ws.broadcast("task_update", { id: task.id, status: task.status, assigned_agent_id: task.assigned_agent_id });
+    } else {
+      // Ensure task is in_progress for normal implementer resumes.
+      db.prepare("UPDATE tasks SET status = 'in_progress', assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(agent.id, now, task.id);
+      ws.broadcast("task_update", { id: task.id, status: "in_progress", assigned_agent_id: agent.id });
+    }
 
     const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    taskSpawner(db, ws, agent, freshTask, { continuePrompt, previousStatus: "in_progress", finalizeOnComplete: true }).catch((err) => {
+    taskSpawner(db, ws, agent, freshTask, {
+      continuePrompt,
+      previousStatus: resolution.previousStatus,
+      finalizeOnComplete: true,
+      reviewerRole: pending.reviewerRole,
+      parallelTester: pending.parallelTester,
+    }).catch((err) => {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
         source: "Interactive prompt resume",
       });

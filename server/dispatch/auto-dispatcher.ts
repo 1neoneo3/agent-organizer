@@ -1,9 +1,18 @@
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { AUTO_DISPATCH_INTERVAL_MS } from "../config/runtime.js";
-import { spawnAgent } from "../spawner/process-manager.js";
+import {
+  getActiveProcesses,
+  getPendingSpawns,
+  getReviewerSession,
+  spawnAgent,
+} from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import { resolveStageAgentSelection } from "../spawner/stage-agent-resolver.js";
+import { triggerAutoHumanReview } from "../spawner/auto-human-reviewer.js";
+import { triggerAutoQa } from "../spawner/auto-qa.js";
+import { triggerAutoReview } from "../spawner/auto-reviewer.js";
+import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
 import { writeDispatchLog } from "../tasks/dispatch-logs.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
@@ -14,6 +23,7 @@ import {
   formatAllBlockers,
   isBlocked,
 } from "../domain/task-dependencies.js";
+import { getTaskSetting } from "../domain/task-settings.js";
 import { isControllerModeEnabled, isControllerTaskStartable, reconcileControllerDirective } from "../controller/orchestrator.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
@@ -26,6 +36,13 @@ export interface AutoDispatchSummary {
 
 interface DispatchOptions {
   startTask?: (task: Task, agent: Agent) => void;
+}
+
+export interface AutoStageRetryTriggers {
+  triggerTestGen?: (task: Task) => void | Promise<void>;
+  triggerQa?: (task: Task) => void | Promise<void>;
+  triggerReview?: (task: Task) => void | Promise<void>;
+  triggerHumanReview?: (task: Task) => void | Promise<void>;
 }
 
 const ROLE_HINTS: Record<string, string[]> = {
@@ -57,6 +74,18 @@ function getInboxTasks(db: DatabaseSync): Task[] {
   return db.prepare(
     "SELECT * FROM tasks WHERE status = 'inbox' ORDER BY priority DESC, created_at ASC"
   ).all() as unknown as Task[];
+}
+
+function getRetryableAutoStageTasks(db: DatabaseSync): Task[] {
+  return db.prepare(
+    `SELECT * FROM tasks
+     WHERE status IN ('test_generation', 'qa_testing', 'pr_review', 'human_review')
+     ORDER BY priority DESC, updated_at ASC`,
+  ).all() as unknown as Task[];
+}
+
+function isAutoHumanReviewEnabled(db: DatabaseSync, taskId: string): boolean {
+  return getTaskSetting(db, "auto_human_review", taskId) === "true";
 }
 
 function getIdleWorkers(db: DatabaseSync): Agent[] {
@@ -270,6 +299,76 @@ function createDefaultTaskStarter(
   };
 }
 
+function runAutoStageTrigger(
+  promiseOrVoid: void | Promise<void>,
+  task: Task,
+  source: string,
+): void {
+  if (promiseOrVoid && typeof (promiseOrVoid as Promise<void>).catch === "function") {
+    (promiseOrVoid as Promise<void>).catch((error) => {
+      console.error(`[auto-dispatcher] ${source} retry failed for task ${task.id}:`, error);
+    });
+  }
+}
+
+export function retryAutoStageTasks(
+  db: DatabaseSync,
+  ws: WsHub,
+  triggers: AutoStageRetryTriggers = {},
+): AutoDispatchSummary {
+  const summary: AutoDispatchSummary = { started: 0, assigned: 0, skipped: 0 };
+  const activeProcesses = getActiveProcesses();
+  const pendingSpawns = getPendingSpawns();
+
+  for (const task of getRetryableAutoStageTasks(db)) {
+    if (activeProcesses.has(task.id) || pendingSpawns.has(task.id) || getReviewerSession(task.id)) {
+      summary.skipped += 1;
+      continue;
+    }
+    if (task.status === "human_review" && !isAutoHumanReviewEnabled(db, task.id)) {
+      summary.skipped += 1;
+      continue;
+    }
+
+    switch (task.status) {
+      case "test_generation":
+        runAutoStageTrigger(
+          (triggers.triggerTestGen ?? ((retryTask) => triggerAutoTestGen(db, ws, retryTask)))(task),
+          task,
+          "test_generation",
+        );
+        summary.started += 1;
+        break;
+      case "qa_testing":
+        runAutoStageTrigger(
+          (triggers.triggerQa ?? ((retryTask) => triggerAutoQa(db, ws, retryTask)))(task),
+          task,
+          "qa_testing",
+        );
+        summary.started += 1;
+        break;
+      case "pr_review":
+        runAutoStageTrigger(
+          (triggers.triggerReview ?? ((retryTask) => triggerAutoReview(db, ws, retryTask)))(task),
+          task,
+          "pr_review",
+        );
+        summary.started += 1;
+        break;
+      case "human_review":
+        runAutoStageTrigger(
+          (triggers.triggerHumanReview ?? ((retryTask) => triggerAutoHumanReview(db, ws, retryTask)))(task),
+          task,
+          "human_review",
+        );
+        summary.started += 1;
+        break;
+    }
+  }
+
+  return summary;
+}
+
 // Dependency-blocking logic lives in `server/domain/task-dependencies.ts`
 // so every "→in_progress" entry point (auto-dispatch, manual Run, Resume,
 // refinement approve) uses the same rule. The local copy that used to
@@ -297,6 +396,10 @@ export function dispatchAutoStartableTasks(
   if (mode === "disabled") {
     return summary;
   }
+
+  const retrySummary = retryAutoStageTasks(db, ws);
+  summary.started += retrySummary.started;
+  summary.skipped += retrySummary.skipped;
 
   const startTask = options?.startTask ?? createDefaultTaskStarter(db, ws);
   if (isControllerModeEnabled(db)) {

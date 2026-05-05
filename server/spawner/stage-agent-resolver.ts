@@ -59,6 +59,90 @@ export interface StageAgentSelectionOptions {
   candidatePool?: ReadonlySet<string>;
 }
 
+export type GuardedStage = "test_generation" | "qa_testing" | "pr_review" | "human_review";
+
+export type StageRunnerResolution =
+  | { status: "unconfigured" }
+  | { status: "allowed"; agent: Agent }
+  | { status: "redirect"; agent: Agent; reason: string }
+  | { status: "skip"; reason: string };
+
+const STAGE_SETTING_KEYS: Record<GuardedStage, {
+  roleKey: StageSettingKey;
+  modelKey: StageModelSettingKey;
+  label: string;
+}> = {
+  test_generation: {
+    roleKey: "test_generation_agent_role",
+    modelKey: "test_generation_agent_model",
+    label: "test_generation_agent_role/model",
+  },
+  qa_testing: {
+    roleKey: "qa_agent_role",
+    modelKey: "qa_agent_model",
+    label: "qa_agent_role/model",
+  },
+  pr_review: {
+    roleKey: "review_agent_role",
+    modelKey: "review_agent_model",
+    label: "review_agent_role/model",
+  },
+  human_review: {
+    roleKey: "review_agent_role",
+    modelKey: "review_agent_model",
+    label: "review_agent_role/model",
+  },
+};
+
+export function isGuardedStage(stage: string): stage is GuardedStage {
+  return Object.hasOwn(STAGE_SETTING_KEYS, stage);
+}
+
+export function resolveStageRunner(
+  db: DatabaseSync,
+  stage: string,
+  runner: Agent,
+  lifecycleOwnerAgentId: string | null | undefined,
+): StageRunnerResolution {
+  if (!isGuardedStage(stage)) {
+    return { status: "unconfigured" };
+  }
+
+  const keys = STAGE_SETTING_KEYS[stage];
+  const configured = getStageFilters(db, keys.roleKey, keys.modelKey);
+  if (!configured.role && !configured.model) {
+    return { status: "unconfigured" };
+  }
+
+  const ownerId = lifecycleOwnerAgentId ?? "";
+  if (isRunnerAllowed(runner, configured, ownerId)) {
+    return { status: "allowed", agent: runner };
+  }
+
+  const selection = resolveStageAgentSelection(db, keys.roleKey, keys.modelKey, {
+    excludeIds: [ownerId],
+  });
+
+  if (selection.status === "configured_match") {
+    return {
+      status: "redirect",
+      agent: selection.agent,
+      reason:
+        `Stage-specific runner guard: ${stage} requires ${keys.label}; ` +
+        `redirecting from agent "${runner.name}" (${runner.id}) to ` +
+        `"${selection.agent.name}" (${selection.agent.id}).`,
+    };
+  }
+
+  return {
+    status: "skip",
+    reason:
+      `Stage-specific runner guard: ${stage} requires ${keys.label}, ` +
+      `but agent "${runner.name}" (${runner.id}) does not match and no matching idle worker exists; ` +
+      `leaving task in ${stage} for the next trigger.`,
+  };
+}
+
 /**
  * Stage-specific agent selection driven by the `*_agent_role` /
  * `*_agent_model` settings. Returns a structured result so callers can
@@ -160,4 +244,36 @@ export function resolveStageAgentOverride(
     excludeIds,
   });
   return result.status === "configured_match" ? result.agent : undefined;
+}
+
+function getStageFilters(
+  db: DatabaseSync,
+  roleSettingKey: StageSettingKey,
+  modelSettingKey: StageModelSettingKey,
+): { role: string; model: string } {
+  const roleRow = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(roleSettingKey) as { value: string } | undefined;
+  const modelRow = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(modelSettingKey) as { value: string } | undefined;
+
+  return {
+    role: roleRow?.value?.trim() || "",
+    model: modelRow?.value?.trim() || "",
+  };
+}
+
+function isRunnerAllowed(
+  runner: Agent,
+  configured: { role: string; model: string },
+  lifecycleOwnerAgentId: string,
+): boolean {
+  if (runner.agent_type !== "worker") return false;
+  if (runner.status !== "idle") return false;
+  if (runner.current_task_id !== null) return false;
+  if (lifecycleOwnerAgentId && runner.id === lifecycleOwnerAgentId) return false;
+  if (configured.role && runner.role !== configured.role) return false;
+  if (configured.model && runner.cli_model !== configured.model) return false;
+  return true;
 }

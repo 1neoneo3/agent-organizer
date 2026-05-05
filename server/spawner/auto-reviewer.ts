@@ -264,18 +264,23 @@ export function resolveReviewPanel(
   }
 
   // 2. Secondary slot: idle security_reviewer (excluding both the
-  // implementer and any agent already in the panel). If none exists, the
-  // panel simply stays single-agent — the task still reviews correctly
-  // via the code reviewer alone.
-  const usedIds = [excludeId, ...assignments.map((a) => a.agent.id)];
-  const usedPlaceholders = usedIds.map(() => "?").join(",");
-  const securityReviewer = db
-    .prepare(
-      `SELECT * FROM agents WHERE role = 'security_reviewer' AND status = 'idle' AND id NOT IN (${usedPlaceholders}) LIMIT 1`,
-    )
-    .get(...usedIds) as Agent | undefined;
-  if (securityReviewer) {
-    assignments.push({ agent: securityReviewer, role: "security" });
+  // implementer and any agent already in the panel). This legacy panel
+  // expansion is only used when review_agent_role/model is unconfigured.
+  // Once an operator configures the review stage, that setting is the
+  // complete hard constraint for pr_review/human_review runners; adding a
+  // security secondary outside that configured filter would reintroduce a
+  // raw-spawn bypass.
+  if (overrideResult.status === "unconfigured") {
+    const usedIds = [excludeId, ...assignments.map((a) => a.agent.id)];
+    const usedPlaceholders = usedIds.map(() => "?").join(",");
+    const securityReviewer = db
+      .prepare(
+        `SELECT * FROM agents WHERE role = 'security_reviewer' AND status = 'idle' AND id NOT IN (${usedPlaceholders}) LIMIT 1`,
+      )
+      .get(...usedIds) as Agent | undefined;
+    if (securityReviewer) {
+      assignments.push({ agent: securityReviewer, role: "security" });
+    }
   }
 
   // 3. Fallback: no code_reviewer role agent at all → pick any idle

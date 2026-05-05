@@ -6,7 +6,7 @@ import {
   getLatestHumanReviewAutoMarker,
   recordHumanReviewAutoMarker,
 } from "../domain/human-review-auto.js";
-import { resolveStageAgentOverride } from "./stage-agent-resolver.js";
+import { resolveStageAgentSelection } from "./stage-agent-resolver.js";
 
 /**
  * Auto Human Review.
@@ -70,7 +70,18 @@ export async function triggerAutoHumanReview(
     return;
   }
 
-  const reviewer = findHumanReviewAgent(db, currentTask.assigned_agent_id);
+  const reviewerDecision = resolveHumanReviewAgent(db, currentTask.assigned_agent_id);
+  if (reviewerDecision.kind === "skip") {
+    logSystem(db, currentTask.id, reviewerDecision.reason);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: currentTask.id, kind: "system", message: `[Auto Human Review] ${reviewerDecision.reason}` }],
+      { taskId: currentTask.id },
+    );
+    return;
+  }
+
+  const reviewer = reviewerDecision.agent;
   if (!reviewer) {
     logSystem(db, currentTask.id, "Auto Human Review skipped: no idle review agent available");
     return;
@@ -140,39 +151,66 @@ export function resolveMaxIterations(db: DatabaseSync, taskId?: string | null): 
 }
 
 /**
+ * Discriminated decision for the human_review auto-run. A configured
+ * review_agent_role/model is a hard constraint just like pr_review:
+ * fallback to the lifecycle owner or a generic worker would bypass the
+ * configured reviewer pool.
+ */
+export type HumanReviewAgentDecision =
+  | { kind: "agent"; agent: Agent | undefined }
+  | { kind: "skip"; reason: string };
+
+/**
  * Pick an idle reviewer for the human_review auto-loop. Reuses the
  * `review_agent_*` settings overrides so operators can constrain the
  * pool the same way they do for pr_review. Falls back to a code_reviewer
  * role agent, then any idle worker — the implementer is always excluded
  * to prevent self-review.
  */
+export function resolveHumanReviewAgent(
+  db: DatabaseSync,
+  implementerAgentId: string | null,
+): HumanReviewAgentDecision {
+  const excludeId = implementerAgentId ?? "";
+
+  const override = resolveStageAgentSelection(
+    db,
+    "review_agent_role",
+    "review_agent_model",
+    { excludeIds: [excludeId] },
+  );
+  if (override.status === "configured_match") {
+    return { kind: "agent", agent: override.agent };
+  }
+  if (override.status === "configured_no_match" || override.status === "configured_no_match_in_pool") {
+    return {
+      kind: "skip",
+      reason:
+        "Auto Human Review skipped: review_agent_role/model is configured but no matching idle worker exists; will retry on the next human_review trigger",
+    };
+  }
+
+  const codeReviewer = db
+    .prepare(
+      "SELECT * FROM agents WHERE role = 'code_reviewer' AND status = 'idle' AND current_task_id IS NULL AND id != ? LIMIT 1",
+    )
+    .get(excludeId) as Agent | undefined;
+  if (codeReviewer) return { kind: "agent", agent: codeReviewer };
+
+  const anyIdle = db
+    .prepare(
+      "SELECT * FROM agents WHERE status = 'idle' AND current_task_id IS NULL AND agent_type = 'worker' AND id != ? LIMIT 1",
+    )
+    .get(excludeId) as Agent | undefined;
+  return { kind: "agent", agent: anyIdle };
+}
+
 export function findHumanReviewAgent(
   db: DatabaseSync,
   implementerAgentId: string | null,
 ): Agent | undefined {
-  const excludeId = implementerAgentId ?? "";
-
-  const override = resolveStageAgentOverride(
-    db,
-    "review_agent_role",
-    "review_agent_model",
-    [excludeId],
-  );
-  if (override) return override;
-
-  const codeReviewer = db
-    .prepare(
-      "SELECT * FROM agents WHERE role = 'code_reviewer' AND status = 'idle' AND id != ? LIMIT 1",
-    )
-    .get(excludeId) as Agent | undefined;
-  if (codeReviewer) return codeReviewer;
-
-  const anyIdle = db
-    .prepare(
-      "SELECT * FROM agents WHERE status = 'idle' AND agent_type = 'worker' AND id != ? LIMIT 1",
-    )
-    .get(excludeId) as Agent | undefined;
-  return anyIdle;
+  const decision = resolveHumanReviewAgent(db, implementerAgentId);
+  return decision.kind === "agent" ? decision.agent : undefined;
 }
 
 function getSetting(db: DatabaseSync, key: string, taskId?: string | null): string | undefined {
