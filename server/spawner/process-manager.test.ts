@@ -1580,6 +1580,36 @@ describe("persistRefinementPlanExtraction — planned_files auto-population", ()
     ]);
   });
 
+  it("persists planned_files from a JSON array under the `planned_files` heading", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan-json-array", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## planned_files",
+      "",
+      "[",
+      '  "server/domain/planned-files.ts",',
+      '  "./server/spawner/process-manager.ts",',
+      '  "server//db/runtime.ts"',
+      "]",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "server/domain/planned-files.ts",
+      "server/spawner/process-manager.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
   it("revising a plan replaces planned_files completely (drops files no longer listed)", () => {
     // Regression guard: revision must not merge or accumulate. If a user
     // removes a file from the "Files to Modify" list during revision, the
@@ -1738,4 +1768,3 @@ describe("persistRefinementPlanExtraction — planned_files auto-population", ()
     ]);
   });
 });
-

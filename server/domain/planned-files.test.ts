@@ -65,6 +65,37 @@ describe("extractPlannedFilesFromPlan", () => {
     ]);
   });
 
+  it("extracts paths from a JSON array under the `planned_files` heading", () => {
+    const plan = [
+      "## planned_files",
+      "",
+      "[",
+      '  "server/domain/planned-files.ts",',
+      '  "./server/spawner/process-manager.ts",',
+      '  "server//db/runtime.ts"',
+      "]",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "server/domain/planned-files.ts",
+      "server/spawner/process-manager.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
+  it("extracts paths from a fenced JSON array under the `Planned Files` heading", () => {
+    const plan = [
+      "## Planned Files",
+      "",
+      "```json",
+      "[",
+      '  "src/a.ts",',
+      '  "./src/b.ts/"',
+      "]",
+      "```",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
+  });
+
   it("extracts under the JA heading 修正するファイル", () => {
     const plan = [
       "## 修正するファイル",
@@ -167,6 +198,24 @@ describe("extractPlannedFilesFromPlan", () => {
     assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
   });
 
+  it("merges bullet, table, and JSON array paths from the same section", () => {
+    const plan = [
+      "## planned_files",
+      "",
+      "- `src/a.ts` — bullet",
+      "| `src/b.ts` | table |",
+      "[",
+      '  "./src/a.ts",',
+      '  "src/c.ts"',
+      "]",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+    ]);
+  });
+
   it("accepts a parenthesized bilingual annotation after the heading", () => {
     // Refinement plans authored by JA agents commonly include a bilingual
     // hint, e.g. `## 変更対象ファイル (Files to Modify)`. The strict
@@ -186,6 +235,15 @@ describe("extractPlannedFilesFromPlan", () => {
       "- `src/a.ts` — x",
     ].join("\n");
     assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts"]);
+  });
+
+  it("recognizes the spaced variant `planned files`", () => {
+    const plan = [
+      "## planned files",
+      "",
+      '["src/a.ts", "src/b.ts"]',
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
   });
 
   it("does NOT match `## Files to Modify Backup` (extra trailing word, no parens)", () => {

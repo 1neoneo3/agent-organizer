@@ -4,8 +4,8 @@
  *
  * The refinement prompt (server/spawner/prompt-builder.ts) asks the
  * agent to enumerate target files under a `## Files to Modify` (EN) or
- * `## 修正するファイル` (JA) heading, one per bullet, with the path
- * wrapped in backticks:
+ * `## 修正するファイル` / `## planned_files` (JA / canonical alias)
+ * heading, usually one per bullet with the path wrapped in backticks:
  *
  *     ## Files to Modify
  *
@@ -27,6 +27,8 @@ export const PLANNED_FILES_HEADINGS = [
   "修正するファイル",
   "変更するファイル",
   "編集するファイル",
+  "planned_files",
+  "planned files",
 ] as const;
 
 /**
@@ -68,6 +70,7 @@ const BULLET_PATH_RE = /^\s*[-*•]\s*`([^`\n]+)`/;
  * considered a path source.
  */
 const TABLE_FIRST_CELL_PATH_RE = /^\s*\|\s*`([^`\n|]+)`\s*\|/;
+const JSON_CODE_BLOCK_RE = /```(?:json)?\s*([\s\S]*?)```/gi;
 
 /**
  * Regex that matches any of the recognized "files to modify" headings.
@@ -82,11 +85,56 @@ const TABLE_FIRST_CELL_PATH_RE = /^\s*\|\s*`([^`\n|]+)`\s*\|/;
  */
 function buildHeadingRegex(): RegExp {
   const alt = PLANNED_FILES_HEADINGS.map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  return new RegExp(`^#{2,3}\\s*(?:${alt})\\s*(?:\\([^()\\n]+\\)\\s*)?$`, "m");
+  return new RegExp(`^#{2,3}\\s*(?:${alt})\\s*(?:\\([^()\\n]+\\)\\s*)?$`, "im");
 }
 
 const HEADING_RE = buildHeadingRegex();
 const NEXT_HEADING_RE = /^#{1,3}\s+/m;
+
+function normalizePathList(entries: unknown[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (typeof entry !== "string") continue;
+    pushNormalizedPath(out, seen, entry);
+  }
+  return out;
+}
+
+function pushNormalizedPath(out: string[], seen: Set<string>, raw: string): void {
+  const norm = normalizePath(raw);
+  if (norm.length === 0 || seen.has(norm)) return;
+  seen.add(norm);
+  out.push(norm);
+}
+
+function parsePathJsonArray(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return normalizePathList(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function extractJsonArrayPaths(sectionBody: string): string[] {
+  const trimmed = sectionBody.trim();
+  if (trimmed.length === 0) return [];
+
+  for (const match of trimmed.matchAll(JSON_CODE_BLOCK_RE)) {
+    const parsed = parsePathJsonArray(match[1]?.trim() ?? "");
+    if (parsed.length > 0) return parsed;
+  }
+
+  const direct = parsePathJsonArray(trimmed);
+  if (direct.length > 0) return direct;
+
+  const arrayStart = trimmed.indexOf("[");
+  const arrayEnd = trimmed.lastIndexOf("]");
+  if (arrayStart === -1 || arrayEnd <= arrayStart) return [];
+  return parsePathJsonArray(trimmed.slice(arrayStart, arrayEnd + 1));
+}
 
 /**
  * Extract the list of files named under the "Files to Modify" section
@@ -116,11 +164,10 @@ export function extractPlannedFilesFromPlan(plan: string | null | undefined): st
   for (const line of sectionBody.split("\n")) {
     const m = BULLET_PATH_RE.exec(line) ?? TABLE_FIRST_CELL_PATH_RE.exec(line);
     if (!m) continue;
-    const norm = normalizePath(m[1]);
-    if (norm.length === 0) continue;
-    if (seen.has(norm)) continue;
-    seen.add(norm);
-    out.push(norm);
+    pushNormalizedPath(out, seen, m[1]);
+  }
+  for (const path of extractJsonArrayPaths(sectionBody)) {
+    pushNormalizedPath(out, seen, path);
   }
   return out;
 }
@@ -141,22 +188,7 @@ export function extractPlannedFilesFromPlan(plan: string | null | undefined): st
  */
 export function parsePlannedFiles(raw: string | null): string[] {
   if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const entry of parsed) {
-      if (typeof entry !== "string") continue;
-      const norm = normalizePath(entry);
-      if (norm.length === 0 || seen.has(norm)) continue;
-      seen.add(norm);
-      out.push(norm);
-    }
-    return out;
-  } catch {
-    return [];
-  }
+  return parsePathJsonArray(raw);
 }
 
 /**
