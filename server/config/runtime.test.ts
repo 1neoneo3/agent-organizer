@@ -71,6 +71,12 @@ describe("SETTINGS_DEFAULTS.output_language", () => {
   });
 });
 
+describe("SETTINGS_DEFAULTS.in_progress_agent_id", () => {
+  it("defaults to an empty string", () => {
+    assert.equal(SETTINGS_DEFAULTS.in_progress_agent_id, "");
+  });
+});
+
 describe("SETTINGS_DEFAULTS.enable_controller_mode", () => {
   it("defaults to false", () => {
     assert.equal(SETTINGS_DEFAULTS.enable_controller_mode, "false");

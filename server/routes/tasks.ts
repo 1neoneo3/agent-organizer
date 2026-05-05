@@ -26,7 +26,12 @@ import {
 import { TASK_STATUSES } from "../domain/task-status.js";
 import { shouldStampCompletedAt } from "../domain/task-rules.js";
 import { buildRefinementSplitArtifacts } from "../domain/output-language.js";
-import { isImplementerAgent, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
+import {
+  isRunnableImplementerAgent,
+  resolveImplementerAgentForExecution as resolveImplementerAgentForExecutionCore,
+  type ImplementerResolutionOptions,
+  type ImplementerResolutionResult,
+} from "../domain/implementer-agent.js";
 import {
   deriveParentTaskNumber,
   deriveChildTaskNumbers,
@@ -206,46 +211,15 @@ export function resolveRequestedAgentId(
   return requestedAgentId ?? taskAssignedAgentId ?? undefined;
 }
 
-export type ImplementerResolutionResult =
-  | { ok: true; agent: Agent; source: "requested" | "assigned" | "fallback" }
-  | { ok: false; error: "no_implementer_available" | "agent_not_found" | "agent_busy" | "non_implementer_agent" };
+export type { ImplementerResolutionOptions, ImplementerResolutionResult };
 
 export function resolveImplementerAgentForExecution(
   db: RuntimeContext["db"],
   taskAssignedAgentId: string | null | undefined,
   requestedAgentId: string | null | undefined,
+  options: ImplementerResolutionOptions = {},
 ): ImplementerResolutionResult {
-  if (requestedAgentId) {
-    const requestedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(requestedAgentId) as Agent | undefined;
-    if (!requestedAgent) {
-      return { ok: false, error: "agent_not_found" };
-    }
-    if (!isImplementerAgent(requestedAgent)) {
-      return { ok: false, error: "non_implementer_agent" };
-    }
-    if (requestedAgent.status === "working") {
-      return { ok: false, error: "agent_busy" };
-    }
-    return { ok: true, agent: requestedAgent, source: "requested" };
-  }
-
-  if (taskAssignedAgentId) {
-    const assignedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(taskAssignedAgentId) as Agent | undefined;
-    if (assignedAgent) {
-      if (isImplementerAgent(assignedAgent)) {
-        if (assignedAgent.status === "working") {
-          return { ok: false, error: "agent_busy" };
-        }
-        return { ok: true, agent: assignedAgent, source: "assigned" };
-      }
-    }
-  }
-
-  const fallbackAgent = pickIdleImplementerAgent(db, [taskAssignedAgentId]);
-  if (!fallbackAgent) {
-    return { ok: false, error: "no_implementer_available" };
-  }
-  return { ok: true, agent: fallbackAgent, source: "fallback" };
+  return resolveImplementerAgentForExecutionCore(db, taskAssignedAgentId, requestedAgentId, options);
 }
 
 type ResumeAgentResolutionResult =
@@ -263,7 +237,9 @@ function resolveAgentForResume(
   preferredRunnerAgentId?: string | null,
 ): ResumeAgentResolutionResult {
   if (!isGuardedStage(previousStatus)) {
-    const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined);
+    const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, {
+      taskId: task.id,
+    });
     return resolution.ok
       ? { ok: true, agent: resolution.agent, previousStatus }
       : { ok: false, error: resolution.error === "agent_busy" ? "agent_busy" : "no_runner_available" };
@@ -791,6 +767,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       db,
       task.assigned_agent_id,
       (req.body as { agent_id?: string }).agent_id,
+      { taskId: task.id },
     );
     if (!resolution.ok) {
       if (resolution.error === "agent_not_found") return res.status(404).json({ error: "agent_not_found" });
@@ -866,6 +843,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       db,
       task.assigned_agent_id,
       (req.body as { agent_id?: string }).agent_id,
+      { taskId: task.id },
     );
     if (!resolution.ok) {
       if (resolution.error === "agent_not_found") return res.status(404).json({ error: "agent_not_found" });
@@ -953,20 +931,64 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       }
     }
 
-    db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(next, now, task.id);
+    let approvedTaskForSpawn: Task | undefined;
+    let approvedAgentForSpawn: Agent | undefined;
+
+    if (isRefinement && next === "in_progress") {
+      const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, {
+        taskId: task.id,
+        excludeIds: [task.assigned_agent_id],
+      });
+
+      if (!resolution.ok) {
+        db.prepare(
+          "UPDATE tasks SET status = 'inbox', assigned_agent_id = NULL, started_at = NULL, updated_at = ? WHERE id = ?",
+        ).run(now, task.id);
+        if (task.assigned_agent_id) {
+          db.prepare(
+            "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+          ).run(now, task.assigned_agent_id);
+          ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+        }
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+        ).run(
+          task.id,
+          "Refinement plan approved but no runnable implementer is available. Returned to inbox for auto-dispatch retry.",
+        );
+
+        ws.broadcast("task_update", { id: task.id, status: "inbox", assigned_agent_id: null, started_at: null });
+
+        return res.json({
+          approved: true,
+          deferred: true,
+          reason: "no_implementer_available",
+          next_status: "inbox",
+          returned_to: "inbox",
+        });
+      }
+
+      approvedAgentForSpawn = resolution.agent;
+      db.prepare("UPDATE tasks SET status = ?, assigned_agent_id = ?, updated_at = ? WHERE id = ?")
+        .run(next, approvedAgentForSpawn.id, now, task.id);
+    } else {
+      db.prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?").run(next, now, task.id);
+    }
+
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} approved. Advancing to ${next}.`);
 
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+    approvedTaskForSpawn = updatedTask;
     ws.broadcast("task_update", buildTaskSummaryUpdate(updatedTask));
 
     // After refinement approval → auto-dispatch to in_progress if agent is idle
-    if (isRefinement && next === "in_progress" && updatedTask.assigned_agent_id) {
-      const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(updatedTask.assigned_agent_id) as Agent | undefined;
-      if (agent && agent.status === "idle") {
+    if (isRefinement && next === "in_progress" && approvedAgentForSpawn && approvedTaskForSpawn) {
+      const agent = approvedAgentForSpawn;
+      if (isRunnableImplementerAgent(agent)) {
         setTimeout(() => {
-          taskSpawner(db, ws, agent, updatedTask, {}).catch((err) => {
+          taskSpawner(db, ws, agent, approvedTaskForSpawn, {}).catch((err) => {
             const handled = handleSpawnFailure(db, ws, updatedTask.id, err, {
               source: "Refinement approval auto-run",
             });
@@ -1338,7 +1360,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       }
       agent = resolution.agent;
     } else {
-      const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined);
+      const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, {
+        taskId: task.id,
+      });
       if (!resolution.ok) {
         return res.json({ sent: true, restarted: false, feedback_path: feedbackPath, resolution: resolution.error });
       }

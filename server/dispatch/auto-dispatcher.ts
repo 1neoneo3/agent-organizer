@@ -18,6 +18,7 @@ import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { resolveActiveStages } from "../workflow/stage-pipeline.js";
+import { resolveImplementerAgentForExecution } from "../domain/implementer-agent.js";
 import {
   collectAllBlockers,
   formatAllBlockers,
@@ -90,7 +91,7 @@ function isAutoHumanReviewEnabled(db: DatabaseSync, taskId: string): boolean {
 
 function getIdleWorkers(db: DatabaseSync): Agent[] {
   return db.prepare(
-    "SELECT * FROM agents WHERE status = 'idle' AND agent_type = 'worker' ORDER BY stats_tasks_done DESC, created_at ASC"
+    "SELECT * FROM agents WHERE status = 'idle' AND current_task_id IS NULL AND agent_type = 'worker' ORDER BY stats_tasks_done DESC, created_at ASC"
   ).all() as unknown as Agent[];
 }
 
@@ -210,23 +211,7 @@ function resolveRefinementAgentForInbox(
   task: Task,
   availableAgents: Map<string, Agent>,
 ): RefinementSelection {
-  // When the task has no project_path we cannot load a project workflow,
-  // so fall back to the built-in defaults (workflow = null). We never read
-  // the dispatcher's own CWD: that would silently apply AO's workflow to
-  // a task that belongs to an unrelated or unconfigured repo.
-  let workflow = null;
-  if (task.project_path) {
-    try {
-      workflow = loadProjectWorkflow(task.project_path);
-    } catch {
-      workflow = null;
-    }
-  }
-  const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
-  if (activeStages[0] !== "refinement") {
-    // Override only applies to tasks that actually start with refinement.
-    // Skipping a non-refinement task because of this setting would be
-    // surprising — fall through to the legacy scoring path.
+  if (resolveFirstInboxExecutionStage(db, task) !== "refinement") {
     return { kind: "default" };
   }
 
@@ -255,6 +240,34 @@ function resolveRefinementAgentForInbox(
           "skipped: refinement_agent_role/model match was already taken in this tick; will retry next tick",
       };
   }
+}
+
+function resolveTaskActiveStages(db: DatabaseSync, task: Task): ReturnType<typeof resolveActiveStages> {
+  // When the task has no project_path we cannot load a project workflow,
+  // so fall back to the built-in defaults (workflow = null). We never read
+  // the dispatcher's own CWD: that would silently apply AO's workflow to
+  // a task that belongs to an unrelated or unconfigured repo.
+  let workflow = null;
+  if (task.project_path) {
+    try {
+      workflow = loadProjectWorkflow(task.project_path);
+    } catch {
+      workflow = null;
+    }
+  }
+  return resolveActiveStages(db, workflow, task.task_size, task.id);
+}
+
+function hasCompletedRefinementPlan(task: Task): boolean {
+  return !!task.refinement_plan && task.refinement_completed_at != null;
+}
+
+function resolveFirstInboxExecutionStage(db: DatabaseSync, task: Task): string | undefined {
+  const activeStages = resolveTaskActiveStages(db, task);
+  if (activeStages[0] === "refinement" && hasCompletedRefinementPlan(task)) {
+    return activeStages[1] ?? activeStages[0];
+  }
+  return activeStages[0];
 }
 
 function chooseBestAgent(task: Task, agents: Agent[]): Agent | undefined {
@@ -439,6 +452,44 @@ export function dispatchAutoStartableTasks(
     if (skipReason) {
       summary.skipped += 1;
       writeDispatchLog(db, ws, task, skipReason);
+      continue;
+    }
+
+    const firstExecutionStage = resolveFirstInboxExecutionStage(db, task);
+    const usedAgentIds = idleWorkers
+      .filter((agent) => !availableAgents.has(agent.id))
+      .map((agent) => agent.id);
+
+    if (firstExecutionStage !== "refinement") {
+      const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, {
+        taskId: task.id,
+        excludeIds: usedAgentIds,
+      });
+      if (!resolution.ok || !availableAgents.has(resolution.agent.id)) {
+        summary.skipped += 1;
+        writeDispatchLog(db, ws, task, "skipped: no idle implementer agent is available");
+        continue;
+      }
+
+      const selectedAgent = resolution.agent;
+      const assignedTask = assignTaskToAgent(db, task, selectedAgent);
+
+      try {
+        writeDispatchLog(
+          db,
+          ws,
+          assignedTask,
+          `assigned "${selectedAgent.name}"${selectedAgent.role ? ` [${selectedAgent.role}]` : ""} and starting task`,
+        );
+        startTask(assignedTask, selectedAgent);
+        availableAgents.delete(selectedAgent.id);
+        summary.assigned += task.assigned_agent_id === selectedAgent.id ? 0 : 1;
+        summary.started += 1;
+      } catch (error) {
+        summary.skipped += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        writeDispatchLog(db, ws, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`);
+      }
       continue;
     }
 

@@ -192,10 +192,11 @@ export const SETTINGS_DEFAULTS = {
   // random idle worker that matches the configured filters. If no idle
   // worker matches, the system falls back to the legacy role-based
   // stage resolver. `assigned_agent_id` on the task continues to
-  // represent the implementer (in_progress) and is unaffected by these
-  // settings. human_review automatic reviews intentionally reuse the
-  // review_agent_* filters because they perform the same read-only
-  // reviewer role against a later stage gate.
+  // represent the implementer (in_progress) unless in_progress_agent_id
+  // pins a specific worker implementer. human_review automatic reviews
+  // intentionally reuse the review_agent_* filters because they perform
+  // the same read-only reviewer role against a later stage gate.
+  in_progress_agent_id: "" as const,
   refinement_agent_role: "" as const,
   refinement_agent_model: "" as const,
   review_agent_role: "" as const,

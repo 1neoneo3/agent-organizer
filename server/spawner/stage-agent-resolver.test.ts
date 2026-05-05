@@ -156,6 +156,12 @@ describe("resolveStageAgentOverride", () => {
     assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });
 
+  it("returns undefined when the agent already has current_task_id", () => {
+    insertAgent(db, { id: "busy-reviewer", status: "idle", current_task_id: "other-task", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
+  });
+
   it("returns undefined when every matching agent is in the exclude list", () => {
     insertAgent(db, { id: "shared-agent", role: "code_reviewer", cli_model: "gpt-5.4" });
     setSetting(db, "review_agent_role", "code_reviewer");

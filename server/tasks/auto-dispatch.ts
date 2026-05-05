@@ -1,11 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
+import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
+import { resolveImplementerAgentForExecution } from "../domain/implementer-agent.js";
 import { spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
 import { resolveStageAgentSelection } from "../spawner/stage-agent-resolver.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
-import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
 import { resolveActiveStages } from "../workflow/stage-pipeline.js";
 import { writeDispatchLog } from "./dispatch-logs.js";
@@ -19,42 +20,13 @@ interface AutoDispatchOptions {
 export function pickIdleAgent(db: DatabaseSync): Agent | undefined {
   return db.prepare(
     `SELECT * FROM agents
-     WHERE status = 'idle' AND current_task_id IS NULL
+     WHERE status = 'idle' AND current_task_id IS NULL AND agent_type = 'worker'
      ORDER BY stats_tasks_done ASC, updated_at ASC
-     LIMIT 1`
+     LIMIT 1`,
   ).get() as Agent | undefined;
 }
 
-/**
- * Pick an idle agent for an inbox task, honouring the stage-specific
- * `refinement_agent_role` / `refinement_agent_model` settings as a
- * hard constraint when the task's first active stage is `refinement`.
- *
- * Behaviour matrix (mirrors the periodic dispatcher in
- * `server/dispatch/auto-dispatcher.ts`):
- *
- *  - First active stage is NOT `refinement` → the stage override does
- *    not apply; fall through to the legacy round-robin
- *    {@link pickIdleAgent}. This covers small tasks and projects with
- *    `default_enable_refinement = false`.
- *  - First active stage IS `refinement` and override is unconfigured
- *    (both filters empty) → fall through to {@link pickIdleAgent}.
- *  - First active stage IS `refinement` and override is configured but
- *    no idle worker matches → return `undefined`. The task stays in
- *    inbox and the next periodic dispatch tick retries. We deliberately
- *    do NOT fall back to a non-matching worker: the user configured
- *    the override as a constraint, and silently dispatching a fresh
- *    task to the wrong worker just because a matching one is busy
- *    would defeat the purpose of the setting.
- *  - First active stage IS `refinement` and override matches → return
- *    the matching agent.
- */
-export interface PickInboxAgentResult {
-  agent?: Agent;
-  skipReason?: string;
-}
-
-export function pickInboxAgent(db: DatabaseSync, task: Task): PickInboxAgentResult {
+function getActiveStages(db: DatabaseSync, task: Task): ReturnType<typeof resolveActiveStages> {
   let workflow = null;
   if (task.project_path) {
     try {
@@ -63,9 +35,40 @@ export function pickInboxAgent(db: DatabaseSync, task: Task): PickInboxAgentResu
       workflow = null;
     }
   }
-  const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
-  if (activeStages[0] !== "refinement") {
-    return { agent: pickIdleAgent(db) };
+  return resolveActiveStages(db, workflow, task.task_size, task.id);
+}
+
+function hasCompletedRefinementPlan(task: Task): boolean {
+  return !!task.refinement_plan && task.refinement_completed_at != null;
+}
+
+function getFirstExecutionStage(db: DatabaseSync, task: Task): string | undefined {
+  const activeStages = getActiveStages(db, task);
+  if (activeStages[0] === "refinement" && hasCompletedRefinementPlan(task)) {
+    return activeStages[1] ?? activeStages[0];
+  }
+  return activeStages[0];
+}
+
+/**
+ * Pick an idle agent for an inbox task, honouring the stage-specific
+ * `refinement_agent_role` / `refinement_agent_model` settings as a
+ * hard constraint when the task's next execution stage is `refinement`.
+ */
+export interface PickInboxAgentResult {
+  agent?: Agent;
+  skipReason?: string;
+}
+
+export function pickInboxAgent(db: DatabaseSync, task: Task): PickInboxAgentResult {
+  const firstExecutionStage = getFirstExecutionStage(db, task);
+  if (firstExecutionStage !== "refinement") {
+    const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, {
+      taskId: task.id,
+    });
+    return resolution.ok
+      ? { agent: resolution.agent }
+      : { skipReason: "skipped: no idle implementer agent is available" };
   }
 
   const result = resolveStageAgentSelection(
@@ -103,12 +106,14 @@ export function autoDispatchTask(
 
   // Skip tasks that were returned to inbox after hitting review_count max.
   // Without this guard, periodic dispatch re-picks them and creates an infinite
-  // pr_review → inbox → dispatch → pr_review loop with repeated Telegram notifications.
+  // pr_review -> inbox -> dispatch -> pr_review loop with repeated notifications.
   if (task.status === "inbox" && task.review_count > 0) {
     if (hasExhaustedReviewBudget(task, getMaxReviewCount(db))) {
       return task;
     }
   }
+
+  const firstExecutionStage = getFirstExecutionStage(db, task);
 
   if (!task.assigned_agent_id && options.autoAssign) {
     const selection = pickInboxAgent(db, task);
@@ -130,9 +135,29 @@ export function autoDispatchTask(
     return task;
   }
 
-  const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
-  if (!agent || agent.status !== "idle") {
+  let agent: Agent | undefined;
+  if (firstExecutionStage === "refinement") {
+    agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
+  } else {
+    const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, {
+      taskId: task.id,
+    });
+    if (!resolution.ok) {
+      writeDispatchLog(db, ws, task, "skipped: no idle implementer agent is available");
+      return task;
+    }
+    agent = resolution.agent;
+  }
+
+  if (!agent || agent.status !== "idle" || agent.current_task_id !== null) {
     return task;
+  }
+  if (task.assigned_agent_id !== agent.id) {
+    const assignTs = Date.now();
+    db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(agent.id, assignTs, task.id);
+    task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+    if (!task) return undefined;
+    ws.broadcast("task_update", pickTaskUpdate(task, ["assigned_agent_id", "updated_at"]));
   }
 
   // Fire-and-forget: spawnAgent is async (awaits the Explore Phase) but

@@ -112,6 +112,10 @@ function insertAgent(db: DatabaseSync, overrides: Partial<Agent>): Agent {
 }
 
 describe("resolveImplementerAgentForExecution", () => {
+  function insertSetting(db: DatabaseSync, key: string, value: string): void {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+  }
+
   it("falls back from a stale reviewer assignment to an idle implementer", () => {
     const db = createDb();
     insertAgent(db, { id: "reviewer-1", role: "code_reviewer" });
@@ -143,5 +147,58 @@ describe("resolveImplementerAgentForExecution", () => {
     if (!result.ok) return;
     assert.equal(result.agent.id, "impl-1");
     assert.equal(result.source, "assigned");
+  });
+
+  it("prefers configured in_progress_agent_id over an assigned implementer", () => {
+    const db = createDb();
+    insertAgent(db, { id: "assigned-impl", role: "lead_engineer" });
+    insertAgent(db, { id: "configured-impl", role: "architect" });
+    insertSetting(db, "in_progress_agent_id", "configured-impl");
+
+    const result = resolveImplementerAgentForExecution(db, "assigned-impl", undefined, {
+      taskId: "task-1",
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.agent.id, "configured-impl");
+    assert.equal(result.source, "configured");
+  });
+
+  it("falls back when configured in_progress_agent_id is busy or owns another current_task_id", () => {
+    const db = createDb();
+    insertAgent(db, {
+      id: "configured-impl",
+      role: "lead_engineer",
+      status: "working",
+      current_task_id: "other-task",
+    });
+    insertAgent(db, { id: "fallback-impl", role: "architect" });
+    insertSetting(db, "in_progress_agent_id", "configured-impl");
+
+    const result = resolveImplementerAgentForExecution(db, null, undefined, {
+      taskId: "task-1",
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.agent.id, "fallback-impl");
+    assert.equal(result.source, "fallback");
+  });
+
+  it("excludes refinement runner when resolving the implementation fallback", () => {
+    const db = createDb();
+    insertAgent(db, { id: "refinement-runner", role: "planner" });
+    insertAgent(db, { id: "fallback-impl", role: "architect" });
+
+    const result = resolveImplementerAgentForExecution(db, "refinement-runner", undefined, {
+      taskId: "task-1",
+      excludeIds: ["refinement-runner"],
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.agent.id, "fallback-impl");
+    assert.equal(result.source, "fallback");
   });
 });

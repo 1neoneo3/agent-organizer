@@ -143,6 +143,10 @@ function createWs() {
   };
 }
 
+function insertSetting(db: DatabaseSync, key: string, value: string): void {
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+}
+
 describe("autoDispatchTask", () => {
   it("assigns an idle agent when auto assign is enabled", () => {
     const db = createDb();
@@ -192,6 +196,31 @@ describe("autoDispatchTask", () => {
     });
 
     assert.deepEqual(started, [{ agentId: "agent-1", taskId: "task-1" }]);
+  });
+
+  it("prefers configured in_progress_agent_id over the existing assignment for direct implementation", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertAgent(db, { id: "assigned-impl", name: "Assigned", role: "lead_engineer" });
+    insertAgent(db, { id: "configured-impl", name: "Configured", role: "architect" });
+    insertTask(db, { assigned_agent_id: "assigned-impl" });
+    const started: Array<{ agentId: string; taskId: string }> = [];
+
+    autoDispatchTask(db, ws as never, "task-1", {
+      autoAssign: false,
+      autoRun: true,
+      spawnAgent: (_db, _ws, agent, task) => {
+        started.push({ agentId: agent.id, taskId: task.id });
+        return Promise.resolve({ pid: 123 });
+      },
+    });
+
+    const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get("task-1") as {
+      assigned_agent_id: string | null;
+    };
+    assert.equal(row.assigned_agent_id, "configured-impl");
+    assert.deepEqual(started, [{ agentId: "configured-impl", taskId: "task-1" }]);
   });
 
   it("does not start the task when the assigned agent is busy", () => {

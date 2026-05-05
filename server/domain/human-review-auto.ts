@@ -36,4 +36,3 @@ export function getLatestHumanReviewAutoMarker(
   const match = row?.message.match(/^\[HUMAN_REVIEW_AUTO:(STARTED|CLEARED|AWAITING_HUMAN|EXHAUSTED)\]/);
   return (match?.[1] as HumanReviewAutoMarker | undefined) ?? null;
 }
-
