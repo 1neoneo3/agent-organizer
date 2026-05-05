@@ -741,6 +741,48 @@ describe("backfillPlannedFilesFromExistingPlans", () => {
     ]);
   });
 
+  it("extracts files from a `planned_files` JSON array on boot", async () => {
+    const { initializeDb, backfillPlannedFilesFromExistingPlans } = await import("./runtime.js");
+    const db = initializeDb();
+
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (id, title, status, task_size, refinement_plan, planned_files, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "bf-json-array",
+      "JSON array backfill",
+      "in_progress",
+      "small",
+      [
+        "---REFINEMENT PLAN---",
+        "## planned_files",
+        "",
+        "[",
+        '  "server/domain/planned-files.ts",',
+        '  "./server/spawner/process-manager.ts",',
+        '  "server//db/runtime.ts"',
+        "]",
+        "---END REFINEMENT---",
+      ].join("\n"),
+      null,
+      now,
+      now,
+    );
+
+    backfillPlannedFilesFromExistingPlans(db);
+
+    const row = db
+      .prepare("SELECT planned_files FROM tasks WHERE id = ?")
+      .get("bf-json-array") as { planned_files: string | null };
+
+    assert.deepEqual(JSON.parse(row.planned_files ?? "[]"), [
+      "server/domain/planned-files.ts",
+      "server/spawner/process-manager.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
   it("leaves planned_files NULL when the existing plan has no recognized heading", async () => {
     // Empty extraction must NOT write `[]` — NULL is the gate's
     // "no static overlap info" sentinel.
