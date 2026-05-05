@@ -23,6 +23,7 @@ import {
   formatAllBlockers,
   isBlocked,
 } from "../domain/task-dependencies.js";
+import { getTaskSetting } from "../domain/task-settings.js";
 import { isControllerModeEnabled, isControllerTaskStartable, reconcileControllerDirective } from "../controller/orchestrator.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
@@ -81,6 +82,10 @@ function getRetryableAutoStageTasks(db: DatabaseSync): Task[] {
      WHERE status IN ('test_generation', 'qa_testing', 'pr_review', 'human_review')
      ORDER BY priority DESC, updated_at ASC`,
   ).all() as unknown as Task[];
+}
+
+function isAutoHumanReviewEnabled(db: DatabaseSync, taskId: string): boolean {
+  return getTaskSetting(db, "auto_human_review", taskId) === "true";
 }
 
 function getIdleWorkers(db: DatabaseSync): Agent[] {
@@ -317,6 +322,10 @@ export function retryAutoStageTasks(
 
   for (const task of getRetryableAutoStageTasks(db)) {
     if (activeProcesses.has(task.id) || pendingSpawns.has(task.id) || getReviewerSession(task.id)) {
+      summary.skipped += 1;
+      continue;
+    }
+    if (task.status === "human_review" && !isAutoHumanReviewEnabled(db, task.id)) {
       summary.skipped += 1;
       continue;
     }

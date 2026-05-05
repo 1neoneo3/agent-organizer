@@ -709,6 +709,52 @@ describe("dispatchAutoStartableTasks", () => {
 });
 
 describe("retryAutoStageTasks", () => {
+  it("does not retry human_review tasks when auto_human_review is disabled", async () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgent(db, { id: "impl-1", role: "lead_engineer" });
+    const task = insertTask(db, {
+      id: "task-human-review-disabled",
+      status: "human_review",
+      assigned_agent_id: "impl-1",
+    });
+
+    const triggered: string[] = [];
+    const summary = await retryAutoStageTasks(db, ws as never, {
+      triggerHumanReview: async (retryTask) => {
+        triggered.push(retryTask.id);
+      },
+    });
+
+    assert.deepEqual(triggered, []);
+    assert.equal(summary.started, 0);
+    assert.equal(summary.skipped, 1);
+    assert.equal(task.status, "human_review");
+  });
+
+  it("retries human_review tasks when auto_human_review is enabled", async () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_human_review", "true");
+    insertAgent(db, { id: "impl-1", role: "lead_engineer" });
+    const task = insertTask(db, {
+      id: "task-human-review-enabled",
+      status: "human_review",
+      assigned_agent_id: "impl-1",
+    });
+
+    const triggered: string[] = [];
+    const summary = await retryAutoStageTasks(db, ws as never, {
+      triggerHumanReview: async (retryTask) => {
+        triggered.push(`${retryTask.id}:${retryTask.status}`);
+      },
+    });
+
+    assert.deepEqual(triggered, [`${task.id}:human_review`]);
+    assert.equal(summary.started, 1);
+    assert.equal(summary.skipped, 0);
+  });
+
   it("re-evaluates skipped qa_testing tasks on the next dispatcher tick", async () => {
     const db = createDb();
     const ws = createWs();

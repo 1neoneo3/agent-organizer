@@ -251,6 +251,10 @@ type ResumeAgentResolutionResult =
   | { ok: true; agent: Agent; previousStatus: string }
   | { ok: false; error: "agent_not_found" | "agent_busy" | "no_runner_available" };
 
+function isRunnableStageRunner(agent: Agent): boolean {
+  return agent.status === "idle" && agent.agent_type === "worker" && agent.current_task_id === null;
+}
+
 function resolveAgentForResume(
   db: RuntimeContext["db"],
   task: Task,
@@ -275,6 +279,9 @@ function resolveAgentForResume(
   }
   if (runner.status === "working") {
     return { ok: false, error: "agent_busy" };
+  }
+  if (!isRunnableStageRunner(runner)) {
+    return { ok: false, error: "no_runner_available" };
   }
   return { ok: true, agent: runner, previousStatus };
 }

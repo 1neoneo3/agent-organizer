@@ -55,14 +55,16 @@ async function startServer(
 function insertAgent(
   db: DatabaseSync,
   agentId: string,
-  status: "idle" | "working",
+  status: "idle" | "working" | "offline",
   role: string | null = null,
+  agentType: "worker" | "ceo" = "worker",
+  currentTaskId: string | null = null,
 ): void {
   const now = Date.now();
   db.prepare(
-    `INSERT INTO agents (id, name, cli_provider, status, role, agent_type, created_at, updated_at)
-     VALUES (?, ?, 'claude', ?, ?, 'worker', ?, ?)`,
-  ).run(agentId, `Agent ${agentId}`, status, role, now, now);
+    `INSERT INTO agents (id, name, cli_provider, status, role, agent_type, current_task_id, created_at, updated_at)
+     VALUES (?, ?, 'claude', ?, ?, ?, ?, ?, ?)`,
+  ).run(agentId, `Agent ${agentId}`, status, role, agentType, currentTaskId, now, now);
 }
 
 let testTaskSeq = 9000;
@@ -474,6 +476,44 @@ describe("POST /tasks/:id/feedback auto-stage resume", () => {
       assert.equal(spawnCalls[0].taskStatus, "human_review");
       assert.equal(spawnCalls[0].assignedAgentId, implementerId);
       assert.equal(spawnCalls[0].previousStatus, "human_review");
+      assert.equal(getTaskField(db, taskId, "status"), "human_review");
+      assert.equal(getTaskField(db, taskId, "assigned_agent_id"), implementerId);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("does not resume guarded stages with an offline assigned runner", async () => {
+    const db = createDb();
+    const implementerId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, implementerId, "offline", "lead_engineer");
+    insertAutoStageTask(db, taskId, implementerId, "human_review");
+
+    const spawnCalls: string[] = [];
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async (_db, _ws, agent) => {
+        spawnCalls.push(agent.id);
+        return { pid: 1234 };
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Re-check the final review criteria." }),
+      });
+
+      assert.equal(response.status, 200);
+      const body = await response.json() as { restarted: boolean; resolution?: string };
+      assert.equal(body.restarted, false);
+      assert.equal(body.resolution, "no_runner_available");
+      assert.deepEqual(spawnCalls, []);
       assert.equal(getTaskField(db, taskId, "status"), "human_review");
       assert.equal(getTaskField(db, taskId, "assigned_agent_id"), implementerId);
     } finally {
