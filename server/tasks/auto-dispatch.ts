@@ -5,6 +5,9 @@ import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
 import { getMaxReviewCount, hasExhaustedReviewBudget } from "../domain/review-rules.js";
+import { resolveImplementerAgentForExecution } from "../domain/implementer-agent.js";
+import { loadProjectWorkflow } from "../workflow/loader.js";
+import { resolveActiveStages } from "../workflow/stage-pipeline.js";
 
 interface AutoDispatchOptions {
   autoAssign: boolean;
@@ -15,10 +18,22 @@ interface AutoDispatchOptions {
 export function pickIdleAgent(db: DatabaseSync): Agent | undefined {
   return db.prepare(
     `SELECT * FROM agents
-     WHERE status = 'idle' AND current_task_id IS NULL
+     WHERE status = 'idle' AND current_task_id IS NULL AND agent_type = 'worker'
      ORDER BY stats_tasks_done ASC, updated_at ASC
      LIMIT 1`
   ).get() as Agent | undefined;
+}
+
+function getFirstActiveStage(db: DatabaseSync, task: Task): string | undefined {
+  let workflow = null;
+  if (task.project_path) {
+    try {
+      workflow = loadProjectWorkflow(task.project_path);
+    } catch {
+      workflow = null;
+    }
+  }
+  return resolveActiveStages(db, workflow, task.task_size, task.id)[0];
 }
 
 export function autoDispatchTask(
@@ -40,8 +55,13 @@ export function autoDispatchTask(
     }
   }
 
+  const firstStage = getFirstActiveStage(db, task);
+
   if (!task.assigned_agent_id && options.autoAssign) {
-    const idleAgent = pickIdleAgent(db);
+    const resolution = firstStage === "refinement"
+      ? undefined
+      : resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, { taskId: task.id });
+    const idleAgent = resolution?.ok ? resolution.agent : pickIdleAgent(db);
     if (idleAgent) {
       const assignTs = Date.now();
       db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(idleAgent.id, assignTs, task.id);
@@ -56,9 +76,21 @@ export function autoDispatchTask(
     return task;
   }
 
-  const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
-  if (!agent || agent.status !== "idle") {
+  const resolution = firstStage === "refinement"
+    ? undefined
+    : resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, { taskId: task.id });
+  const agent = resolution?.ok
+    ? resolution.agent
+    : db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
+  if (!agent || agent.status !== "idle" || agent.current_task_id !== null) {
     return task;
+  }
+  if (task.assigned_agent_id !== agent.id) {
+    const assignTs = Date.now();
+    db.prepare("UPDATE tasks SET assigned_agent_id = ?, updated_at = ? WHERE id = ?").run(agent.id, assignTs, task.id);
+    task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+    if (!task) return undefined;
+    ws.broadcast("task_update", pickTaskUpdate(task, ["assigned_agent_id", "updated_at"]));
   }
 
   // Fire-and-forget: spawnAgent is async (awaits the Explore Phase) but

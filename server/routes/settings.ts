@@ -6,6 +6,8 @@ import {
   VALID_OUTPUT_LANGUAGES,
   VALID_WORKSPACE_MODES,
 } from "../config/runtime.js";
+import { isImplementerAgent } from "../domain/implementer-agent.js";
+import type { Agent } from "../types/runtime.js";
 
 const VALID_SETTINGS_KEYS = new Set([
   ...Object.keys(SETTINGS_DEFAULTS),
@@ -69,6 +71,27 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
     }
     if (invalidValues.length > 0) {
       return res.status(400).json({ error: "invalid_settings_values", details: invalidValues });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(parsed.data, "in_progress_agent_id")) {
+      const incoming = parsed.data.in_progress_agent_id.trim();
+      const currentRow = db.prepare("SELECT value FROM settings WHERE key = ?").get("in_progress_agent_id") as
+        | { value: string }
+        | undefined;
+      const current = currentRow?.value ?? SETTINGS_DEFAULTS.in_progress_agent_id;
+
+      if (incoming !== "" && incoming !== current) {
+        const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(incoming) as Agent | undefined;
+        if (!isImplementerAgent(agent)) {
+          return res.status(400).json({
+            error: "invalid_in_progress_agent_id",
+            key: "in_progress_agent_id",
+            value: incoming,
+            message: "in_progress_agent_id must be an existing worker implementer agent id",
+          });
+        }
+      }
+      parsed.data.in_progress_agent_id = incoming;
     }
 
     const upsert = db.prepare(

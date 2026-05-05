@@ -21,6 +21,7 @@ function createFixture() {
       name TEXT NOT NULL,
       agent_type TEXT NOT NULL DEFAULT 'worker',
       status TEXT NOT NULL DEFAULT 'idle',
+      current_task_id TEXT,
       role TEXT,
       cli_model TEXT
     );
@@ -39,17 +40,19 @@ function insertAgent(
     name?: string;
     agent_type?: "worker" | "ceo";
     status?: "idle" | "working" | "offline";
+    current_task_id?: string | null;
     role?: string | null;
     cli_model?: string | null;
   },
 ): void {
   db.prepare(
-    "INSERT INTO agents (id, name, agent_type, status, role, cli_model) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO agents (id, name, agent_type, status, current_task_id, role, cli_model) VALUES (?, ?, ?, ?, ?, ?, ?)",
   ).run(
     agent.id,
     agent.name ?? `agent-${agent.id}`,
     agent.agent_type ?? "worker",
     agent.status ?? "idle",
+    agent.current_task_id ?? null,
     agent.role ?? null,
     agent.cli_model ?? null,
   );
@@ -127,6 +130,12 @@ describe("resolveStageAgentOverride", () => {
 
   it("returns undefined when the agent is offline", () => {
     insertAgent(db, { id: "offline-reviewer", status: "offline", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
+  });
+
+  it("returns undefined when the agent already has current_task_id", () => {
+    insertAgent(db, { id: "busy-reviewer", status: "idle", current_task_id: "other-task", role: "code_reviewer" });
     setSetting(db, "review_agent_role", "code_reviewer");
     assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
   });

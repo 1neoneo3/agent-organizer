@@ -17,7 +17,7 @@ export type StageModelSettingKey =
  * Resolve a stage-specific default agent override from the settings
  * table. Returns a randomly chosen idle worker only when:
  *  - the stage role/model filters are non-empty,
- *  - at least one idle worker matches those filters,
+ *  - at least one idle worker with no current task matches those filters,
  *  - the chosen agent id is not in `excludeIds` (typically the implementer).
  *
  * Returns `undefined` in every other case so callers can fall back to
@@ -42,7 +42,7 @@ export function resolveStageAgentOverride(
   const model = modelRow?.value?.trim() || "";
   if (!role && !model) return undefined;
 
-  const where: string[] = ["agent_type = 'worker'", "status = 'idle'"];
+  const where: string[] = ["agent_type = 'worker'", "status = 'idle'", "current_task_id IS NULL"];
   const args: string[] = [];
 
   if (role) {

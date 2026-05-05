@@ -190,6 +190,61 @@ describe("dispatchAutoStartableTasks", () => {
     assert.equal(startedAgent.current_task_id, task.id);
   });
 
+  it("uses configured in_progress_agent_id for direct inbox implementation", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "false");
+    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertAgent(db, { id: "scored-impl", name: "Scored", role: "lead_engineer", stats_tasks_done: 100 });
+    insertAgent(db, { id: "configured-impl", name: "Configured", role: "architect", stats_tasks_done: 0 });
+    const task = insertTask(db, { title: "Implement assigned override" });
+    const started: Array<{ taskId: string; agentId: string }> = [];
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, agent) {
+        started.push({ taskId: taskToStart.id, agentId: agent.id });
+      },
+    });
+
+    const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(task.id) as {
+      assigned_agent_id: string | null;
+    };
+    assert.equal(result.started, 1);
+    assert.equal(row.assigned_agent_id, "configured-impl");
+    assert.deepEqual(started, [{ taskId: task.id, agentId: "configured-impl" }]);
+  });
+
+  it("falls back when configured in_progress_agent_id has current_task_id", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "false");
+    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertAgent(db, {
+      id: "configured-impl",
+      name: "Configured",
+      role: "lead_engineer",
+      status: "idle",
+      current_task_id: "other-task",
+    });
+    insertAgent(db, { id: "fallback-impl", name: "Fallback", role: "architect" });
+    const task = insertTask(db, { title: "Implement fallback override" });
+    const started: Array<{ taskId: string; agentId: string }> = [];
+
+    dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, agent) {
+        started.push({ taskId: taskToStart.id, agentId: agent.id });
+      },
+    });
+
+    const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(task.id) as {
+      assigned_agent_id: string | null;
+    };
+    assert.equal(row.assigned_agent_id, "fallback-impl");
+    assert.deepEqual(started, [{ taskId: task.id, agentId: "fallback-impl" }]);
+  });
+
   it("writes a skip reason when no idle worker is available", () => {
     const db = createDb();
     const ws = createWs();
@@ -217,7 +272,7 @@ describe("dispatchAutoStartableTasks", () => {
     assert.equal(result.started, 0);
     assert.equal(result.skipped, 1);
     assert.equal(logs.length, 1);
-    assert.match(logs[0].message, /no idle worker agent is available/i);
+    assert.match(logs[0].message, /no idle implementer agent is available/i);
   });
 
   it("writes a skip reason when github_only mode excludes a non-GitHub task", () => {

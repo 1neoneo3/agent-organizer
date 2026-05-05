@@ -71,6 +71,12 @@ describe("SETTINGS_DEFAULTS.output_language", () => {
   });
 });
 
+describe("SETTINGS_DEFAULTS.in_progress_agent_id", () => {
+  it("defaults to an empty string", () => {
+    assert.equal(SETTINGS_DEFAULTS.in_progress_agent_id, "");
+  });
+});
+
 describe("isOutputLanguage", () => {
   it("returns true for 'ja'", () => {
     assert.equal(isOutputLanguage("ja"), true);

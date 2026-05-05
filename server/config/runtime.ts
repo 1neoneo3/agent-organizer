@@ -181,6 +181,7 @@ export const SETTINGS_DEFAULTS = {
   // represent the implementer (in_progress) and is unaffected by these
   // settings. human_review has no auto-spawn path today, so no setting
   // is exposed for it.
+  in_progress_agent_id: "" as const,
   refinement_agent_role: "" as const,
   refinement_agent_model: "" as const,
   review_agent_role: "" as const,
