@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { SCHEMA_SQL } from "../db/schema.js";
 import type { Agent, Task } from "../types/runtime.js";
-import { dispatchAutoStartableTasks } from "./auto-dispatcher.js";
+import { dispatchAutoStartableTasks, retryAutoStageTasks } from "./auto-dispatcher.js";
 
 function createDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
@@ -705,5 +705,67 @@ describe("dispatchAutoStartableTasks", () => {
     assert.ok(result, "dispatch must return a summary, not propagate the throw");
     assert.ok(result!.skipped >= 1, `expected skipped >= 1, got ${result!.skipped}`);
     assert.equal(result!.started, 0);
+  });
+});
+
+describe("retryAutoStageTasks", () => {
+  it("re-evaluates skipped qa_testing tasks on the next dispatcher tick", async () => {
+    const db = createDb();
+    const ws = createWs();
+    const implementer = insertAgent(db, {
+      id: "impl-1",
+      name: "Implementer",
+      role: "lead_engineer",
+    });
+    insertAgent(db, {
+      id: "qa-1",
+      name: "QA Runner",
+      role: "tester",
+    });
+    const task = insertTask(db, {
+      id: "task-qa-retry",
+      title: "Retry QA",
+      status: "qa_testing",
+      assigned_agent_id: implementer.id,
+      started_at: 1_000,
+      completed_at: null,
+    });
+
+    const triggered: string[] = [];
+    const summary = await retryAutoStageTasks(db, ws as never, {
+      triggerQa: async (retryTask) => {
+        triggered.push(`${retryTask.id}:${retryTask.status}`);
+      },
+    });
+
+    assert.deepEqual(triggered, [`${task.id}:qa_testing`]);
+    assert.equal(summary.started, 1);
+    assert.equal(summary.skipped, 0);
+  });
+
+  it("does not retry auto-stage tasks that already have pending spawns", async () => {
+    const db = createDb();
+    const ws = createWs();
+    insertAgent(db, { id: "impl-1", role: "lead_engineer" });
+    const task = insertTask(db, {
+      id: "task-pending-retry",
+      status: "test_generation",
+      assigned_agent_id: "impl-1",
+    });
+
+    const { tryStartPendingSpawn, clearPendingSpawn } = await import("../spawner/process-manager.js");
+    assert.equal(tryStartPendingSpawn(task.id), true);
+    try {
+      const summary = await retryAutoStageTasks(db, ws as never, {
+        triggerTestGen: async () => {
+          throw new Error("should not retry a pending spawn");
+        },
+      });
+
+      assert.equal(summary.started, 0);
+      assert.equal(summary.skipped, 1);
+    } finally {
+      clearPendingSpawn(task.id);
+    }
   });
 });

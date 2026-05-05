@@ -302,6 +302,58 @@ describe("spawnAgent preflight cleanup", () => {
     }
   });
 
+  it("guards parallelTester as effective test_generation before any subprocess spawn", async () => {
+    const db = createDb();
+    const tempProject = mkdtempSync(join(tmpdir(), "ao-parallel-stage-guard-"));
+    try {
+      insertAgent(db, {
+        id: "implementer",
+        status: "idle",
+        role: "lead_engineer",
+      });
+      insertAgent(db, {
+        id: "generic-tester",
+        status: "idle",
+        role: "tester",
+      });
+      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+      db.prepare("INSERT INTO settings (key, value) VALUES ('test_generation_agent_role', 'special_tester')").run();
+      const task = insertTask(db, {
+        id: "task-parallel-stage-guard",
+        status: "in_progress",
+        project_path: tempProject,
+        assigned_agent_id: "implementer",
+      });
+
+      const result = await spawnAgent(
+        db,
+        createWsStub(),
+        createAgent({ id: "generic-tester", role: "tester" }),
+        task,
+        { parallelTester: true },
+      );
+
+      assert.equal(result.pid, 0);
+
+      const testerRow = db
+        .prepare("SELECT status, current_task_id FROM agents WHERE id = ?")
+        .get("generic-tester") as { status: string; current_task_id: string | null };
+      assert.equal(testerRow.status, "idle");
+      assert.equal(testerRow.current_task_id, null);
+
+      const log = db
+        .prepare("SELECT message, stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT 1")
+        .get(task.id) as { message: string; stage: string; agent_id: string | null } | undefined;
+      assert.ok(log);
+      assert.equal(log.stage, "test_generation");
+      assert.equal(log.agent_id, "generic-tester");
+      assert.match(log.message, /Stage-specific runner guard/);
+    } finally {
+      rmSync(tempProject, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it("clears pendingSpawns when workspace preparation throws before child spawn", async () => {
     const db = createDb();
     const tempProject = mkdtempSync(join(tmpdir(), "ao-preflight-fail-"));
@@ -406,6 +458,51 @@ describe("spawnAgent preflight cleanup", () => {
 });
 
 describe("spawnSecondaryReviewer fd-leak resilience", () => {
+  it("does not let a configured review override be bypassed by a raw secondary reviewer spawn", () => {
+    const db = createDb();
+    const tempProject = mkdtempSync(join(tmpdir(), "ao-secondary-stage-guard-"));
+    try {
+      insertAgent(db, { id: "implementer", status: "idle", role: "lead_engineer" });
+      insertAgent(db, { id: "code-override", status: "idle", role: "code_reviewer" });
+      insertAgent(db, { id: "security-secondary", status: "idle", role: "security_reviewer" });
+      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+      db.prepare("INSERT INTO settings (key, value) VALUES ('review_agent_role', 'code_reviewer')").run();
+      const task = insertTask(db, {
+        id: "task-secondary-stage-guard",
+        status: "pr_review",
+        project_path: tempProject,
+        assigned_agent_id: "implementer",
+      });
+      initReviewerSession(task.id, ["code", "security"]);
+
+      spawnSecondaryReviewer(
+        db,
+        createWsStub(),
+        createAgent({ id: "security-secondary", role: "security_reviewer" }),
+        task,
+        "security",
+      );
+
+      const secondaryRow = db
+        .prepare("SELECT status, current_task_id FROM agents WHERE id = ?")
+        .get("security-secondary") as { status: string; current_task_id: string | null };
+      assert.equal(secondaryRow.status, "idle");
+      assert.equal(secondaryRow.current_task_id, null);
+
+      const log = db
+        .prepare("SELECT message, stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT 1")
+        .get(task.id) as { message: string; stage: string; agent_id: string | null } | undefined;
+      assert.ok(log);
+      assert.equal(log.stage, "pr_review");
+      assert.equal(log.agent_id, "security-secondary");
+      assert.match(log.message, /Stage-specific runner guard/);
+    } finally {
+      clearReviewerSession("task-secondary-stage-guard");
+      rmSync(tempProject, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it(
     "does not leak the per-task log stream when workspace preparation throws",
     { skip: !HAS_PROC_SELF_FD ? "requires /proc/self/fd (Linux)" : false },

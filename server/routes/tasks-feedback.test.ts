@@ -9,6 +9,10 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { createTasksRouter } from "./tasks.js";
 import { initializeDb } from "../db/runtime.js";
+import {
+  clearPendingInteractivePrompt,
+  getAllPendingInteractivePrompts,
+} from "../spawner/process-manager.js";
 
 function createWsRecorder() {
   const events: Array<{ type: string; payload: unknown; options?: unknown }> = [];
@@ -48,12 +52,17 @@ async function startServer(
   return { server, baseUrl: `http://127.0.0.1:${address.port}`, events };
 }
 
-function insertAgent(db: DatabaseSync, agentId: string, status: "idle" | "working"): void {
+function insertAgent(
+  db: DatabaseSync,
+  agentId: string,
+  status: "idle" | "working",
+  role: string | null = null,
+): void {
   const now = Date.now();
   db.prepare(
-    `INSERT INTO agents (id, name, cli_provider, status, created_at, updated_at)
-     VALUES (?, ?, 'claude', ?, ?, ?)`,
-  ).run(agentId, `Agent ${agentId}`, status, now, now);
+    `INSERT INTO agents (id, name, cli_provider, status, role, agent_type, created_at, updated_at)
+     VALUES (?, ?, 'claude', ?, ?, 'worker', ?, ?)`,
+  ).run(agentId, `Agent ${agentId}`, status, role, now, now);
 }
 
 let testTaskSeq = 9000;
@@ -65,6 +74,21 @@ function insertRefinementTask(db: DatabaseSync, taskId: string, agentId: string)
       id, title, description, assigned_agent_id, status, task_size, task_number, created_at, updated_at
     ) VALUES (?, ?, ?, ?, 'refinement', 'medium', ?, ?, ?)`,
   ).run(taskId, "Refinement feedback test task", "Refinement feedback regression", agentId, taskNumber, now, now);
+}
+
+function insertAutoStageTask(
+  db: DatabaseSync,
+  taskId: string,
+  agentId: string,
+  status: "test_generation" | "qa_testing" | "pr_review" | "human_review",
+): void {
+  const now = Date.now();
+  const taskNumber = `#${++testTaskSeq}`;
+  db.prepare(
+    `INSERT INTO tasks (
+      id, title, description, assigned_agent_id, status, task_size, task_number, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'medium', ?, ?, ?)`,
+  ).run(taskId, "Auto-stage feedback test task", "Auto-stage resume regression", agentId, status, taskNumber, now, now);
 }
 
 function getTransitions(db: DatabaseSync, taskId: string): string[] {
@@ -309,6 +333,149 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.",
         "__STAGE_TRANSITION__:inbox→refinement",
       ]);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+describe("POST /tasks/:id/interactive-response auto-stage resume", () => {
+  let tmpFeedbackDir: string;
+
+  beforeEach(() => {
+    tmpFeedbackDir = mkdtempSync(join(tmpdir(), "ao-interactive-test-"));
+    process.env.AO_FEEDBACK_DIR = tmpFeedbackDir;
+  });
+
+  afterEach(() => {
+    delete process.env.AO_FEEDBACK_DIR;
+    rmSync(tmpFeedbackDir, { recursive: true, force: true });
+  });
+
+  it("resumes an auto-stage prompt with the saved runner and stage without implementer fallback", async () => {
+    const db = createDb();
+    const implementerId = randomUUID();
+    const qaRunnerId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, implementerId, "idle", "lead_engineer");
+    insertAgent(db, qaRunnerId, "idle", "tester");
+    insertAutoStageTask(db, taskId, implementerId, "qa_testing");
+
+    getAllPendingInteractivePrompts().set(taskId, {
+      data: {
+        promptType: "ask_user_question",
+        toolUseId: "tool-1",
+        questions: [{ question: "Scope?", options: [{ label: "Full" }] }],
+      },
+      createdAt: Date.now(),
+      spawnStage: "qa_testing",
+      runnerAgentId: qaRunnerId,
+    } as never);
+
+    const spawnCalls: Array<{
+      agentId: string;
+      taskStatus: string;
+      assignedAgentId: string | null;
+      previousStatus: string | undefined;
+    }> = [];
+    const { server, baseUrl } = await startServer(db, {
+      spawnAgent: async (_db, _ws, agent, task, options) => {
+        spawnCalls.push({
+          agentId: agent.id,
+          taskStatus: task.status,
+          assignedAgentId: task.assigned_agent_id,
+          previousStatus: options?.previousStatus,
+        });
+        return { pid: 1234 };
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/interactive-response`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          promptType: "ask_user_question",
+          selectedOptions: { "Scope?": "Full" },
+        }),
+      });
+
+      assert.equal(response.status, 200);
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnCalls.length, 1);
+      assert.equal(spawnCalls[0].agentId, qaRunnerId);
+      assert.equal(spawnCalls[0].taskStatus, "qa_testing");
+      assert.equal(spawnCalls[0].assignedAgentId, implementerId);
+      assert.equal(spawnCalls[0].previousStatus, "qa_testing");
+      assert.equal(getTaskField(db, taskId, "status"), "qa_testing");
+      assert.equal(getTaskField(db, taskId, "assigned_agent_id"), implementerId);
+    } finally {
+      clearPendingInteractivePrompt(taskId, db);
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+});
+
+describe("POST /tasks/:id/feedback auto-stage resume", () => {
+  let tmpFeedbackDir: string;
+
+  beforeEach(() => {
+    tmpFeedbackDir = mkdtempSync(join(tmpdir(), "ao-feedback-autostage-test-"));
+    process.env.AO_FEEDBACK_DIR = tmpFeedbackDir;
+  });
+
+  afterEach(() => {
+    delete process.env.AO_FEEDBACK_DIR;
+    rmSync(tmpFeedbackDir, { recursive: true, force: true });
+  });
+
+  it("keeps human_review as the resume stage instead of forcing in_progress", async () => {
+    const db = createDb();
+    const implementerId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, implementerId, "idle", "lead_engineer");
+    insertAutoStageTask(db, taskId, implementerId, "human_review");
+
+    const spawnCalls: Array<{
+      taskStatus: string;
+      assignedAgentId: string | null;
+      previousStatus: string | undefined;
+    }> = [];
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async (_db, _ws, _agent, task, options) => {
+        spawnCalls.push({
+          taskStatus: task.status,
+          assignedAgentId: task.assigned_agent_id,
+          previousStatus: options?.previousStatus,
+        });
+        return { pid: 1234 };
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Re-check the final review criteria." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as { restarted: boolean };
+      assert.equal(body.restarted, true);
+      assert.equal(spawnCalls.length, 1);
+      assert.equal(spawnCalls[0].taskStatus, "human_review");
+      assert.equal(spawnCalls[0].assignedAgentId, implementerId);
+      assert.equal(spawnCalls[0].previousStatus, "human_review");
+      assert.equal(getTaskField(db, taskId, "status"), "human_review");
+      assert.equal(getTaskField(db, taskId, "assigned_agent_id"), implementerId);
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {

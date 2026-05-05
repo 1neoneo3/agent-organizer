@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { WsHub } from "../ws/hub.js";
 import type { Agent, Task } from "../types/runtime.js";
+import { resolveTestGenAgent } from "../spawner/auto-test-gen.js";
 
 /**
  * AO Phase 3: parallel implementer + tester orchestration.
@@ -79,6 +80,7 @@ export type TriggerReason =
   | "disabled"
   | "wrong_status"
   | "no_agent"
+  | "stage_guard"
   | "already_done"
   | "spawned";
 
@@ -137,7 +139,24 @@ export async function triggerParallelTester(
     return { started: false, reason: "already_done" };
   }
 
-  const tester = findTesterAgent(db, task.assigned_agent_id);
+  const decision = resolveTestGenAgent(db, task.assigned_agent_id);
+  if (decision.kind === "skip") {
+    logSystem(db, task.id, decision.reason);
+    ws.broadcast(
+      "cli_output",
+      [
+        {
+          task_id: task.id,
+          kind: "system",
+          message: `[Parallel Tester] ${decision.reason}`,
+        },
+      ],
+      { taskId: task.id },
+    );
+    return { started: false, reason: "stage_guard" };
+  }
+
+  const tester = decision.agent;
   if (!tester) {
     logSystem(
       db,
@@ -184,33 +203,6 @@ export async function triggerParallelTester(
   });
 
   return { started: true, reason: "spawned" };
-}
-
-/**
- * Find an idle tester agent, preferring ones with role="tester", falling
- * back to any idle worker that is not the current implementer. Mirrors the
- * selection strategy used by `auto-test-gen.ts` so parallel mode and serial
- * mode pick the same agents.
- */
-function findTesterAgent(
-  db: DatabaseSync,
-  implementerAgentId: string | null,
-): Agent | undefined {
-  const testerByRole = db
-    .prepare(
-      "SELECT * FROM agents WHERE role = 'tester' AND status = 'idle' AND id != ? LIMIT 1",
-    )
-    .get(implementerAgentId ?? "") as Agent | undefined;
-
-  if (testerByRole) return testerByRole;
-
-  const anyIdle = db
-    .prepare(
-      "SELECT * FROM agents WHERE status = 'idle' AND agent_type = 'worker' AND id != ? LIMIT 1",
-    )
-    .get(implementerAgentId ?? "") as Agent | undefined;
-
-  return anyIdle;
 }
 
 function logSystem(db: DatabaseSync, taskId: string, message: string): void {

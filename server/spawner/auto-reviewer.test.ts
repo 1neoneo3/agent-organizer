@@ -401,7 +401,7 @@ describe("findReviewAgents (settings override integration)", () => {
     assert.equal(decision.kind, "skip");
   });
 
-  it("strict mode: pairs the override match with an idle security_reviewer secondary slot", () => {
+  it("strict mode: does not add a secondary reviewer when review_agent_role/model is configured", () => {
     const db = createDb();
     insertAgent(db, { id: "code-override", role: "code_reviewer", cli_model: "claude-opus-4-7" });
     insertAgent(db, { id: "sec-1", role: "security_reviewer" });
@@ -411,15 +411,13 @@ describe("findReviewAgents (settings override integration)", () => {
     const decision = resolveReviewPanel(db as never, null);
     assert.equal(decision.kind, "panel");
     if (decision.kind === "panel") {
-      assert.equal(decision.assignments.length, 2);
+      assert.equal(decision.assignments.length, 1);
       assert.equal(decision.assignments[0].agent.id, "code-override");
       assert.equal(decision.assignments[0].role, "code");
-      assert.equal(decision.assignments[1].agent.id, "sec-1");
-      assert.equal(decision.assignments[1].role, "security");
     }
   });
 
-  it("override agent does not block the security reviewer secondary slot", () => {
+  it("strict mode: findReviewAgents also omits secondary reviewers when review override is configured", () => {
     const db = createDb();
     insertAgent(db, { id: "code-override", role: "code_reviewer", cli_model: "gpt-5.5" });
     insertAgent(db, { id: "sec-1", role: "security_reviewer" });
@@ -427,10 +425,8 @@ describe("findReviewAgents (settings override integration)", () => {
     setSetting(db, "review_agent_model", "gpt-5.5");
 
     const panel = findReviewAgents(db as never, null);
-    assert.equal(panel.length, 2);
+    assert.equal(panel.length, 1);
     assert.equal(panel[0].agent.id, "code-override");
     assert.equal(panel[0].role, "code");
-    assert.equal(panel[1].agent.id, "sec-1");
-    assert.equal(panel[1].role, "security");
   });
 });

@@ -67,7 +67,17 @@ const activeProcesses = new Map<string, ChildProcess>();
 const pendingSpawns = new Set<string>();
 const pendingFeedback = new Map<string, { message: string; previousStatus: string }>();
 const capturedSessionIds = new Map<string, string>(); // taskId -> claude session_id
-const pendingInteractivePrompts = new Map<string, { data: InteractivePromptData; createdAt: number }>();
+
+export interface PendingInteractivePromptEntry {
+  data: InteractivePromptData;
+  createdAt: number;
+  spawnStage?: string;
+  runnerAgentId?: string | null;
+  reviewerRole?: ReviewerRole;
+  parallelTester?: boolean;
+}
+
+const pendingInteractivePrompts = new Map<string, PendingInteractivePromptEntry>();
 const timeoutReasons = new Map<string, "idle_timeout" | "hard_timeout">(); // taskId -> timeout reason
 
 function formatWorkflowHookLog(
@@ -161,28 +171,28 @@ export function clearReviewerSession(taskId: string): void {
 /** Restore pending interactive prompts from DB on server startup */
 export function restorePendingInteractivePrompts(db: DatabaseSync): void {
   const rows = db.prepare(
-    "SELECT id, interactive_prompt_data FROM tasks WHERE interactive_prompt_data IS NOT NULL AND status = 'in_progress'"
+    "SELECT id, interactive_prompt_data FROM tasks WHERE interactive_prompt_data IS NOT NULL AND status NOT IN ('done', 'cancelled')"
   ).all() as Array<{ id: string; interactive_prompt_data: string }>;
   for (const row of rows) {
     try {
-      const parsed = JSON.parse(row.interactive_prompt_data) as { data: InteractivePromptData; createdAt: number };
+      const parsed = JSON.parse(row.interactive_prompt_data) as PendingInteractivePromptEntry;
       pendingInteractivePrompts.set(row.id, parsed);
     } catch { /* ignore corrupted data */ }
   }
 }
 
-function persistPromptToDb(db: DatabaseSync, taskId: string, entry: { data: InteractivePromptData; createdAt: number } | null): void {
+function persistPromptToDb(db: DatabaseSync, taskId: string, entry: PendingInteractivePromptEntry | null): void {
   try {
     db.prepare("UPDATE tasks SET interactive_prompt_data = ? WHERE id = ?")
       .run(entry ? JSON.stringify(entry) : null, taskId);
   } catch { /* best-effort persist */ }
 }
 
-export function getPendingInteractivePrompt(taskId: string): { data: InteractivePromptData; createdAt: number } | undefined {
+export function getPendingInteractivePrompt(taskId: string): PendingInteractivePromptEntry | undefined {
   return pendingInteractivePrompts.get(taskId);
 }
 
-export function getAllPendingInteractivePrompts(): Map<string, { data: InteractivePromptData; createdAt: number }> {
+export function getAllPendingInteractivePrompts(): Map<string, PendingInteractivePromptEntry> {
   return pendingInteractivePrompts;
 }
 
@@ -789,51 +799,8 @@ export async function spawnAgent(
   const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
 
-  if (!isParallelTester) {
-    const runnerResolution = resolveStageRunner(db, task.status, agent, task.assigned_agent_id);
-    if (runnerResolution.status === "redirect") {
-      db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
-      ).run(task.id, runnerResolution.reason, task.status, agent.id);
-      ws.broadcast(
-        "cli_output",
-        [{ task_id: task.id, kind: "system", message: runnerResolution.reason }],
-        { taskId: task.id },
-      );
-      return spawnAgent(db, ws, runnerResolution.agent, task, options);
-    }
-    if (runnerResolution.status === "skip") {
-      db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
-      ).run(task.id, runnerResolution.reason, task.status, agent.id);
-      ws.broadcast(
-        "cli_output",
-        [{ task_id: task.id, kind: "system", message: runnerResolution.reason }],
-        { taskId: task.id },
-      );
-      return { pid: 0 };
-    }
-  }
-
-  // Duplicate-spawn guard: if a process is already running for this task
-  // (parallelTester shares a worktree with the implementer and is allowed
-  // to overlap), short-circuit instead of starting a second one. This
-  // protects against orphan-recovery re-spawn racing with a user Run click
-  // or a stale active-process entry.
-  if (!isParallelTester && !isContinue) {
-    if (!tryStartPendingSpawn(task.id)) {
-      return { pid: 0 };
-    }
-    const existing = activeProcesses.get(task.id);
-    if (existing && existing.pid !== undefined && !existing.killed) {
-      clearPendingSpawn(task.id);
-      return { pid: existing.pid };
-    }
-  }
   const projectPath = task.project_path ?? process.cwd();
   const workflow = loadProjectWorkflow(projectPath);
-  const workspaceMode = resolveWorkspaceMode(workflow, db);
-  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
 
   const isReviewRun = isReviewRunTask(task, options?.previousStatus);
   const isHumanReviewRun = isHumanReviewRunTask(task, options?.previousStatus);
@@ -845,11 +812,14 @@ export async function spawnAgent(
   // must NOT run for human_review.
   const isReviewLikeRun = isReviewRun || isHumanReviewRun;
 
-  const isQaRun = task.status === "qa_testing";
+  const isQaRun = task.status === "qa_testing" || options?.previousStatus === "qa_testing";
   // A parallel tester spawn runs the test_generation prompt even though
   // the task's status stays in_progress, so treat it as a test-gen run
   // for tool-restrictions, handoff context, and prompt routing.
-  const isTestGenRun = task.status === "test_generation" || isParallelTester;
+  const isTestGenRun =
+    task.status === "test_generation" ||
+    options?.previousStatus === "test_generation" ||
+    isParallelTester;
   // Refinement: task is already in refinement status, or dispatching from
   // inbox when refinement is the first active stage in the pipeline.
   // Skip refinement if the task already has a completed refinement plan
@@ -897,6 +867,50 @@ export async function spawnAgent(
     : isQaRun ? "qa_testing"
     : isTestGenRun ? "test_generation"
     : "in_progress";
+
+  const runnerResolution = resolveStageRunner(db, spawnStage, agent, task.assigned_agent_id);
+  if (runnerResolution.status === "redirect") {
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
+    ).run(task.id, runnerResolution.reason, spawnStage, agent.id);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: task.id, kind: "system", message: runnerResolution.reason }],
+      { taskId: task.id },
+    );
+    return spawnAgent(db, ws, runnerResolution.agent, task, options);
+  }
+  if (runnerResolution.status === "skip") {
+    clearPendingSpawn(task.id);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
+    ).run(task.id, runnerResolution.reason, spawnStage, agent.id);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: task.id, kind: "system", message: runnerResolution.reason }],
+      { taskId: task.id },
+    );
+    return { pid: 0 };
+  }
+
+  // Duplicate-spawn guard: if a process is already running for this task
+  // (parallelTester shares a worktree with the implementer and is allowed
+  // to overlap), short-circuit instead of starting a second one. This
+  // protects against orphan-recovery re-spawn racing with a user Run click
+  // or a stale active-process entry.
+  if (!isParallelTester && !isContinue) {
+    if (!tryStartPendingSpawn(task.id)) {
+      return { pid: 0 };
+    }
+    const existing = activeProcesses.get(task.id);
+    if (existing && existing.pid !== undefined && !existing.killed) {
+      clearPendingSpawn(task.id);
+      return { pid: existing.pid };
+    }
+  }
+
+  const workspaceMode = resolveWorkspaceMode(workflow, db);
+  const runtimePolicy = resolveAgentRuntimePolicy(agent, workflow);
 
   // Timestamp for log queries that want to scope results to "this spawn".
   // We cannot reuse `task.started_at` here because performFinalization's
@@ -1441,7 +1455,14 @@ export async function spawnAgent(
         // The user will respond via the UI, then the agent is respawned with --resume.
         const interactivePrompt = parseInteractivePrompt(obj);
         if (interactivePrompt && !pendingInteractivePrompts.has(task.id)) {
-          const entry = { data: interactivePrompt, createdAt: Date.now() };
+          const entry: PendingInteractivePromptEntry = {
+            data: interactivePrompt,
+            createdAt: Date.now(),
+            spawnStage,
+            runnerAgentId: agent.id,
+            reviewerRole: options?.reviewerRole,
+            parallelTester: isParallelTester,
+          };
           pendingInteractivePrompts.set(task.id, entry);
           persistPromptToDb(db, task.id, entry);
           ws.broadcast("interactive_prompt", { task_id: task.id, ...interactivePrompt });
@@ -1468,7 +1489,14 @@ export async function spawnAgent(
           const useStrictMode = spawnStage === "in_progress" || spawnStage === "test_generation";
           const textPrompt = detectTextInteractivePrompt(event.message, { strictMode: useStrictMode });
           if (textPrompt) {
-            const entry = { data: textPrompt, createdAt: Date.now() };
+            const entry: PendingInteractivePromptEntry = {
+              data: textPrompt,
+              createdAt: Date.now(),
+              spawnStage,
+              runnerAgentId: agent.id,
+              reviewerRole: options?.reviewerRole,
+              parallelTester: isParallelTester,
+            };
             pendingInteractivePrompts.set(task.id, entry);
             persistPromptToDb(db, task.id, entry);
             ws.broadcast("interactive_prompt", { task_id: task.id, ...textPrompt });
@@ -2242,6 +2270,24 @@ export function spawnSecondaryReviewer(
     // Defensive: if no session exists, skip spawning. This should never
     // happen because auto-reviewer.ts always calls initReviewerSession
     // before spawnSecondaryReviewer.
+    return;
+  }
+
+  const runnerResolution = resolveStageRunner(db, "pr_review", agent, task.assigned_agent_id);
+  if (runnerResolution.status === "redirect" || runnerResolution.status === "skip") {
+    const message =
+      runnerResolution.status === "skip"
+        ? runnerResolution.reason
+        : `Stage-specific runner guard: pr_review requires review_agent_role/model; ` +
+          `secondary reviewer "${agent.name}" (${agent.id}) is not the configured runner, skipping secondary reviewer.`;
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, 'pr_review', ?)",
+    ).run(task.id, message, agent.id);
+    ws.broadcast(
+      "cli_output",
+      [{ task_id: task.id, kind: "system", message }],
+      { taskId: task.id },
+    );
     return;
   }
 
