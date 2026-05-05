@@ -57,6 +57,7 @@ const inputStyle = {
 export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   const [local, setLocal] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
@@ -86,9 +87,12 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await updateSettings(local);
       onReload();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -444,6 +448,9 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         >
           {saving ? "Saving..." : "Save Settings"}
         </button>
+        {saveError ? (
+          <p style={{ fontSize: "12px", color: "var(--status-cancelled)", margin: "-16px 0 0 0" }}>{saveError}</p>
+        ) : null}
       </div>
     </div>
   );

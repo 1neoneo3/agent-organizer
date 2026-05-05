@@ -87,4 +87,37 @@ describe("settings API", () => {
       await closeServer(server);
     }
   });
+
+  it("allows saving the full settings payload when workflow command keys already exist", async () => {
+    const { db, server, baseUrl } = await setupServer();
+
+    try {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("check_types_cmd", "npm run check");
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("check_lint_cmd", "");
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("refinement_as_pr", "false");
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("human_review_count", "2");
+
+      const currentResponse = await fetch(`${baseUrl}/settings`);
+      assert.equal(currentResponse.status, 200);
+      const current = (await currentResponse.json()) as Record<string, string>;
+
+      const response = await fetch(`${baseUrl}/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...current,
+          output_language: "en",
+        }),
+      });
+
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as Record<string, string>;
+      assert.equal(body.output_language, "en");
+      assert.equal(body.check_types_cmd, "npm run check");
+      assert.equal(body.refinement_as_pr, "false");
+      assert.equal(body.human_review_count, "2");
+    } finally {
+      await closeServer(server);
+    }
+  });
 });

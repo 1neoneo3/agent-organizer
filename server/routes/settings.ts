@@ -17,6 +17,12 @@ const VALID_SETTINGS_KEYS = new Set([
   "github_write_allowed_repos",
   "github_write_token_passthrough",
   "auto_done",
+  "refinement_as_pr",
+  "human_review_count",
+  "check_types_cmd",
+  "check_lint_cmd",
+  "check_tests_cmd",
+  "check_e2e_cmd",
 ]);
 
 // Per-key enum validation runs after the generic record<string,string> parse.
