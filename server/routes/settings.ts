@@ -68,7 +68,8 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
     const parsed = UpdateSettingsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const unknownKeys = Object.keys(parsed.data).filter(k => !VALID_SETTINGS_KEYS.has(k));
+    const existingKeys = new Set(Object.keys(readAllSettings()));
+    const unknownKeys = Object.keys(parsed.data).filter(k => !VALID_SETTINGS_KEYS.has(k) && !existingKeys.has(k));
     if (unknownKeys.length > 0) {
       return res.status(400).json({ error: "unknown_settings_keys", keys: unknownKeys });
     }

@@ -96,6 +96,8 @@ describe("settings API", () => {
       db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("check_lint_cmd", "");
       db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("refinement_as_pr", "false");
       db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("human_review_count", "2");
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("in_progress_agent_role", "lead_engineer");
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run("in_progress_agent_model", "claude-opus-4-6");
 
       const currentResponse = await fetch(`${baseUrl}/settings`);
       assert.equal(currentResponse.status, 200);
@@ -116,6 +118,26 @@ describe("settings API", () => {
       assert.equal(body.check_types_cmd, "npm run check");
       assert.equal(body.refinement_as_pr, "false");
       assert.equal(body.human_review_count, "2");
+      assert.equal(body.in_progress_agent_role, "lead_engineer");
+      assert.equal(body.in_progress_agent_model, "claude-opus-4-6");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("still rejects unknown settings keys that are not already present", async () => {
+    const { server, baseUrl } = await setupServer();
+
+    try {
+      const response = await fetch(`${baseUrl}/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ typo_setting_key: "true" }),
+      });
+      assert.equal(response.status, 400);
+      const body = (await response.json()) as { error: string; keys: string[] };
+      assert.equal(body.error, "unknown_settings_keys");
+      assert.deepEqual(body.keys, ["typo_setting_key"]);
     } finally {
       await closeServer(server);
     }
