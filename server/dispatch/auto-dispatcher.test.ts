@@ -215,6 +215,34 @@ describe("dispatchAutoStartableTasks", () => {
     assert.deepEqual(started, [{ taskId: task.id, agentId: "configured-impl" }]);
   });
 
+  it("uses configured in_progress_agent_id when a refinement-completed inbox task retries", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "true");
+    insertSetting(db, "refinement_agent_role", "planner");
+    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertAgent(db, { id: "planner", name: "Planner", role: "planner", stats_tasks_done: 0 });
+    insertAgent(db, { id: "configured-impl", name: "Configured", role: "lead_engineer", stats_tasks_done: 10 });
+    const task = insertTask(db, { title: "Implement after approved plan retry" });
+    db.prepare("UPDATE tasks SET refinement_plan = ?, refinement_completed_at = ? WHERE id = ?")
+      .run("---REFINEMENT PLAN---\nReady", Date.now(), task.id);
+    const started: Array<{ taskId: string; agentId: string }> = [];
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, agent) {
+        started.push({ taskId: taskToStart.id, agentId: agent.id });
+      },
+    });
+
+    const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get(task.id) as {
+      assigned_agent_id: string | null;
+    };
+    assert.equal(result.started, 1);
+    assert.equal(row.assigned_agent_id, "configured-impl");
+    assert.deepEqual(started, [{ taskId: task.id, agentId: "configured-impl" }]);
+  });
+
   it("falls back when configured in_progress_agent_id has current_task_id", () => {
     const db = createDb();
     const ws = createWs();

@@ -163,8 +163,7 @@ function resolveRefinementAgentForInbox(
   if (!override) return undefined;
   if (!availableAgents.has(override.id)) return undefined;
 
-  const activeStages = resolveTaskActiveStages(db, task);
-  if (activeStages[0] !== "refinement") return undefined;
+  if (resolveFirstInboxExecutionStage(db, task) !== "refinement") return undefined;
 
   return override;
 }
@@ -183,6 +182,18 @@ function resolveTaskActiveStages(db: DatabaseSync, task: Task): ReturnType<typeo
     }
   }
   return resolveActiveStages(db, workflow, task.task_size, task.id);
+}
+
+function hasCompletedRefinementPlan(task: Task): boolean {
+  return !!task.refinement_plan && task.refinement_completed_at != null;
+}
+
+function resolveFirstInboxExecutionStage(db: DatabaseSync, task: Task): string | undefined {
+  const activeStages = resolveTaskActiveStages(db, task);
+  if (activeStages[0] === "refinement" && hasCompletedRefinementPlan(task)) {
+    return activeStages[1] ?? activeStages[0];
+  }
+  return activeStages[0];
 }
 
 function chooseBestAgent(task: Task, agents: Agent[]): Agent | undefined {
@@ -325,12 +336,12 @@ export function dispatchAutoStartableTasks(
       continue;
     }
 
-    const activeStages = resolveTaskActiveStages(db, task);
+    const firstExecutionStage = resolveFirstInboxExecutionStage(db, task);
     const usedAgentIds = idleWorkers
       .filter((agent) => !availableAgents.has(agent.id))
       .map((agent) => agent.id);
 
-    if (activeStages[0] !== "refinement") {
+    if (firstExecutionStage !== "refinement") {
       const resolution = resolveImplementerAgentForExecution(db, task.assigned_agent_id, undefined, {
         taskId: task.id,
         excludeIds: usedAgentIds,
