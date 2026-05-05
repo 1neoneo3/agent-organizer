@@ -87,6 +87,44 @@ function insertRefinementTask(db: DatabaseSync, taskId: string, assignedAgentId:
 }
 
 describe("POST /tasks/:id/approve refinement implementer assignment", () => {
+  it("assigns and auto-runs the configured in_progress_agent_id after refinement approval", async () => {
+    const db = initializeDb(":memory:");
+    insertSetting(db, "default_enable_refinement", "true");
+    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertAgent(db, { id: "refinement-runner", role: "planner" });
+    insertAgent(db, { id: "configured-impl", role: "architect" });
+    insertAgent(db, { id: "fallback-impl", role: "lead_engineer" });
+    insertRefinementTask(db, "task-approve-configured", "refinement-runner");
+
+    const spawned: Array<{ agentId: string; taskId: string }> = [];
+    const { server, baseUrl } = await startServer(db, {
+      spawnAgent: async (_db, _ws, agent, task) => {
+        spawned.push({ agentId: agent.id, taskId: task.id });
+        return { pid: 123 } as never;
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/task-approve-configured/approve`, { method: "POST" });
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { approved: boolean; next_status: string };
+      assert.deepEqual(body, { approved: true, next_status: "in_progress" });
+
+      const row = db.prepare("SELECT status, assigned_agent_id FROM tasks WHERE id = ?").get("task-approve-configured") as {
+        status: string;
+        assigned_agent_id: string | null;
+      };
+      assert.equal(row.status, "in_progress");
+      assert.equal(row.assigned_agent_id, "configured-impl");
+
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.deepEqual(spawned, [{ agentId: "configured-impl", taskId: "task-approve-configured" }]);
+    } finally {
+      await closeServer(server);
+      db.close();
+    }
+  });
+
   it("excludes the refinement runner and falls back to another implementer when configured agent is unavailable", async () => {
     const db = initializeDb(":memory:");
     insertSetting(db, "default_enable_refinement", "true");
