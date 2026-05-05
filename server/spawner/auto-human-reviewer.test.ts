@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import {
   triggerAutoHumanReview,
   findHumanReviewAgent,
+  resolveHumanReviewAgent,
   countAutoHumanReviewIterations,
 } from "./auto-human-reviewer.js";
 
@@ -314,6 +316,46 @@ describe("findHumanReviewAgent", () => {
   });
 });
 
+describe("resolveHumanReviewAgent", () => {
+  it("returns skip instead of falling back when review_agent_role is configured with no matching idle worker", () => {
+    const db = createHumanReviewFixture();
+    try {
+      insertHumanReviewAgent(db, { id: "impl", role: "lead_engineer" });
+      insertHumanReviewAgent(db, { id: "generic-worker", role: null });
+      setHumanReviewSetting(db, "review_agent_role", "code_reviewer");
+
+      const result = resolveHumanReviewAgent(db, "impl");
+
+      assert.equal(result.kind, "skip");
+      if (result.kind === "skip") {
+        assert.match(result.reason, /review_agent_role\/model/);
+        assert.match(result.reason, /no matching idle worker/i);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("selects the configured human_review runner when a matching idle worker exists", () => {
+    const db = createHumanReviewFixture();
+    try {
+      insertHumanReviewAgent(db, { id: "impl", role: "lead_engineer" });
+      insertHumanReviewAgent(db, { id: "reviewer", role: "code_reviewer", cli_model: "gpt-5.4" });
+      setHumanReviewSetting(db, "review_agent_role", "code_reviewer");
+      setHumanReviewSetting(db, "review_agent_model", "gpt-5.4");
+
+      const result = resolveHumanReviewAgent(db, "impl");
+
+      assert.equal(result.kind, "agent");
+      if (result.kind === "agent") {
+        assert.equal(result.agent?.id, "reviewer");
+      }
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe("countAutoHumanReviewIterations", () => {
   it("returns the count from the db iteration log query", () => {
     const db = createDbStub({
@@ -335,6 +377,56 @@ describe("countAutoHumanReviewIterations", () => {
     assert.equal(countAutoHumanReviewIterations(db as never, "any-task"), 0);
   });
 });
+
+function createHumanReviewFixture(): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      agent_type TEXT NOT NULL DEFAULT 'worker',
+      status TEXT NOT NULL DEFAULT 'idle',
+      current_task_id TEXT,
+      role TEXT,
+      cli_model TEXT
+    );
+    CREATE TABLE settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  return db;
+}
+
+function insertHumanReviewAgent(
+  db: DatabaseSync,
+  agent: {
+    id: string;
+    role?: string | null;
+    cli_model?: string | null;
+    status?: "idle" | "working" | "offline";
+    current_task_id?: string | null;
+    agent_type?: "worker" | "ceo";
+  },
+): void {
+  db.prepare(
+    "INSERT INTO agents (id, name, agent_type, status, current_task_id, role, cli_model) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    agent.id,
+    agent.id,
+    agent.agent_type ?? "worker",
+    agent.status ?? "idle",
+    agent.current_task_id ?? null,
+    agent.role ?? null,
+    agent.cli_model ?? null,
+  );
+}
+
+function setHumanReviewSetting(db: DatabaseSync, key: string, value: string): void {
+  db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+  ).run(key, value);
+}
 
 describe("triggerAutoHumanReview — human_review_auto_count edge cases", () => {
   it("falls back to default cap (2) when human_review_auto_count is non-numeric", async () => {

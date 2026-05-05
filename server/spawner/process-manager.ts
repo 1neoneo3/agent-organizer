@@ -46,6 +46,7 @@ import { getHeartbeatManager } from "./heartbeat-manager.js";
 import { getLogBatchWriter } from "../db/log-batch-writer.js";
 import { prepareTaskWorkspace, resolveWorkspaceMode, tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
 import { promoteTaskReviewArtifact, type ReviewArtifactPromotionResult } from "../workflow/review-artifact.js";
+import { resolveStageRunner } from "./stage-agent-resolver.js";
 import {
   runWorkflowHooks,
   type WorkflowHookResult,
@@ -787,6 +788,32 @@ export async function spawnAgent(
   const isParallelTester = options?.parallelTester === true;
   const finalizeOnComplete = options?.finalizeOnComplete ?? false;
   const resumeSessionId = isContinue ? capturedSessionIds.get(task.id) : undefined;
+
+  if (!isParallelTester) {
+    const runnerResolution = resolveStageRunner(db, task.status, agent, task.assigned_agent_id);
+    if (runnerResolution.status === "redirect") {
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
+      ).run(task.id, runnerResolution.reason, task.status, agent.id);
+      ws.broadcast(
+        "cli_output",
+        [{ task_id: task.id, kind: "system", message: runnerResolution.reason }],
+        { taskId: task.id },
+      );
+      return spawnAgent(db, ws, runnerResolution.agent, task, options);
+    }
+    if (runnerResolution.status === "skip") {
+      db.prepare(
+        "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
+      ).run(task.id, runnerResolution.reason, task.status, agent.id);
+      ws.broadcast(
+        "cli_output",
+        [{ task_id: task.id, kind: "system", message: runnerResolution.reason }],
+        { taskId: task.id },
+      );
+      return { pid: 0 };
+    }
+  }
 
   // Duplicate-spawn guard: if a process is already running for this task
   // (parallelTester shares a worktree with the implementer and is allowed

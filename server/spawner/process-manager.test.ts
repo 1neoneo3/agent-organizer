@@ -24,7 +24,8 @@ import {
   spawnSecondaryReviewer,
   tryStartPendingSpawn,
 } from "./process-manager.js";
-import type { Task } from "../types/runtime.js";
+import type { Agent, Task } from "../types/runtime.js";
+import type { WsHub } from "../ws/hub.js";
 
 const HAS_PROC_SELF_FD = platform() === "linux";
 
@@ -172,21 +173,71 @@ describe("buildSpawnStartTaskUpdate", () => {
   });
 });
 
-function insertAgent(db: DatabaseSync, overrides: { id?: string; status?: string } = {}): { id: string } {
+function insertAgent(
+  db: DatabaseSync,
+  overrides: {
+    id?: string;
+    status?: string;
+    role?: string | null;
+    cli_model?: string | null;
+    current_task_id?: string | null;
+  } = {},
+): { id: string } {
   const id = overrides.id ?? "agent-1";
   db.prepare(
     `INSERT INTO agents (
       id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, status,
       current_task_id, stats_tasks_done, created_at, updated_at, role, agent_type
-    ) VALUES (?, ?, 'claude', NULL, NULL, 'A', ?, NULL, 0, ?, ?, NULL, 'worker')`
+    ) VALUES (?, ?, 'claude', ?, NULL, 'A', ?, ?, 0, ?, ?, ?, 'worker')`
   ).run(
     id,
     `Agent ${id}`,
+    overrides.cli_model ?? null,
     overrides.status ?? "idle",
+    overrides.current_task_id ?? null,
     1_000,
     1_000,
+    overrides.role ?? null,
   );
   return { id };
+}
+
+function createAgent(overrides: {
+  id: string;
+  name?: string;
+  status?: Agent["status"];
+  role?: string | null;
+  cli_model?: string | null;
+  current_task_id?: string | null;
+}): Agent {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? `Agent ${overrides.id}`,
+    cli_provider: "claude",
+    cli_model: overrides.cli_model ?? null,
+    cli_reasoning_level: null,
+    avatar_emoji: "A",
+    status: overrides.status ?? "idle",
+    current_task_id: overrides.current_task_id ?? null,
+    stats_tasks_done: 0,
+    created_at: 1_000,
+    updated_at: 1_000,
+    role: overrides.role ?? null,
+    agent_type: "worker",
+    personality: null,
+  };
+}
+
+function createWsStub(): WsHub {
+  return {
+    broadcast: () => undefined,
+    clients: new Set(),
+    addClient: () => undefined,
+    removeClient: () => undefined,
+    subscribeClientToTask: () => undefined,
+    unsubscribeClientFromTask: () => undefined,
+    dispose: () => undefined,
+  } as never;
 }
 
 describe("pending spawn helpers", () => {
@@ -209,6 +260,48 @@ describe("pending spawn helpers", () => {
 });
 
 describe("spawnAgent preflight cleanup", () => {
+  it("skips direct auto-stage spawn when assigned implementer violates configured test_generation runner", async () => {
+    const db = createDb();
+    const tempProject = mkdtempSync(join(tmpdir(), "ao-stage-guard-"));
+    try {
+      insertAgent(db, {
+        id: "implementer",
+        status: "idle",
+        role: "lead_engineer",
+      });
+      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+      db.prepare("INSERT INTO settings (key, value) VALUES ('test_generation_agent_role', 'tester')").run();
+      const task = insertTask(db, {
+        id: "task-stage-guard",
+        status: "test_generation",
+        project_path: tempProject,
+        assigned_agent_id: "implementer",
+      });
+
+      const result = await spawnAgent(
+        db,
+        createWsStub(),
+        createAgent({ id: "implementer", role: "lead_engineer" }),
+        task,
+      );
+
+      assert.equal(result.pid, 0);
+      assert.equal(getPendingSpawns().has(task.id), false);
+
+      const log = db
+        .prepare("SELECT message, stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT 1")
+        .get(task.id) as { message: string; stage: string; agent_id: string | null } | undefined;
+      assert.ok(log);
+      assert.equal(log.stage, "test_generation");
+      assert.equal(log.agent_id, "implementer");
+      assert.match(log.message, /Stage-specific runner guard/);
+      assert.match(log.message, /no matching idle worker/i);
+    } finally {
+      rmSync(tempProject, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it("clears pendingSpawns when workspace preparation throws before child spawn", async () => {
     const db = createDb();
     const tempProject = mkdtempSync(join(tmpdir(), "ao-preflight-fail-"));
@@ -1738,4 +1831,3 @@ describe("persistRefinementPlanExtraction — planned_files auto-population", ()
     ]);
   });
 });
-
