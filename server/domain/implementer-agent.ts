@@ -42,8 +42,54 @@ export function resolveConfiguredInProgressAgent(
   return agent;
 }
 
+type ImplementationPoolResolution =
+  | { status: "unconfigured" }
+  | { status: "configured_match"; agent: Agent }
+  | { status: "configured_no_match" };
+
+export function resolveConfiguredImplementationPoolAgent(
+  db: DatabaseSync,
+  taskId?: string | null,
+  excludeIds: Array<string | null | undefined> = [],
+): ImplementationPoolResolution {
+  const role = getTaskSetting(db, "implementation_agent_role", taskId)?.trim() ?? "";
+  const model = getTaskSetting(db, "implementation_agent_model", taskId)?.trim() ?? "";
+  if (!role && !model) return { status: "unconfigured" };
+
+  const filteredIds = excludeIds.filter((id): id is string => !!id);
+  const where = [
+    "status = 'idle'",
+    "current_task_id IS NULL",
+    "agent_type = 'worker'",
+    "(role IS NULL OR role NOT IN ('code_reviewer', 'security_reviewer', 'tester'))",
+  ];
+  const args: string[] = [];
+
+  if (role) {
+    where.push("role = ?");
+    args.push(role);
+  }
+  if (model) {
+    where.push("cli_model = ?");
+    args.push(model);
+  }
+  if (filteredIds.length > 0) {
+    where.push(`id NOT IN (${filteredIds.map(() => "?").join(",")})`);
+    args.push(...filteredIds);
+  }
+
+  const agent = db.prepare(
+    `SELECT * FROM agents
+     WHERE ${where.join(" AND ")}
+     ORDER BY stats_tasks_done ASC, updated_at ASC
+     LIMIT 1`,
+  ).get(...args) as Agent | undefined;
+
+  return agent ? { status: "configured_match", agent } : { status: "configured_no_match" };
+}
+
 export type ImplementerResolutionResult =
-  | { ok: true; agent: Agent; source: "requested" | "configured" | "assigned" | "fallback" }
+  | { ok: true; agent: Agent; source: "requested" | "configured_pool" | "configured" | "assigned" | "fallback" }
   | { ok: false; error: "no_implementer_available" | "agent_not_found" | "agent_busy" | "non_implementer_agent" };
 
 export interface ImplementerResolutionOptions {
@@ -71,6 +117,14 @@ export function resolveImplementerAgentForExecution(
       return { ok: false, error: "agent_busy" };
     }
     return { ok: true, agent: requestedAgent, source: "requested" };
+  }
+
+  const configuredPool = resolveConfiguredImplementationPoolAgent(db, options.taskId, [...excluded]);
+  if (configuredPool.status === "configured_match") {
+    return { ok: true, agent: configuredPool.agent, source: "configured_pool" };
+  }
+  if (configuredPool.status === "configured_no_match") {
+    return { ok: false, error: "no_implementer_available" };
   }
 
   const configuredAgent = resolveConfiguredInProgressAgent(db, options.taskId, [...excluded]);

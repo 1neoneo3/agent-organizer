@@ -165,6 +165,57 @@ describe("resolveImplementerAgentForExecution", () => {
     assert.equal(result.source, "configured");
   });
 
+  it("prefers implementation role/model pool over the legacy single-agent pin", () => {
+    const db = createDb();
+    insertAgent(db, { id: "legacy-pin", role: "lead_engineer", cli_model: "gpt-5.4" });
+    insertAgent(db, { id: "pool-impl", role: "architect", cli_model: "gpt-5.5" });
+    insertSetting(db, "implementation_agent_role", "architect");
+    insertSetting(db, "implementation_agent_model", "gpt-5.5");
+    insertSetting(db, "in_progress_agent_id", "legacy-pin");
+
+    const result = resolveImplementerAgentForExecution(db, null, undefined, {
+      taskId: "task-1",
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.agent.id, "pool-impl");
+    assert.equal(result.source, "configured_pool");
+  });
+
+  it("uses another matching implementation pool agent when the first was consumed this tick", () => {
+    const db = createDb();
+    insertAgent(db, { id: "pool-1", role: "lead_engineer", cli_model: "gpt-5.5", stats_tasks_done: 0 });
+    insertAgent(db, { id: "pool-2", role: "lead_engineer", cli_model: "gpt-5.5", stats_tasks_done: 1 });
+    insertSetting(db, "implementation_agent_role", "lead_engineer");
+    insertSetting(db, "implementation_agent_model", "gpt-5.5");
+
+    const result = resolveImplementerAgentForExecution(db, null, undefined, {
+      taskId: "task-1",
+      excludeIds: ["pool-1"],
+    });
+
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.agent.id, "pool-2");
+    assert.equal(result.source, "configured_pool");
+  });
+
+  it("does not fall back to a non-matching implementer when implementation pool is configured", () => {
+    const db = createDb();
+    insertAgent(db, { id: "fallback-impl", role: "architect", cli_model: "gpt-5.4" });
+    insertSetting(db, "implementation_agent_role", "lead_engineer");
+    insertSetting(db, "implementation_agent_model", "gpt-5.5");
+
+    const result = resolveImplementerAgentForExecution(db, null, undefined, {
+      taskId: "task-1",
+    });
+
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error, "no_implementer_available");
+  });
+
   it("falls back when configured in_progress_agent_id is busy or owns another current_task_id", () => {
     const db = createDb();
     insertAgent(db, {

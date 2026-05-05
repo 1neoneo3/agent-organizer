@@ -215,6 +215,34 @@ describe("dispatchAutoStartableTasks", () => {
     assert.deepEqual(started, [{ taskId: task.id, agentId: "configured-impl" }]);
   });
 
+  it("uses implementation role/model pool for parallel direct inbox implementation", () => {
+    const db = createDb();
+    const ws = createWs();
+    insertSetting(db, "auto_dispatch_mode", "all_inbox");
+    insertSetting(db, "default_enable_refinement", "false");
+    insertSetting(db, "implementation_agent_role", "lead_engineer");
+    insertSetting(db, "implementation_agent_model", "gpt-5.5");
+    insertSetting(db, "in_progress_agent_id", "legacy-pin");
+    insertAgent(db, { id: "legacy-pin", name: "Legacy", role: "architect", cli_model: "gpt-5.4" });
+    insertAgent(db, { id: "pool-1", name: "Pool 1", role: "lead_engineer", cli_model: "gpt-5.5", stats_tasks_done: 0 });
+    insertAgent(db, { id: "pool-2", name: "Pool 2", role: "lead_engineer", cli_model: "gpt-5.5", stats_tasks_done: 1 });
+    const first = insertTask(db, { id: "task-1", task_number: "#1", external_id: "1", title: "Implement pool one" });
+    const second = insertTask(db, { id: "task-2", task_number: "#2", external_id: "2", title: "Implement pool two" });
+    const started: Array<{ taskId: string; agentId: string }> = [];
+
+    const result = dispatchAutoStartableTasks(db, ws as never, {
+      startTask(taskToStart, agent) {
+        started.push({ taskId: taskToStart.id, agentId: agent.id });
+      },
+    });
+
+    assert.equal(result.started, 2);
+    assert.deepEqual(started, [
+      { taskId: first.id, agentId: "pool-1" },
+      { taskId: second.id, agentId: "pool-2" },
+    ]);
+  });
+
   it("uses configured in_progress_agent_id when a refinement-completed inbox task retries", () => {
     const db = createDb();
     const ws = createWs();

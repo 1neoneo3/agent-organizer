@@ -77,6 +77,13 @@ describe("SETTINGS_DEFAULTS.in_progress_agent_id", () => {
   });
 });
 
+describe("SETTINGS_DEFAULTS implementation agent filters", () => {
+  it("default to empty strings", () => {
+    assert.equal(SETTINGS_DEFAULTS.implementation_agent_role, "");
+    assert.equal(SETTINGS_DEFAULTS.implementation_agent_model, "");
+  });
+});
+
 describe("SETTINGS_DEFAULTS.enable_controller_mode", () => {
   it("defaults to false", () => {
     assert.equal(SETTINGS_DEFAULTS.enable_controller_mode, "false");

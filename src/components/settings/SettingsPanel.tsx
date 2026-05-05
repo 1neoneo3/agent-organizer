@@ -23,6 +23,12 @@ const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
     description: "Filter plan-stage workers by role and/or model. The filter is treated as a hard constraint: when configured but no matching idle worker is available this tick, dispatch is skipped and retried next tick rather than falling back to a non-matching agent.",
   },
   {
+    roleKey: "implementation_agent_role",
+    modelKey: "implementation_agent_model",
+    label: "Implementation Stage",
+    description: "Filter implementation workers by role and/or model. Matching idle implementers are selected from the pool, so multiple tasks can run in parallel when multiple matching workers are available. If configured but no matching implementer is idle, dispatch waits for the next tick instead of falling back to a non-matching worker.",
+  },
+  {
     roleKey: "review_agent_role",
     modelKey: "review_agent_model",
     label: "PR Review Stage",
@@ -43,6 +49,7 @@ const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
 ];
 
 const NON_IMPLEMENTER_ROLES = new Set(["code_reviewer", "security_reviewer", "tester"]);
+const IMPLEMENTATION_ROLE_OPTIONS = AGENT_ROLES.filter((role) => !NON_IMPLEMENTER_ROLES.has(role.id));
 
 function isImplementerAgentOption(agent: Agent): boolean {
   return agent.agent_type === "worker" && !NON_IMPLEMENTER_ROLES.has(agent.role ?? "");
@@ -419,55 +426,9 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         <section>
           <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Stage-Specific Agent Assignments</h3>
           <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
-            Override the default role-based agent selection for each workflow stage. Review, QA, test-generation, and plan stages use role/model filters as a <strong>hard constraint</strong>: if no idle worker matches at dispatch time the stage is skipped and retried on the next tick rather than falling back to a non-matching agent. Implementation can pin a specific worker implementer; if that worker is unavailable at runtime, dispatch falls back to the normal implementer resolver.
+            Override the default role-based agent selection for each workflow stage. Role/model filters are treated as a <strong>hard constraint</strong>: if no idle worker matches at dispatch time the stage is skipped and retried on the next tick rather than falling back to a non-matching agent.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-            <label style={{ display: "block" }}>
-              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Implementation Stage</span>
-              <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", marginTop: "4px" }}>
-                <select
-                  style={{ ...inputStyle, marginTop: 0 }}
-                  value={selectedInProgressAgentId}
-                  onChange={(e) => update("in_progress_agent_id", e.target.value)}
-                >
-                  <option value="">Automatic implementer selection</option>
-                  {(selectedInProgressAgentIsStale || selectedInProgressAgentIsNonImplementer) && (
-                    <option value={selectedInProgressAgentId}>
-                      Saved unavailable agent ({selectedInProgressAgentId})
-                    </option>
-                  )}
-                  {implementerAgents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.name}{agent.role ? ` [${getRoleLabel(agent.role) ?? agent.role}]` : ""}
-                    </option>
-                  ))}
-                </select>
-                {selectedInProgressAgentId && (
-                  <button
-                    type="button"
-                    className="eb-btn eb-btn--secondary"
-                    onClick={() => update("in_progress_agent_id", "")}
-                    style={{ whiteSpace: "nowrap" }}
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                Directly pins the in_progress implementer. Manual Run with an explicit agent still wins over this setting.
-              </p>
-              {(selectedInProgressAgentIsStale || selectedInProgressAgentIsNonImplementer) && (
-                <p style={{ fontSize: "11px", color: "var(--status-cancelled)", marginTop: "4px" }}>
-                  The saved implementation agent is missing or no longer an implementer. Clear it or select a current worker implementer.
-                </p>
-              )}
-              {selectedInProgressAgentUnavailable && (
-                <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                  The selected implementer is saved, but runtime dispatch will use a fallback while it is not idle.
-                </p>
-              )}
-            </label>
-
             {STAGE_AGENT_OPTIONS.map((option) => (
               <label key={option.roleKey} style={{ display: "block" }}>
                 <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>{option.label}</span>
@@ -478,7 +439,7 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                     onChange={(e) => update(option.roleKey, e.target.value)}
                   >
                     <option value="">Any role (use default resolver)</option>
-                    {AGENT_ROLES.map((role) => (
+                    {(option.roleKey === "implementation_agent_role" ? IMPLEMENTATION_ROLE_OPTIONS : AGENT_ROLES).map((role) => (
                       <option key={role.id} value={role.id}>
                         {role.label}
                       </option>
@@ -503,6 +464,50 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>{option.description}</p>
               </label>
             ))}
+            {selectedInProgressAgentId && (
+              <label style={{ display: "block" }}>
+                <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Legacy Implementation Pin</span>
+                <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", marginTop: "4px" }}>
+                  <select
+                    style={{ ...inputStyle, marginTop: 0 }}
+                    value={selectedInProgressAgentId}
+                    onChange={(e) => update("in_progress_agent_id", e.target.value)}
+                  >
+                    {(selectedInProgressAgentIsStale || selectedInProgressAgentIsNonImplementer) && (
+                      <option value={selectedInProgressAgentId}>
+                        Saved unavailable agent ({selectedInProgressAgentId})
+                      </option>
+                    )}
+                    {implementerAgents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}{agent.role ? ` [${getRoleLabel(agent.role) ?? agent.role}]` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="eb-btn eb-btn--secondary"
+                    onClick={() => update("in_progress_agent_id", "")}
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                  Existing single-agent pin. It is only used when Implementation role/model filters are empty. Clear it to use pool selection exclusively.
+                </p>
+                {(selectedInProgressAgentIsStale || selectedInProgressAgentIsNonImplementer) && (
+                  <p style={{ fontSize: "11px", color: "var(--status-cancelled)", marginTop: "4px" }}>
+                    The saved implementation agent is missing or no longer an implementer.
+                  </p>
+                )}
+                {selectedInProgressAgentUnavailable && (
+                  <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                    The selected implementer is saved, but runtime dispatch will use another resolver path while it is not idle.
+                  </p>
+                )}
+              </label>
+            )}
           </div>
         </section>
 

@@ -188,14 +188,17 @@ export const SETTINGS_DEFAULTS = {
   output_language: "ja" as const, // "ja" | "en"
   // Stage-specific worker selection filters. Empty string means "no
   // filter" — the existing role-based resolver is used. When a role
-  // and/or model is configured, the stage-specific resolver picks a
-  // random idle worker that matches the configured filters. If no idle
-  // worker matches, the system falls back to the legacy role-based
-  // stage resolver. `assigned_agent_id` on the task continues to
-  // represent the implementer (in_progress) unless in_progress_agent_id
-  // pins a specific worker implementer. human_review automatic reviews
-  // intentionally reuse the review_agent_* filters because they perform
-  // the same read-only reviewer role against a later stage gate.
+  // and/or model is configured, the stage-specific resolver picks an
+  // idle worker that matches the configured filters. Implementation
+  // filters are constrained to implementer-capable workers so several
+  // matching implementers can run in parallel. `in_progress_agent_id`
+  // remains as a legacy single-agent pin and is only consulted when the
+  // implementation role/model pool is unconfigured. human_review
+  // automatic reviews intentionally reuse the review_agent_* filters
+  // because they perform the same read-only reviewer role against a
+  // later stage gate.
+  implementation_agent_role: "" as const,
+  implementation_agent_model: "" as const,
   in_progress_agent_id: "" as const,
   refinement_agent_role: "" as const,
   refinement_agent_model: "" as const,
