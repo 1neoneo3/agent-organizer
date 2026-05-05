@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { RuntimeContext, Directive } from "../types/runtime.js";
 import { buildDecomposePrompt } from "./prompt-builder.js";
-import { withCliPathFallback } from "./cli-tools.js";
+import { buildAgentEnvironment } from "./env.js";
 import { isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 import { pickTaskUpdate } from "../ws/update-payloads.js";
 import { CONTROLLER_STAGES, isControllerModeEnabled, type ControllerStage } from "../controller/orchestrator.js";
@@ -243,12 +243,7 @@ interface RunClaudePrintOptions {
 
 function runClaudeprint({ prompt, cwd, onChunk }: RunClaudePrintOptions): Promise<string> {
   return new Promise((resolve, reject) => {
-    const cleanEnv = { ...process.env };
-    delete cleanEnv.CLAUDECODE;
-    delete cleanEnv.CLAUDE_CODE;
-    cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? ""));
-    cleanEnv.NO_COLOR = "1";
-    cleanEnv.FORCE_COLOR = "0";
+    const cleanEnv = buildAgentEnvironment();
 
     const child = spawn("claude", [
       "--print", "--model", "claude-opus-4-6",

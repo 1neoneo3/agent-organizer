@@ -3,7 +3,8 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { buildAgentArgs, normalizeStreamChunk, withCliPathFallback, REVIEW_ALLOWED_TOOLS } from "./cli-tools.js";
+import { buildAgentArgs, normalizeStreamChunk, REVIEW_ALLOWED_TOOLS } from "./cli-tools.js";
+import { buildAgentEnvironment } from "./env.js";
 import { runExplorePhase } from "./explore-phase.js";
 import { parseStreamLineFromObj, type SubtaskEvent } from "./output-parser.js";
 import { classifyEvent, isIgnoredEvent, parseInteractivePrompt, detectTextInteractivePrompt, type InteractivePromptData } from "./event-classifier.js";
@@ -933,6 +934,7 @@ export async function spawnAgent(
   let logStream: ReturnType<typeof createWriteStream> | undefined;
   let workspace!: ReturnType<typeof prepareTaskWorkspace>;
   const hookCacheDir = join("data", "hook-cache");
+  const cleanEnv = buildAgentEnvironment();
   try {
     // Run Explore phase before Implement (if enabled and applicable)
     let exploreContext = "";
@@ -993,21 +995,14 @@ export async function spawnAgent(
     const logPath = join(logDir, `${task.id}.log`);
     logStream = createWriteStream(logPath, { flags: "a" });
 
-    // Clean env
-    const cleanEnv = { ...process.env };
-    delete cleanEnv.CLAUDECODE;
-    delete cleanEnv.CLAUDE_CODE;
-    cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? ""));
-    cleanEnv.NO_COLOR = "1";
-    cleanEnv.FORCE_COLOR = "0";
-    cleanEnv.CI = "1";
-    if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
-
     workspace = prepareTaskWorkspace(task, workflow, db);
 
     // Run before_run hooks (env setup, dependency install, etc.)
     if (workflow?.beforeRun.length && !isContinue) {
-      const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd, { cacheDir: hookCacheDir });
+      const beforeResults = runWorkflowHooks(workflow.beforeRun, workspace.cwd, {
+        cacheDir: hookCacheDir,
+        env: cleanEnv,
+      });
       const logBefore = db.prepare(
         "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
       );
@@ -1915,7 +1910,10 @@ export async function spawnAgent(
 
     // Run after_run hooks (lint, format, etc.) — log failures as warnings but don't block progress
     if (code === 0 && workflow?.afterRun.length) {
-      const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd, { cacheDir: hookCacheDir });
+      const hookResults = runWorkflowHooks(workflow.afterRun, workspace.cwd, {
+        cacheDir: hookCacheDir,
+        env: cleanEnv,
+      });
       for (const hr of hookResults) {
         insertLogStmt.run(
           task.id,
@@ -2246,14 +2244,7 @@ export function spawnSecondaryReviewer(
   const logPath = join(logDir, `${task.id}-${role}.log`);
   const logStream = createWriteStream(logPath, { flags: "a" });
 
-  const cleanEnv = { ...process.env };
-  delete cleanEnv.CLAUDECODE;
-  delete cleanEnv.CLAUDE_CODE;
-  cleanEnv.PATH = withCliPathFallback(String(cleanEnv.PATH ?? ""));
-  cleanEnv.NO_COLOR = "1";
-  cleanEnv.FORCE_COLOR = "0";
-  cleanEnv.CI = "1";
-  if (!cleanEnv.TERM) cleanEnv.TERM = "dumb";
+  const cleanEnv = buildAgentEnvironment();
 
   let workspace: ReturnType<typeof prepareTaskWorkspace>;
   let child: ChildProcess;
