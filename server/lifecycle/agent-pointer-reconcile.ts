@@ -8,6 +8,7 @@ const RELEASABLE_TASK_STATUSES = new Set(["done", "cancelled"]);
 
 interface AgentPointerRow {
   id: string;
+  agent_status: "idle" | "working" | "offline";
   current_task_id: string | null;
   // NULL when the LEFT JOIN finds no matching task (deleted task pointer).
   task_status: string | null;
@@ -15,11 +16,15 @@ interface AgentPointerRow {
 
 export interface ReconcileResult {
   released: Array<{ id: string; reason: "missing" | "done" | "cancelled" | "null_pointer" }>;
+  cleared: Array<{ id: string; reason: "idle_pointer" | "missing" | "done" | "cancelled" }>;
 }
 
 /**
- * Find agents marked `working` whose `current_task_id` no longer corresponds
- * to a task that is being actively driven, and release them back to `idle`.
+ * Find stale agent task pointers and normalize them:
+ *   - `working` agents whose task is missing / terminal / NULL are released.
+ *   - `idle` agents should never hold a current_task_id, so any non-NULL
+ *     pointer is cleared. This keeps `pickIdleAgent()` from skipping an
+ *     otherwise reusable idle agent.
  *
  * Releases when the task pointer is:
  *   - NULL                  (structurally invalid: working without a task)
@@ -38,19 +43,37 @@ export function reconcileStaleAgentPointers(
   const rows = db
     .prepare(
       `SELECT a.id AS id,
+              a.status AS agent_status,
               a.current_task_id AS current_task_id,
               t.status AS task_status
          FROM agents a
          LEFT JOIN tasks t ON t.id = a.current_task_id
-        WHERE a.status = 'working'`,
+        WHERE a.status = 'working'
+           OR (a.status = 'idle' AND a.current_task_id IS NOT NULL)`,
     )
     .all() as unknown as AgentPointerRow[];
 
   const released: ReconcileResult["released"] = [];
+  const cleared: ReconcileResult["cleared"] = [];
   const now = Date.now();
 
   for (const row of rows) {
     const taskId = row.current_task_id;
+    if (row.agent_status === "idle" && taskId !== null) {
+      const clearReason =
+        row.task_status === null || row.task_status === "done" || row.task_status === "cancelled"
+          ? row.task_status ?? "missing"
+          : "idle_pointer";
+      const result = db.prepare(
+        "UPDATE agents SET current_task_id = NULL, updated_at = ? WHERE id = ? AND status = 'idle' AND current_task_id = ?",
+      ).run(now, row.id, taskId);
+      if (result.changes === 0) continue;
+
+      cleared.push({ id: row.id, reason: clearReason });
+      ws.broadcast("agent_status", { id: row.id, status: "idle", current_task_id: null });
+      continue;
+    }
+
     // If a live process still owns this task, the working pointer is real.
     if (taskId && hasActive(active, taskId)) continue;
 
@@ -75,15 +98,15 @@ export function reconcileStaleAgentPointers(
     ws.broadcast("agent_status", { id: row.id, status: "idle", current_task_id: null });
   }
 
-  return { released };
+  return { released, cleared };
 }
 
 /**
- * Release every working agent whose `current_task_id` points at the given task.
- * Called from `DELETE /tasks/:id` so the agent does not stay `working`
- * referencing a now-missing task. The DELETE itself does not cascade —
- * `agents.current_task_id` has no FK constraint on purpose, so we clean it
- * up here explicitly.
+ * Clear every idle/working agent whose `current_task_id` points at the given
+ * task. Called from `DELETE /tasks/:id` so the agent does not stay `working`
+ * or appear `idle` while carrying a stale pointer. The DELETE itself does not
+ * cascade — `agents.current_task_id` has no FK constraint on purpose, so we
+ * clean it up here explicitly.
  */
 export function releaseAgentsForDeletedTask(
   db: DatabaseSync,
@@ -91,16 +114,17 @@ export function releaseAgentsForDeletedTask(
   taskId: string,
 ): string[] {
   const agents = db
-    .prepare("SELECT id FROM agents WHERE status = 'working' AND current_task_id = ?")
-    .all(taskId) as Array<{ id: string }>;
+    .prepare("SELECT id, status FROM agents WHERE status IN ('idle', 'working') AND current_task_id = ?")
+    .all(taskId) as Array<{ id: string; status: "idle" | "working" }>;
   if (agents.length === 0) return [];
 
   const now = Date.now();
   const released: string[] = [];
   for (const agent of agents) {
-    const result = db.prepare(
-      "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ? AND status = 'working' AND current_task_id = ?",
-    ).run(now, agent.id, taskId);
+    const statement = agent.status === "working"
+      ? "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ? AND status = 'working' AND current_task_id = ?"
+      : "UPDATE agents SET current_task_id = NULL, updated_at = ? WHERE id = ? AND status = 'idle' AND current_task_id = ?";
+    const result = db.prepare(statement).run(now, agent.id, taskId);
     if (result.changes === 0) continue;
     released.push(agent.id);
     ws.broadcast("agent_status", { id: agent.id, status: "idle", current_task_id: null });

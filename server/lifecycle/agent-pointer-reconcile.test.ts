@@ -7,6 +7,7 @@ import {
   reconcileStaleAgentPointers,
   releaseAgentsForDeletedTask,
 } from "./agent-pointer-reconcile.js";
+import { pickIdleAgent } from "../tasks/auto-dispatch.js";
 
 interface WsEvent {
   type: string;
@@ -194,8 +195,9 @@ describe("reconcileStaleAgentPointers", () => {
 
   it("returns empty result when no agents exist", () => {
     const ws = createFakeWs();
-    const { released } = reconcileStaleAgentPointers(db, ws as never);
+    const { released, cleared } = reconcileStaleAgentPointers(db, ws as never);
     assert.equal(released.length, 0);
+    assert.equal(cleared.length, 0);
     assert.equal(ws.events.length, 0);
   });
 
@@ -246,24 +248,42 @@ describe("reconcileStaleAgentPointers", () => {
     assert.equal(ws.events.length, 0);
   });
 
-  it("does NOT release idle or offline agents pointing at done/cancelled tasks", () => {
+  it("clears stale current_task_id on idle agents without changing offline agents", () => {
     insertTask(db, "t-done", "done");
     insertTask(db, "t-cancel", "cancelled");
     insertAgent(db, "idle-agent", "idle", "t-done");
     insertAgent(db, "offline-agent", "offline", "t-cancel");
     const ws = createFakeWs();
 
-    const { released } = reconcileStaleAgentPointers(db, ws as never);
+    const { released, cleared } = reconcileStaleAgentPointers(db, ws as never);
 
-    assert.equal(released.length, 0, "reconcile only targets working agents");
+    assert.equal(released.length, 0, "idle agents are normalized, not released");
+    assert.deepEqual(cleared, [{ id: "idle-agent", reason: "done" }]);
     const idleAgent = db
       .prepare("SELECT current_task_id FROM agents WHERE id = 'idle-agent'")
       .get() as { current_task_id: string | null };
-    assert.equal(idleAgent.current_task_id, "t-done", "idle agent pointer untouched");
+    assert.equal(idleAgent.current_task_id, null, "idle agent pointer cleared");
     const offlineAgent = db
       .prepare("SELECT current_task_id FROM agents WHERE id = 'offline-agent'")
       .get() as { current_task_id: string | null };
     assert.equal(offlineAgent.current_task_id, "t-cancel", "offline agent pointer untouched");
+  });
+
+  it("clears idle pointers to missing tasks so auto-dispatch can reuse the agent", () => {
+    insertAgent(db, "a1", "idle", "missing-task");
+    const ws = createFakeWs();
+
+    assert.equal(pickIdleAgent(db), undefined, "stale current_task_id excludes idle agent before reconcile");
+
+    const { released, cleared } = reconcileStaleAgentPointers(db, ws as never);
+
+    assert.equal(released.length, 0);
+    assert.deepEqual(cleared, [{ id: "a1", reason: "missing" }]);
+    assert.equal(pickIdleAgent(db)?.id, "a1", "agent becomes dispatchable after pointer cleanup");
+    assert.deepEqual(ws.events[0], {
+      type: "agent_status",
+      payload: { id: "a1", status: "idle", current_task_id: null },
+    });
   });
 
   it("does not release a working agent whose missing task has a live process", () => {
@@ -336,19 +356,22 @@ describe("releaseAgentsForDeletedTask", () => {
     for (const r of rows) assert.equal(r.status, "idle");
   });
 
-  it("does not mutate an idle agent pointing at the deleted task", () => {
+  it("clears an idle agent pointer to the deleted task so it remains dispatchable", () => {
     insertAgent(db, "a1", "idle", "t-gone");
     const ws = createFakeWs();
 
     const released = releaseAgentsForDeletedTask(db, ws as never, "t-gone");
 
-    assert.deepEqual(released, []);
+    assert.deepEqual(released, ["a1"]);
     const agent = db
       .prepare("SELECT status, current_task_id FROM agents WHERE id = 'a1'")
       .get() as { status: string; current_task_id: string | null };
     assert.equal(agent.status, "idle");
-    assert.equal(agent.current_task_id, "t-gone");
-    assert.equal(ws.events.length, 0);
+    assert.equal(agent.current_task_id, null);
+    assert.deepEqual(ws.events[0], {
+      type: "agent_status",
+      payload: { id: "a1", status: "idle", current_task_id: null },
+    });
   });
 
   it("does not mutate an offline agent pointing at the deleted task", () => {
