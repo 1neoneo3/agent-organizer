@@ -28,6 +28,7 @@ export const PLANNED_FILES_HEADINGS = [
   "変更するファイル",
   "編集するファイル",
   "planned_files",
+  "planned_files 実フィールド",
   "planned files",
 ] as const;
 
@@ -62,6 +63,7 @@ export function normalizePath(raw: string): string {
  * whitespace leading; the path is the first backtick span on the line.
  */
 const BULLET_PATH_RE = /^\s*[-*•]\s*`([^`\n]+)`/;
+const BULLET_LINK_PATH_RE = /^\s*[-*•]\s*\[([^\]\n]+)\]\([^)]+\)/;
 
 /**
  * Regex for a Markdown table row whose first cell is a backtick-wrapped
@@ -89,7 +91,7 @@ function buildHeadingRegex(): RegExp {
 }
 
 const HEADING_RE = buildHeadingRegex();
-const NEXT_HEADING_RE = /^#{1,3}\s+/m;
+const ANY_HEADING_RE = /^(#{1,6})\s+/gm;
 
 function normalizePathList(entries: unknown[]): string[] {
   const out: string[] = [];
@@ -150,19 +152,27 @@ export function extractPlannedFilesFromPlan(plan: string | null | undefined): st
 
   const headingMatch = HEADING_RE.exec(plan);
   if (!headingMatch) return [];
+  const headingLevel = headingMatch[0].match(/^#+/)?.[0].length ?? 6;
 
   // Slice from right after the heading line to the next same-or-higher
-  // heading (or end-of-plan). `NEXT_HEADING_RE.exec` is run on the
-  // sliced tail so its `.index` is relative to that tail.
+  // heading (or end-of-plan). Deeper headings are subsections of the
+  // planned-files section and must not truncate extraction.
   const headingEnd = headingMatch.index + headingMatch[0].length;
   const tail = plan.slice(headingEnd);
-  const nextHeading = NEXT_HEADING_RE.exec(tail);
+  ANY_HEADING_RE.lastIndex = 0;
+  let nextHeading: RegExpExecArray | null = null;
+  for (const match of tail.matchAll(ANY_HEADING_RE)) {
+    if (match[1].length <= headingLevel) {
+      nextHeading = match;
+      break;
+    }
+  }
   const sectionBody = nextHeading ? tail.slice(0, nextHeading.index) : tail;
 
   const seen = new Set<string>();
   const out: string[] = [];
   for (const line of sectionBody.split("\n")) {
-    const m = BULLET_PATH_RE.exec(line) ?? TABLE_FIRST_CELL_PATH_RE.exec(line);
+    const m = BULLET_PATH_RE.exec(line) ?? BULLET_LINK_PATH_RE.exec(line) ?? TABLE_FIRST_CELL_PATH_RE.exec(line);
     if (!m) continue;
     pushNormalizedPath(out, seen, m[1]);
   }

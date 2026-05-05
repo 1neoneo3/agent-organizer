@@ -82,6 +82,21 @@ describe("extractPlannedFilesFromPlan", () => {
     ]);
   });
 
+  it("extracts paths from a JSON array under the `planned_files 実フィールド` heading", () => {
+    const plan = [
+      "## planned_files 実フィールド",
+      "",
+      "[",
+      '  "server/domain/planned-files.ts",',
+      '  "server/db/runtime.ts"',
+      "]",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "server/domain/planned-files.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
   it("extracts paths from a fenced JSON array under the `Planned Files` heading", () => {
     const plan = [
       "## Planned Files",
@@ -122,6 +137,25 @@ describe("extractPlannedFilesFromPlan", () => {
     assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["a.ts"]);
   });
 
+  it("keeps nested subsections inside the planned-files section", () => {
+    const plan = [
+      "## 変更対象ファイル",
+      "",
+      "### datapipeline",
+      "- `deployments/jobs/tables.yaml` — add table",
+      "",
+      "### app",
+      "- `server/routes/tasks.ts` — update route",
+      "",
+      "## 実装計画",
+      "- `docs/ignored.md` — not part of planned files",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "deployments/jobs/tables.yaml",
+      "server/routes/tasks.ts",
+    ]);
+  });
+
   it("deduplicates and preserves first-occurrence order", () => {
     const plan = [
       "## Files to Modify",
@@ -142,6 +176,19 @@ describe("extractPlannedFilesFromPlan", () => {
       "- another prose line",
     ].join("\n");
     assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["kept.ts"]);
+  });
+
+  it("extracts the visible file path from Markdown link bullets", () => {
+    const plan = [
+      "## 変更対象ファイル (Files to Modify)",
+      "",
+      "- [.github/workflows/deploy.yml](/tmp/worktree/.github/workflows/deploy.yml:99) — update memory",
+      "- `server/routes/tasks.ts` — still supports backticks",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      ".github/workflows/deploy.yml",
+      "server/routes/tasks.ts",
+    ]);
   });
 
   it("handles ### (sub-heading) level too", () => {
