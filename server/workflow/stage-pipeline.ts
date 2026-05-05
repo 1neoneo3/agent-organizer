@@ -11,6 +11,7 @@ import {
   isParallelImplTestEnabled,
 } from "./parallel-impl.js";
 import { getTaskSetting } from "../domain/task-settings.js";
+import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
 
 export { WORKFLOW_STAGES };
 export type { WorkflowStage };
@@ -350,7 +351,7 @@ export function determineNextStage(
     return nextStage("test_generation", activeStages);
   }
 
-  // Review run completed (pr_review)
+  // Review run completed (pr_review or human_review)
   //
   // Verdict format (role-tagged, preferred):
   //   [REVIEW:code:PASS]  /  [REVIEW:code:NEEDS_CHANGES:<reason>]
@@ -362,18 +363,24 @@ export function determineNextStage(
   // The expected roles for this run are recorded in a [REVIEWER_PANEL:…]
   // system log entry. If no panel marker exists (legacy single-reviewer
   // or manual trigger), we fall back to requiring any PASS/NEEDS_CHANGES
-  // from the combined log set.
+  // from the combined log set. The same machinery handles human_review
+  // when the auto_human_review setting is on — only the failure marker
+  // and the success-advancement source stage differ.
   if (reviewRun) {
+    const reviewStage: WorkflowStage =
+      task.status === "human_review" ? "human_review" : "pr_review";
+
     // Auto-checks gate (Phase 1): runs in parallel with the LLM
-    // reviewer(s). A single failing automated check forces rework
-    // regardless of what the reviewer concluded — a broken tsc / lint
-    // / test is a hard block that no amount of LLM "looks good to me"
-    // should paper over. This gate fires BEFORE review verdict
-    // aggregation so a check failure short-circuits the pipeline even
-    // if the reviewer panel unanimously passed.
-    const checkVerdict = resolveCheckVerdictForTask(task.id);
+    // reviewer(s) at pr_review entry. Auto-checks are not fired for
+    // human_review runs (the implementation has not changed since the
+    // last pr_review pass), so for that stage the check verdict is
+    // always "none" and this gate is a structural no-op. A single
+    // failing automated check forces rework regardless of what the
+    // reviewer concluded — a broken tsc / lint / test is a hard block.
+    const isHumanReviewRun = reviewStage === "human_review";
+    const checkVerdict = isHumanReviewRun ? "none" : resolveCheckVerdictForTask(task.id);
     if (checkVerdict === "fail") {
-      recordFailedStage(db, task.id, "pr_review");
+      recordFailedStage(db, task.id, reviewStage);
       return "in_progress";
     }
 
@@ -384,19 +391,41 @@ export function determineNextStage(
     const { needsChanges, allPassed } = aggregateReviewVerdicts(db, task.id, runStartedAt);
 
     if (needsChanges) {
-      recordFailedStage(db, task.id, "pr_review");
+      if (isHumanReviewRun) {
+        recordHumanReviewAutoMarker(db, task.id, "CLEARED", "Reviewer requested changes.");
+      }
+      recordFailedStage(db, task.id, reviewStage);
       return "in_progress";
     }
 
     if (!allPassed) {
-      recordFailedStage(db, task.id, "pr_review");
+      if (isHumanReviewRun) {
+        return "human_review";
+      }
+      recordFailedStage(db, task.id, reviewStage);
       return "in_progress";
     }
     clearFailedStage(db, task.id);
-    return nextStage("pr_review", activeStages);
+    if (isHumanReviewRun) {
+      const autoApprove = getSetting(db, "human_review_auto_approve", task.id) === "true";
+      if (!autoApprove) {
+        recordHumanReviewAutoMarker(db, task.id, "AWAITING_HUMAN", "Agent review passed; waiting for human approval.");
+        return "human_review";
+      }
+    }
+    return nextStage(reviewStage, activeStages);
   }
 
   // Implementation completed — check if resuming from a failed stage
+  const selfReview = aggregateSelfReviewVerdict(db, task.id, runStartedAt);
+  if (selfReview?.verdict === "needs_changes") {
+    recordFailedStage(db, task.id, "in_progress");
+    return "in_progress";
+  }
+  if (selfReview?.verdict === "passed") {
+    clearFailedStage(db, task.id);
+  }
+
   const failedStage = findLastFailedStage(db, task.id);
   if (failedStage && activeStages.includes(failedStage)) {
     // Resume from the previously failed stage instead of starting over
@@ -424,12 +453,19 @@ const ROLE_VERDICT_NEEDS_CHANGES = /\[REVIEW:(\w+):NEEDS_CHANGES/;
 const LEGACY_VERDICT_PASS = /\[REVIEW:PASS\]/;
 const LEGACY_VERDICT_NEEDS_CHANGES = /\[REVIEW:NEEDS_CHANGES/;
 const PANEL_MARKER = /\[REVIEWER_PANEL:([^\]]+)\]/;
+const SELF_REVIEW_VERDICT_PASS = /\[SELF_REVIEW:PASS\]/;
+const SELF_REVIEW_VERDICT_NEEDS_CHANGES = /\[SELF_REVIEW:NEEDS_CHANGES(?::([^\]]+))?\]/;
 
 export interface ReviewAggregation {
   /** True when any reviewer (any role) emitted NEEDS_CHANGES. */
   needsChanges: boolean;
   /** True when every expected role has a PASS verdict. */
   allPassed: boolean;
+}
+
+export interface SelfReviewAggregation {
+  verdict: "passed" | "needs_changes";
+  reason: string | null;
 }
 
 /**
@@ -513,4 +549,44 @@ export function aggregateReviewVerdicts(
   // Every expected role must have a PASS
   const allPassed = [...expectedRoles].every((role) => passedRoles.has(role));
   return { needsChanges: false, allPassed };
+}
+
+/**
+ * Aggregate self review verdicts from assistant logs for a single
+ * implementation run.
+ *
+ * Self review is intentionally separate from reviewer PR review so
+ * that implementation-stage verification does not consume the reviewer
+ * loop budget. A NEEDS_CHANGES verdict keeps the task in `in_progress`;
+ * a PASS verdict records completion of the self-review gate and allows
+ * the normal pipeline to advance.
+ */
+export function aggregateSelfReviewVerdict(
+  db: DatabaseSync,
+  taskId: string,
+  runStartedAt: number,
+): SelfReviewAggregation | null {
+  const assistantLogs = db
+    .prepare(
+      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'assistant' AND created_at >= ? ORDER BY id DESC LIMIT 100",
+    )
+    .all(taskId, runStartedAt) as Array<{ message: string }>;
+
+  let sawPass = false;
+  for (const log of assistantLogs) {
+    const msg = log.message;
+    const needsChangesMatch = msg.match(SELF_REVIEW_VERDICT_NEEDS_CHANGES);
+    if (needsChangesMatch) {
+      return {
+        verdict: "needs_changes",
+        reason: needsChangesMatch[1]?.trim() || null,
+      };
+    }
+
+    if (!sawPass && SELF_REVIEW_VERDICT_PASS.test(msg)) {
+      sawPass = true;
+    }
+  }
+
+  return sawPass ? { verdict: "passed", reason: null } : null;
 }

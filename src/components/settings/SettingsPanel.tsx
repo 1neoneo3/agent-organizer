@@ -20,25 +20,25 @@ const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
     roleKey: "refinement_agent_role",
     modelKey: "refinement_agent_model",
     label: "Plan Stage",
-    description: "Filter plan-stage workers by role and/or model. A random idle match is selected before falling back to the normal resolver.",
+    description: "Filter plan-stage workers by role and/or model. The filter is treated as a hard constraint: when configured but no matching idle worker is available this tick, dispatch is skipped and retried next tick rather than falling back to a non-matching agent.",
   },
   {
     roleKey: "review_agent_role",
     modelKey: "review_agent_model",
     label: "PR Review Stage",
-    description: "Filter the primary PR reviewer by role and/or model. The security_reviewer secondary slot still applies.",
+    description: "Filter the primary PR reviewer by role and/or model. Treated as a hard constraint: when configured but no matching idle worker is available, the review is skipped and retried on the next pr_review trigger. The security_reviewer secondary slot still applies.",
   },
   {
     roleKey: "qa_agent_role",
     modelKey: "qa_agent_model",
     label: "QA Testing Stage",
-    description: "Filter QA workers by role and/or model. A random idle match is selected before falling back to the default tester selection.",
+    description: "Filter QA workers by role and/or model. Treated as a hard constraint: when configured but no matching idle worker is available, QA is skipped and retried on the next qa_testing trigger rather than falling back to the default tester.",
   },
   {
     roleKey: "test_generation_agent_role",
     modelKey: "test_generation_agent_model",
     label: "Test Generation Stage",
-    description: "Filter test-generation workers by role and/or model. A random idle match is selected before falling back to the default tester selection.",
+    description: "Filter test-generation workers by role and/or model. Treated as a hard constraint: when configured but no matching idle worker is available, test generation is skipped and retried on the next trigger rather than falling back to the default tester.",
   },
 ];
 
@@ -57,6 +57,7 @@ const inputStyle = {
 export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   const [local, setLocal] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
@@ -86,9 +87,12 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       await updateSettings(local);
       onReload();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Failed to save settings");
     } finally {
       setSaving(false);
     }
@@ -306,6 +310,48 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
               </p>
             </label>
 
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Auto Human Review</span>
+              <select
+                style={inputStyle}
+                value={local.auto_human_review ?? "false"}
+                onChange={(e) => update("auto_human_review", e.target.value)}
+              >
+                <option value="false">Disabled (wait for manual approval)</option>
+                <option value="true">Enabled (agent reviews requirements)</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                When enabled, an agent automatically reviews tasks that reach Human Review against the task requirements. A failing review bounces it back to <code>in_progress</code> for rework. The reviewer agent loop is bounded by <strong>Human Review Count</strong> below — once the cap is reached, the task stays in <code>human_review</code> for a real human to decide. Requires <strong>Human Review Stage</strong> to be enabled.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Human Review Auto Approve</span>
+              <select
+                style={inputStyle}
+                value={local.human_review_auto_approve ?? "false"}
+                onChange={(e) => update("human_review_auto_approve", e.target.value)}
+              >
+                <option value="false">Disabled (wait for final human approval)</option>
+                <option value="true">Enabled (PASS advances to done)</option>
+              </select>
+            </label>
+
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Human Review Count</span>
+              <input
+                type="number"
+                style={inputStyle}
+                value={local.human_review_auto_count ?? "2"}
+                onChange={(e) => update("human_review_auto_count", e.target.value)}
+                min={1}
+                max={10}
+              />
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Maximum auto-human-review iterations before stopping the loop and leaving the task in <code>human_review</code>. Independent from <strong>Review Count</strong> (which governs PR review).
+              </p>
+            </label>
+
           </div>
         </section>
 
@@ -331,9 +377,29 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         </section>
 
         <section>
+          <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Controller</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Controller Mode</span>
+              <select
+                style={inputStyle}
+                value={local.enable_controller_mode ?? "false"}
+                onChange={(e) => update("enable_controller_mode", e.target.value)}
+              >
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                Enables directive controller orchestration: staged implement, verify, and integrate child tasks with stage gates. Leave disabled to preserve the legacy directive/task flow.
+              </p>
+            </label>
+          </div>
+        </section>
+
+        <section>
           <h3 style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-tertiary)", marginBottom: "16px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Stage-Specific Agent Assignments</h3>
           <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginBottom: "12px", lineHeight: 1.5 }}>
-            Override the default role-based agent selection for each workflow stage. When a stage has a role and/or model filter, the system chooses a random idle worker that matches the configured combination. If no worker matches at dispatch time, it falls back to the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.
+            Override the default role-based agent selection for each workflow stage. When a stage has a role and/or model filter, the system chooses a random idle worker that matches the configured combination. The filter is treated as a <strong>hard constraint</strong>: if no idle worker matches at dispatch time the stage is skipped and retried on the next tick rather than falling back to a non-matching agent. Leave both fields empty to use the normal role-based resolver. The per-task implementer (in_progress) continues to be chosen automatically.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
             {STAGE_AGENT_OPTIONS.map((option) => (
@@ -382,6 +448,9 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
         >
           {saving ? "Saving..." : "Save Settings"}
         </button>
+        {saveError ? (
+          <p style={{ fontSize: "12px", color: "var(--status-cancelled)", margin: "-16px 0 0 0" }}>{saveError}</p>
+        ) : null}
       </div>
     </div>
   );

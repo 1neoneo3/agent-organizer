@@ -17,6 +17,12 @@ const VALID_SETTINGS_KEYS = new Set([
   "github_write_allowed_repos",
   "github_write_token_passthrough",
   "auto_done",
+  "refinement_as_pr",
+  "human_review_count",
+  "check_types_cmd",
+  "check_lint_cmd",
+  "check_tests_cmd",
+  "check_e2e_cmd",
 ]);
 
 // Per-key enum validation runs after the generic record<string,string> parse.
@@ -26,6 +32,13 @@ const VALID_SETTINGS_KEYS = new Set([
 const SETTINGS_ENUM_VALUES: Record<string, readonly string[]> = {
   output_language: VALID_OUTPUT_LANGUAGES,
   default_workspace_mode: VALID_WORKSPACE_MODES,
+  auto_human_review: ["true", "false"],
+  human_review_auto_approve: ["true", "false"],
+  enable_controller_mode: ["true", "false"],
+};
+
+const SETTINGS_NUMERIC_PATTERNS: Record<string, RegExp> = {
+  human_review_auto_count: /^\d+$/,
 };
 
 const UpdateSettingsSchema = z.record(z.string(), z.string());
@@ -55,7 +68,8 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
     const parsed = UpdateSettingsSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const unknownKeys = Object.keys(parsed.data).filter(k => !VALID_SETTINGS_KEYS.has(k));
+    const existingKeys = new Set(Object.keys(readAllSettings()));
+    const unknownKeys = Object.keys(parsed.data).filter(k => !VALID_SETTINGS_KEYS.has(k) && !existingKeys.has(k));
     if (unknownKeys.length > 0) {
       return res.status(400).json({ error: "unknown_settings_keys", keys: unknownKeys });
     }
@@ -65,6 +79,10 @@ export function createSettingsRouter(ctx: RuntimeContext): Router {
       const allowed = SETTINGS_ENUM_VALUES[key];
       if (allowed && !allowed.includes(value)) {
         invalidValues.push({ key, value, allowed });
+      }
+      const pattern = SETTINGS_NUMERIC_PATTERNS[key];
+      if (pattern && !pattern.test(value)) {
+        invalidValues.push({ key, value, allowed: ["integer >= 0"] });
       }
     }
     if (invalidValues.length > 0) {

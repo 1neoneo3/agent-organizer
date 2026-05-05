@@ -35,6 +35,25 @@ describe("runWorkflowHooks", () => {
     assert.equal(results[0]?.skipped, false);
   });
 
+  it("uses the provided sanitized environment", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ao-hooks-env-"));
+
+    const results = runWorkflowHooks(
+      ["printf \"NODE_ENV=${NODE_ENV:-unset};OMIT=${npm_config_omit:-unset};CUSTOM=${CUSTOM_FLAG:-unset}\""],
+      dir,
+      {
+        env: {
+          PATH: process.env.PATH,
+          HOME: process.env.HOME,
+          CUSTOM_FLAG: "kept",
+        },
+      },
+    );
+
+    assert.equal(results[0]?.ok, true);
+    assert.equal(results[0]?.output, "NODE_ENV=unset;OMIT=unset;CUSTOM=kept");
+  });
+
   it("skips cached install hooks when fingerprint matches", () => {
     const cwd = mkdtempSync(join(tmpdir(), "ao-hooks-cache-"));
     const cacheDir = mkdtempSync(join(tmpdir(), "ao-hooks-cachedir-"));

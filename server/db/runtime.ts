@@ -9,6 +9,7 @@ import {
   buildRecoveredTaskTitle,
   isUuidLikeTitle,
 } from "../domain/task-number.js";
+import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
 
 let db: DatabaseSync | null = null;
 
@@ -66,8 +67,10 @@ export function initializeDb(dbPath?: string): DatabaseSync {
   migrateAddRefinementCompletedAt(db);
   migrateAddRefinementRevisionTracking(db);
   migrateAddPlannedFiles(db);
+  backfillPlannedFilesFromExistingPlans(db);
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
+  migrateAddControllerFields(db);
   migrateStageAgentSelectionSettings(db);
   const repairedTaskNumberMap = repairBrokenTaskNumbers(db);
   backfillTaskNumbers(db);
@@ -116,6 +119,33 @@ function migrateAddTaskNumbering(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === "depends_on")) {
     db.exec("ALTER TABLE tasks ADD COLUMN depends_on TEXT");
   }
+}
+
+function migrateAddControllerFields(db: DatabaseSync): void {
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!taskCols.some((c) => c.name === "controller_stage")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate'))");
+  }
+  if (!taskCols.some((c) => c.name === "write_scope")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN write_scope TEXT");
+  }
+
+  const directiveCols = db.prepare("PRAGMA table_info(directives)").all() as Array<{ name: string }>;
+  if (!directiveCols.some((c) => c.name === "controller_mode")) {
+    db.exec("ALTER TABLE directives ADD COLUMN controller_mode INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!directiveCols.some((c) => c.name === "controller_stage")) {
+    db.exec("ALTER TABLE directives ADD COLUMN controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate','blocked','completed'))");
+  }
+  if (!directiveCols.some((c) => c.name === "aggregated_result")) {
+    db.exec("ALTER TABLE directives ADD COLUMN aggregated_result TEXT");
+  }
+  if (!directiveCols.some((c) => c.name === "completed_at")) {
+    db.exec("ALTER TABLE directives ADD COLUMN completed_at INTEGER");
+  }
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_directives_controller ON directives(controller_mode, status, controller_stage)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_directive_controller_stage ON tasks(directive_id, controller_stage, status)");
 }
 
 function migrateAddInteractivePrompt(db: DatabaseSync): void {
@@ -321,15 +351,64 @@ function migrateAddPlannedFiles(db: DatabaseSync): void {
   // other task still in an editing stage (in_progress, refinement,
   // etc.) and blocks advancement the same way declared depends_on does.
   //
-  // No backfill is possible for existing rows: their refinement_plan
-  // (when present at all) was written before the agent was aware this
-  // field would be consumed, and re-extraction may or may not find a
-  // matching heading. Leaving NULL is correct — the check treats that
-  // as "no static overlap data" and falls back to the declarative
-  // depends_on gate alone.
+  // This migration ONLY adds the column — it must remain side-effect-
+  // free past the early return so it can be re-run cheaply on every
+  // boot. Backfilling existing refinement_plan strings into
+  // planned_files lives in `backfillPlannedFilesFromExistingPlans`,
+  // which is called unconditionally from `initializeDb()` after this
+  // migration so it runs even when the column already exists from a
+  // prior boot.
   const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === "planned_files")) return;
   db.exec("ALTER TABLE tasks ADD COLUMN planned_files TEXT");
+}
+
+/**
+ * One-pass backfill that extracts `planned_files` from existing
+ * `refinement_plan` strings on every boot. Runs unconditionally — the
+ * cheap idempotency guard is the WHERE clause: rows with a non-empty
+ * `planned_files` are excluded, so a second pass is a near-no-op.
+ *
+ * Targets rows where `planned_files IS NULL` OR `planned_files = ''`
+ * (treat empty string as untouched too — older write paths may have
+ * persisted empty literals before the JSON-or-NULL contract was
+ * tightened). Empty extraction results do NOT update the row, so
+ * "no recognized heading in this plan" stays NULL — that NULL is the
+ * file-conflict gate's "no static overlap info, fall back to
+ * depends_on" sentinel.
+ *
+ * Per-row try/catch protects boot from a single malformed plan
+ * crashing the whole migration step.
+ */
+export function backfillPlannedFilesFromExistingPlans(db: DatabaseSync): void {
+  const rows = db
+    .prepare(
+      `SELECT id, refinement_plan FROM tasks
+       WHERE refinement_plan IS NOT NULL
+         AND refinement_plan <> ''
+         AND (planned_files IS NULL OR planned_files = '')`,
+    )
+    .all() as Array<{ id: string; refinement_plan: string }>;
+
+  if (rows.length === 0) return;
+
+  const update = db.prepare(
+    "UPDATE tasks SET planned_files = ? WHERE id = ?",
+  );
+
+  for (const row of rows) {
+    let extracted: string[] = [];
+    try {
+      extracted = extractPlannedFilesFromPlan(row.refinement_plan);
+    } catch {
+      // A malformed plan must not abort the migration. Leave the row
+      // untouched; the next refinement run will repopulate it via
+      // persistRefinementPlanExtraction.
+      continue;
+    }
+    if (extracted.length === 0) continue;
+    update.run(JSON.stringify(extracted), row.id);
+  }
 }
 
 function migrateAddSettingsOverrides(db: DatabaseSync): void {

@@ -259,7 +259,17 @@ describe("triggerParallelTester", () => {
             }
             return undefined;
           },
-          all: () => [],
+          all: (...args: unknown[]) => {
+            if (/FROM\s+agents/i.test(normalizedSql)) {
+              if (!tester) return [];
+              const [roleArg, modelArg, excludedId] = args as Array<string | undefined>;
+              const roleMatches = !/role\s*=\s*\?/i.test(normalizedSql) || tester.role === roleArg;
+              const modelMatches = !/cli_model\s*=\s*\?/i.test(normalizedSql) || tester.cli_model === modelArg;
+              const excludeMatches = !/id\s+NOT\s+IN/i.test(normalizedSql) || tester.id !== excludedId;
+              return roleMatches && modelMatches && excludeMatches ? [tester] : [];
+            }
+            return [];
+          },
           run: (...args: unknown[]) => {
             if (/INSERT\s+INTO\s+task_logs/i.test(normalizedSql)) {
               // Both production INSERTs hardcode kind='system' in the SQL, so
@@ -369,6 +379,33 @@ describe("triggerParallelTester", () => {
           l.message.includes("Parallel tester started"),
       ),
       "expected a system log announcing the parallel tester start",
+    );
+  });
+
+  it("does not spawn a parallel tester when test_generation override is configured and no matching idle worker exists", async () => {
+    const { db, ws, state } = createDbWithTester({
+      settings: {
+        enable_parallel_impl_test: "true",
+        test_generation_agent_role: "special_tester",
+      },
+    });
+    const task = createBaseTask();
+
+    const { triggerParallelTester } = await import("./parallel-impl.js");
+    const spawnCalls: Array<string> = [];
+    const result = await triggerParallelTester(db as any, ws as any, task, {
+      spawnAgent: (_db: any, _ws: any, agent: any) => {
+        spawnCalls.push(agent.id);
+        return Promise.resolve({ pid: 1 });
+      },
+    });
+
+    assert.strictEqual(result.started, false);
+    assert.strictEqual(result.reason, "stage_guard");
+    assert.deepEqual(spawnCalls, []);
+    assert.ok(
+      state.logs.some((l) => l.message.includes("test_generation_agent_role/model")),
+      "expected a system log explaining the stage-specific skip",
     );
   });
 

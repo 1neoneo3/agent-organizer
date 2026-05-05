@@ -307,15 +307,34 @@ export function triggerAutoChecks(
     const workspace = prepareTaskWorkspace(task, workflow, db);
     cwd = workspace.cwd;
   } catch (err) {
-    // prepareTaskWorkspace can throw on worktree creation errors; we
-    // fall back to the raw project_path so checks still attempt to run.
+    // A workspace resolution failure means we cannot trust project_path.
+    // Do not fall back to the raw path: that can run checks in an
+    // unrelated parent repository.
+    const message = err instanceof Error ? err.message : String(err);
+    const failedResults: CheckResult[] = specs.map((spec) => ({
+      kind: spec.kind,
+      ok: false,
+      durationMs: 0,
+      output: `workspace resolution failed: ${message}`,
+    }));
+    latestCheckResults.set(task.id, failedResults);
     logSystem(
       db,
       task.id,
-      `[CHECK:WARN] workspace resolution failed, using project_path: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      `[CHECK:FAIL:workspace] workspace resolution failed: ${message}`,
     );
+    ws.broadcast(
+      "cli_output",
+      [
+        {
+          task_id: task.id,
+          kind: "system",
+          message: "[Auto Checks] workspace resolution failed; checks were not run",
+        },
+      ],
+      { taskId: task.id },
+    );
+    return;
   }
 
   // Emit a [CHECK:START:*] marker per spec so operators can see in the

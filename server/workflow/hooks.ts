@@ -16,6 +16,7 @@ export interface WorkflowHookResult {
 
 export interface RunHooksOptions {
   cacheDir?: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 export function runWorkflowHooks(
@@ -45,7 +46,7 @@ export function runWorkflowHooks(
     const run = spawnSync("bash", ["-lc", command], {
       cwd,
       encoding: "utf-8",
-      env: process.env,
+      env: options?.env ?? process.env,
     });
 
     const output = [run.stdout, run.stderr]

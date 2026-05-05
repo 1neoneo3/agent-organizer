@@ -111,6 +111,34 @@ describe("POST /tasks — task_number and title validation regressions", () => {
     }
   });
 
+  it("logs a repository warning when project_path cannot auto-detect repository_url", async () => {
+    const { db, server, baseUrl } = await setupServer();
+    const projectPath = mkdtempSync(join(tmpdir(), "ao-create-non-git-"));
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "Task with ambiguous project path",
+          project_path: projectPath,
+        }),
+      });
+
+      assert.equal(response.status, 201);
+      const body = (await response.json()) as { id: string; repository_url: string | null };
+      assert.equal(body.repository_url, null);
+
+      const log = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND message LIKE '[Repository Warning]%' ORDER BY id DESC LIMIT 1",
+      ).get(body.id) as { message: string } | undefined;
+      assert.match(log?.message ?? "", /repository_url could not be auto-detected/);
+      assert.match(log?.message ?? "", new RegExp(projectPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("assigns correct sequential task_number ignoring hex fragments in DB", async () => {
     const { db, server, baseUrl } = await setupServer();
     const now = Date.now();

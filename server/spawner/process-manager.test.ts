@@ -16,6 +16,7 @@ import {
   extractRefinementPlanFromLogs,
   getPendingSpawns,
   initReviewerSession,
+  isHumanReviewRunTask,
   isReviewRunTask,
   persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
@@ -23,7 +24,8 @@ import {
   spawnSecondaryReviewer,
   tryStartPendingSpawn,
 } from "./process-manager.js";
-import type { Task } from "../types/runtime.js";
+import type { Agent, Task } from "../types/runtime.js";
+import type { WsHub } from "../ws/hub.js";
 
 const HAS_PROC_SELF_FD = platform() === "linux";
 
@@ -171,21 +173,71 @@ describe("buildSpawnStartTaskUpdate", () => {
   });
 });
 
-function insertAgent(db: DatabaseSync, overrides: { id?: string; status?: string } = {}): { id: string } {
+function insertAgent(
+  db: DatabaseSync,
+  overrides: {
+    id?: string;
+    status?: string;
+    role?: string | null;
+    cli_model?: string | null;
+    current_task_id?: string | null;
+  } = {},
+): { id: string } {
   const id = overrides.id ?? "agent-1";
   db.prepare(
     `INSERT INTO agents (
       id, name, cli_provider, cli_model, cli_reasoning_level, avatar_emoji, status,
       current_task_id, stats_tasks_done, created_at, updated_at, role, agent_type
-    ) VALUES (?, ?, 'claude', NULL, NULL, 'A', ?, NULL, 0, ?, ?, NULL, 'worker')`
+    ) VALUES (?, ?, 'claude', ?, NULL, 'A', ?, ?, 0, ?, ?, ?, 'worker')`
   ).run(
     id,
     `Agent ${id}`,
+    overrides.cli_model ?? null,
     overrides.status ?? "idle",
+    overrides.current_task_id ?? null,
     1_000,
     1_000,
+    overrides.role ?? null,
   );
   return { id };
+}
+
+function createAgent(overrides: {
+  id: string;
+  name?: string;
+  status?: Agent["status"];
+  role?: string | null;
+  cli_model?: string | null;
+  current_task_id?: string | null;
+}): Agent {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? `Agent ${overrides.id}`,
+    cli_provider: "claude",
+    cli_model: overrides.cli_model ?? null,
+    cli_reasoning_level: null,
+    avatar_emoji: "A",
+    status: overrides.status ?? "idle",
+    current_task_id: overrides.current_task_id ?? null,
+    stats_tasks_done: 0,
+    created_at: 1_000,
+    updated_at: 1_000,
+    role: overrides.role ?? null,
+    agent_type: "worker",
+    personality: null,
+  };
+}
+
+function createWsStub(): WsHub {
+  return {
+    broadcast: () => undefined,
+    clients: new Set(),
+    addClient: () => undefined,
+    removeClient: () => undefined,
+    subscribeClientToTask: () => undefined,
+    unsubscribeClientFromTask: () => undefined,
+    dispose: () => undefined,
+  } as never;
 }
 
 describe("pending spawn helpers", () => {
@@ -208,6 +260,100 @@ describe("pending spawn helpers", () => {
 });
 
 describe("spawnAgent preflight cleanup", () => {
+  it("skips direct auto-stage spawn when assigned implementer violates configured test_generation runner", async () => {
+    const db = createDb();
+    const tempProject = mkdtempSync(join(tmpdir(), "ao-stage-guard-"));
+    try {
+      insertAgent(db, {
+        id: "implementer",
+        status: "idle",
+        role: "lead_engineer",
+      });
+      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+      db.prepare("INSERT INTO settings (key, value) VALUES ('test_generation_agent_role', 'tester')").run();
+      const task = insertTask(db, {
+        id: "task-stage-guard",
+        status: "test_generation",
+        project_path: tempProject,
+        assigned_agent_id: "implementer",
+      });
+
+      const result = await spawnAgent(
+        db,
+        createWsStub(),
+        createAgent({ id: "implementer", role: "lead_engineer" }),
+        task,
+      );
+
+      assert.equal(result.pid, 0);
+      assert.equal(getPendingSpawns().has(task.id), false);
+
+      const log = db
+        .prepare("SELECT message, stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT 1")
+        .get(task.id) as { message: string; stage: string; agent_id: string | null } | undefined;
+      assert.ok(log);
+      assert.equal(log.stage, "test_generation");
+      assert.equal(log.agent_id, "implementer");
+      assert.match(log.message, /Stage-specific runner guard/);
+      assert.match(log.message, /no matching idle worker/i);
+    } finally {
+      rmSync(tempProject, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("guards parallelTester as effective test_generation before any subprocess spawn", async () => {
+    const db = createDb();
+    const tempProject = mkdtempSync(join(tmpdir(), "ao-parallel-stage-guard-"));
+    try {
+      insertAgent(db, {
+        id: "implementer",
+        status: "idle",
+        role: "lead_engineer",
+      });
+      insertAgent(db, {
+        id: "generic-tester",
+        status: "idle",
+        role: "tester",
+      });
+      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+      db.prepare("INSERT INTO settings (key, value) VALUES ('test_generation_agent_role', 'special_tester')").run();
+      const task = insertTask(db, {
+        id: "task-parallel-stage-guard",
+        status: "in_progress",
+        project_path: tempProject,
+        assigned_agent_id: "implementer",
+      });
+
+      const result = await spawnAgent(
+        db,
+        createWsStub(),
+        createAgent({ id: "generic-tester", role: "tester" }),
+        task,
+        { parallelTester: true },
+      );
+
+      assert.equal(result.pid, 0);
+
+      const testerRow = db
+        .prepare("SELECT status, current_task_id FROM agents WHERE id = ?")
+        .get("generic-tester") as { status: string; current_task_id: string | null };
+      assert.equal(testerRow.status, "idle");
+      assert.equal(testerRow.current_task_id, null);
+
+      const log = db
+        .prepare("SELECT message, stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT 1")
+        .get(task.id) as { message: string; stage: string; agent_id: string | null } | undefined;
+      assert.ok(log);
+      assert.equal(log.stage, "test_generation");
+      assert.equal(log.agent_id, "generic-tester");
+      assert.match(log.message, /Stage-specific runner guard/);
+    } finally {
+      rmSync(tempProject, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it("clears pendingSpawns when workspace preparation throws before child spawn", async () => {
     const db = createDb();
     const tempProject = mkdtempSync(join(tmpdir(), "ao-preflight-fail-"));
@@ -312,6 +458,51 @@ describe("spawnAgent preflight cleanup", () => {
 });
 
 describe("spawnSecondaryReviewer fd-leak resilience", () => {
+  it("does not let a configured review override be bypassed by a raw secondary reviewer spawn", () => {
+    const db = createDb();
+    const tempProject = mkdtempSync(join(tmpdir(), "ao-secondary-stage-guard-"));
+    try {
+      insertAgent(db, { id: "implementer", status: "idle", role: "lead_engineer" });
+      insertAgent(db, { id: "code-override", status: "idle", role: "code_reviewer" });
+      insertAgent(db, { id: "security-secondary", status: "idle", role: "security_reviewer" });
+      db.prepare("INSERT INTO settings (key, value) VALUES ('default_workspace_mode', 'git-worktree')").run();
+      db.prepare("INSERT INTO settings (key, value) VALUES ('review_agent_role', 'code_reviewer')").run();
+      const task = insertTask(db, {
+        id: "task-secondary-stage-guard",
+        status: "pr_review",
+        project_path: tempProject,
+        assigned_agent_id: "implementer",
+      });
+      initReviewerSession(task.id, ["code", "security"]);
+
+      spawnSecondaryReviewer(
+        db,
+        createWsStub(),
+        createAgent({ id: "security-secondary", role: "security_reviewer" }),
+        task,
+        "security",
+      );
+
+      const secondaryRow = db
+        .prepare("SELECT status, current_task_id FROM agents WHERE id = ?")
+        .get("security-secondary") as { status: string; current_task_id: string | null };
+      assert.equal(secondaryRow.status, "idle");
+      assert.equal(secondaryRow.current_task_id, null);
+
+      const log = db
+        .prepare("SELECT message, stage, agent_id FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT 1")
+        .get(task.id) as { message: string; stage: string; agent_id: string | null } | undefined;
+      assert.ok(log);
+      assert.equal(log.stage, "pr_review");
+      assert.equal(log.agent_id, "security-secondary");
+      assert.match(log.message, /Stage-specific runner guard/);
+    } finally {
+      clearReviewerSession("task-secondary-stage-guard");
+      rmSync(tempProject, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it(
     "does not leak the per-task log stream when workspace preparation throws",
     { skip: !HAS_PROC_SELF_FD ? "requires /proc/self/fd (Linux)" : false },
@@ -674,6 +865,32 @@ describe("isReviewRunTask", () => {
   it("keeps review mode when resuming from an interactive prompt raised during pr_review", () => {
     const task = insertTask(createDb(), { status: "in_progress", review_count: 3 });
     assert.equal(isReviewRunTask(task, "pr_review"), true);
+  });
+});
+
+describe("isHumanReviewRunTask", () => {
+  it("treats human_review tasks as human-review runs", () => {
+    const task = insertTask(createDb(), { status: "human_review" });
+    assert.equal(isHumanReviewRunTask(task), true);
+  });
+
+  it("does not flag pr_review tasks as human-review runs", () => {
+    const task = insertTask(createDb(), { status: "pr_review", review_count: 1 });
+    assert.equal(isHumanReviewRunTask(task), false);
+  });
+
+  it("does not flag in_progress tasks without prior human_review context", () => {
+    const task = insertTask(createDb(), { status: "in_progress" });
+    assert.equal(isHumanReviewRunTask(task), false);
+  });
+
+  it("keeps human-review mode when resuming from an interactive prompt raised during human_review", () => {
+    // Mirrors the isReviewRunTask resume case: when the agent suspends on an
+    // interactive prompt, the task can flip to in_progress while the spawn
+    // context still represents a human_review run. The previousStatus arg
+    // carries that context forward so prompt/tool selection stays consistent.
+    const task = insertTask(createDb(), { status: "in_progress" });
+    assert.equal(isHumanReviewRunTask(task, "human_review"), true);
   });
 });
 
@@ -1450,3 +1667,294 @@ describe("persistRefinementPlanExtraction", () => {
   });
 });
 
+describe("persistRefinementPlanExtraction — planned_files auto-population", () => {
+  // These tests pin the behavior that drives the file-conflict gate: the
+  // refinement plan's "Files to Modify" section is the ONLY source of truth
+  // for tasks.planned_files. The dispatcher reads that column to block
+  // parallel tasks from clobbering each other; if the column drifts (stale
+  // overwrite, missed normalization, unexpected NULL when files are listed,
+  // etc.), the gate silently fails open.
+
+  function getPlannedFiles(db: DatabaseSync, taskId: string): string | null {
+    const row = db.prepare("SELECT planned_files FROM tasks WHERE id = ?").get(
+      taskId,
+    ) as { planned_files: string | null } | undefined;
+    return row?.planned_files ?? null;
+  }
+
+  it("populates planned_files from a plan that includes Files to Modify on first save", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tinitial-plan", status: "refinement" });
+    assert.equal(getPlannedFiles(db, task.id), null, "precondition: starts NULL");
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `server/routes/tasks.ts` — extend handler",
+      "- `server/domain/task-rules.ts` — new helper",
+      "## Implementation Plan",
+      "1. step",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const stored = getPlannedFiles(db, task.id);
+    assert.deepEqual(JSON.parse(stored ?? "[]"), [
+      "server/routes/tasks.ts",
+      "server/domain/task-rules.ts",
+    ]);
+  });
+
+  it("stores planned_files as NULL when the plan has no Files to Modify section", () => {
+    // A plan that produces only prose / Implementation Plan but never enumerates
+    // target files is a valid refinement output. We must not store "[]" — the
+    // dispatcher uses NULL as the sentinel for "no static overlap info; fall
+    // through to other gates". Storing "[]" would suppress the file gate but
+    // also potentially confuse downstream summary logic.
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan-no-files", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Background",
+      "Some prose only.",
+      "## Implementation Plan",
+      "1. Think hard",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(
+      getPlannedFiles(db, task.id),
+      null,
+      "no Files to Modify heading → planned_files must remain NULL, not '[]'",
+    );
+  });
+
+  it("normalizes paths before persisting (./prefix, duplicate slashes, trailing slash)", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan-normalize", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `./src/a.ts` — leading-dot form",
+      "- `src//b.ts` — duplicate slash",
+      "- `src/dir/` — trailing slash on directory",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "src/a.ts",
+      "src/b.ts",
+      "src/dir",
+    ]);
+  });
+
+  it("persists planned_files from a JSON array under the `planned_files` heading", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tplan-json-array", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## planned_files",
+      "",
+      "[",
+      '  "server/domain/planned-files.ts",',
+      '  "./server/spawner/process-manager.ts",',
+      '  "server//db/runtime.ts"',
+      "]",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "server/domain/planned-files.ts",
+      "server/spawner/process-manager.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
+  it("revising a plan replaces planned_files completely (drops files no longer listed)", () => {
+    // Regression guard: revision must not merge or accumulate. If a user
+    // removes a file from the "Files to Modify" list during revision, the
+    // gate should let go of that file too.
+    const db = createDb();
+    const task = insertTask(db, { id: "trevise-replace", status: "refinement" });
+    db.prepare(
+      `UPDATE tasks
+       SET refinement_plan = '---REFINEMENT PLAN---\nOLD\n---END REFINEMENT---',
+           refinement_completed_at = 1_000,
+           refinement_revision_requested_at = 4_000,
+           planned_files = ?
+       WHERE id = ?`,
+    ).run(JSON.stringify(["src/old1.ts", "src/old2.ts"]), task.id);
+
+    const revised = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `src/new.ts` — replacement",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: revised },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(
+      JSON.parse(getPlannedFiles(db, task.id) ?? "[]"),
+      ["src/new.ts"],
+      "old planned_files entries must be dropped, not merged",
+    );
+  });
+
+  it("revising to a plan without Files to Modify clears planned_files back to NULL", () => {
+    // Inverse of the replace test: if the revision strips out the section,
+    // the column should follow.
+    const db = createDb();
+    const task = insertTask(db, { id: "trevise-clear", status: "refinement" });
+    db.prepare(
+      "UPDATE tasks SET planned_files = ? WHERE id = ?",
+    ).run(JSON.stringify(["src/old.ts"]), task.id);
+
+    const revised = [
+      "---REFINEMENT PLAN---",
+      "## Implementation Plan",
+      "1. Just do it",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: revised },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(getPlannedFiles(db, task.id), null);
+  });
+
+  it("fallback kind does not modify an existing planned_files row", () => {
+    // The fallback path only writes refinement_plan; it must not destroy
+    // a previously-extracted planned_files list (e.g. revision attempt that
+    // produced markerless prose after a real plan was already saved).
+    const db = createDb();
+    const task = insertTask(db, { id: "tfallback-keeps", status: "refinement" });
+    const existingPlan = "---REFINEMENT PLAN---\nOLD\n---END REFINEMENT---";
+    const existingFiles = JSON.stringify(["src/keep.ts"]);
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = ?, planned_files = ? WHERE id = ?",
+    ).run(existingPlan, existingFiles, task.id);
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "fallback", plan: "markerless tail prose" },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(
+      getPlannedFiles(db, task.id),
+      existingFiles,
+      "fallback path must leave planned_files untouched",
+    );
+  });
+
+  it("empty kind does not modify planned_files", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tempty-keeps", status: "refinement" });
+    const existingFiles = JSON.stringify(["src/keep.ts"]);
+    db.prepare(
+      "UPDATE tasks SET planned_files = ? WHERE id = ?",
+    ).run(existingFiles, task.id);
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "empty" },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.equal(getPlannedFiles(db, task.id), existingFiles);
+  });
+
+  it("supports the JA heading 修正するファイル end-to-end at the persistence layer", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tja-heading", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## 修正するファイル",
+      "- `server/spawner/process-manager.ts` — 追加",
+      "- `server/domain/planned-files.ts` — 新規",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "server/spawner/process-manager.ts",
+      "server/domain/planned-files.ts",
+    ]);
+  });
+
+  it("deduplicates files when the plan lists the same path with different formatting", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tdedupe", status: "refinement" });
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Files to Modify",
+      "- `src/auth.ts` — first mention",
+      "- `./src/auth.ts` — duplicate via leading dot",
+      "- `src//auth.ts` — duplicate via dup slash",
+      "- `src/other.ts` — distinct",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    assert.deepEqual(JSON.parse(getPlannedFiles(db, task.id) ?? "[]"), [
+      "src/auth.ts",
+      "src/other.ts",
+    ]);
+  });
+});
