@@ -71,12 +71,6 @@ describe("SETTINGS_DEFAULTS.output_language", () => {
   });
 });
 
-describe("SETTINGS_DEFAULTS.in_progress_agent_id", () => {
-  it("defaults to an empty string", () => {
-    assert.equal(SETTINGS_DEFAULTS.in_progress_agent_id, "");
-  });
-});
-
 describe("SETTINGS_DEFAULTS implementation agent filters", () => {
   it("default to empty strings", () => {
     assert.equal(SETTINGS_DEFAULTS.implementation_agent_role, "");

@@ -198,12 +198,12 @@ describe("autoDispatchTask", () => {
     assert.deepEqual(started, [{ agentId: "agent-1", taskId: "task-1" }]);
   });
 
-  it("prefers configured in_progress_agent_id over the existing assignment for direct implementation", () => {
+  it("ignores deprecated in_progress_agent_id and uses the existing assignment for direct implementation", () => {
     const db = createDb();
     const ws = createWs();
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertSetting(db, "in_progress_agent_id", "deprecated-pin");
     insertAgent(db, { id: "assigned-impl", name: "Assigned", role: "lead_engineer" });
-    insertAgent(db, { id: "configured-impl", name: "Configured", role: "architect" });
+    insertAgent(db, { id: "deprecated-pin", name: "Deprecated", role: "architect" });
     insertTask(db, { assigned_agent_id: "assigned-impl" });
     const started: Array<{ agentId: string; taskId: string }> = [];
 
@@ -219,8 +219,8 @@ describe("autoDispatchTask", () => {
     const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get("task-1") as {
       assigned_agent_id: string | null;
     };
-    assert.equal(row.assigned_agent_id, "configured-impl");
-    assert.deepEqual(started, [{ agentId: "configured-impl", taskId: "task-1" }]);
+    assert.equal(row.assigned_agent_id, "assigned-impl");
+    assert.deepEqual(started, [{ agentId: "assigned-impl", taskId: "task-1" }]);
   });
 
   it("does not start the task when the assigned agent is busy", () => {

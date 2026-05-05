@@ -51,10 +51,6 @@ const STAGE_AGENT_OPTIONS: StageAgentOption[] = [
 const NON_IMPLEMENTER_ROLES = new Set(["code_reviewer", "security_reviewer", "tester"]);
 const IMPLEMENTATION_ROLE_OPTIONS = AGENT_ROLES.filter((role) => !NON_IMPLEMENTER_ROLES.has(role.id));
 
-function isImplementerAgentOption(agent: Agent): boolean {
-  return agent.agent_type === "worker" && !NON_IMPLEMENTER_ROLES.has(agent.role ?? "");
-}
-
 const inputStyle = {
   width: "100%",
   background: "var(--bg-tertiary)",
@@ -92,20 +88,6 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
   }, []);
 
   const workerAgents = agents.filter((a) => a.agent_type === "worker");
-  const implementerAgents = agents
-    .filter(isImplementerAgentOption)
-    .sort((left, right) => left.name.localeCompare(right.name));
-  const selectedInProgressAgentId = local.in_progress_agent_id ?? "";
-  const selectedInProgressAgent = selectedInProgressAgentId
-    ? agents.find((agent) => agent.id === selectedInProgressAgentId)
-    : undefined;
-  const selectedInProgressAgentIsStale = selectedInProgressAgentId !== "" && !selectedInProgressAgent;
-  const selectedInProgressAgentIsNonImplementer =
-    !!selectedInProgressAgent && !isImplementerAgentOption(selectedInProgressAgent);
-  const selectedInProgressAgentUnavailable =
-    !!selectedInProgressAgent &&
-    isImplementerAgentOption(selectedInProgressAgent) &&
-    (selectedInProgressAgent.status !== "idle" || selectedInProgressAgent.current_task_id !== null);
   const modelOptions = [...new Set(
     workerAgents
       .map((agent) => agent.cli_model?.trim() ?? "")
@@ -464,50 +446,6 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
                 <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>{option.description}</p>
               </label>
             ))}
-            {selectedInProgressAgentId && (
-              <label style={{ display: "block" }}>
-                <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Legacy Implementation Pin</span>
-                <div style={{ display: "flex", gap: "8px", alignItems: "flex-start", marginTop: "4px" }}>
-                  <select
-                    style={{ ...inputStyle, marginTop: 0 }}
-                    value={selectedInProgressAgentId}
-                    onChange={(e) => update("in_progress_agent_id", e.target.value)}
-                  >
-                    {(selectedInProgressAgentIsStale || selectedInProgressAgentIsNonImplementer) && (
-                      <option value={selectedInProgressAgentId}>
-                        Saved unavailable agent ({selectedInProgressAgentId})
-                      </option>
-                    )}
-                    {implementerAgents.map((agent) => (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.name}{agent.role ? ` [${getRoleLabel(agent.role) ?? agent.role}]` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="eb-btn eb-btn--secondary"
-                    onClick={() => update("in_progress_agent_id", "")}
-                    style={{ whiteSpace: "nowrap" }}
-                  >
-                    Clear
-                  </button>
-                </div>
-                <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                  Existing single-agent pin. It is only used when Implementation role/model filters are empty. Clear it to use pool selection exclusively.
-                </p>
-                {(selectedInProgressAgentIsStale || selectedInProgressAgentIsNonImplementer) && (
-                  <p style={{ fontSize: "11px", color: "var(--status-cancelled)", marginTop: "4px" }}>
-                    The saved implementation agent is missing or no longer an implementer.
-                  </p>
-                )}
-                {selectedInProgressAgentUnavailable && (
-                  <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
-                    The selected implementer is saved, but runtime dispatch will use another resolver path while it is not idle.
-                  </p>
-                )}
-              </label>
-            )}
           </div>
         </section>
 

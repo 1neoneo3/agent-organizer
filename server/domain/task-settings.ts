@@ -108,7 +108,6 @@ export const TASK_OVERRIDABLE_KEYS: readonly string[] = [
   "auto_checks_enabled",
   "implementation_agent_role",
   "implementation_agent_model",
-  "in_progress_agent_id",
   "refinement_agent_role",
   "refinement_agent_model",
   "review_agent_role",

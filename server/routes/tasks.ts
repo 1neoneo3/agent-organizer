@@ -37,6 +37,7 @@ import {
   deriveChildTaskNumbers,
 } from "../domain/task-derived-fields.js";
 import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
+import { normalizePath } from "../domain/planned-files.js";
 import {
   collectAllBlockers,
   formatAllBlockers,
@@ -52,7 +53,7 @@ import {
   validateOverridesPatch,
 } from "../domain/task-settings.js";
 import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
-import { reconcileControllerDirective } from "../controller/orchestrator.js";
+import { isControllerModeEnabled, reconcileControllerDirective } from "../controller/orchestrator.js";
 
 // Accept overrides as a flat string→string record on create/update so
 // callers can seed stage toggles (default_enable_refinement, review_mode,
@@ -152,6 +153,198 @@ function resolveTaskOutputLanguage(
   }
 
   return "ja";
+}
+
+interface ImplementationStep {
+  num: number;
+  text: string;
+}
+
+interface PlanSplitResult {
+  parent: Task;
+  children: Task[];
+  planPath: string | null;
+  directiveId: string | null;
+}
+
+function cleanRefinementPlan(plan: string): string {
+  return plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "");
+}
+
+function parseImplementationSteps(plan: string): ImplementationStep[] {
+  // Match both Japanese and English refinement-plan section headings.
+  // Legacy plans used `## 実装計画 (Implementation Plan)`; current plans
+  // emit either `## 実装計画` (ja) or `## Implementation Plan` (en).
+  const implMatch = plan.match(/## (?:実装計画(?: \(Implementation Plan\))?|Implementation Plan)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
+  if (!implMatch) return [];
+
+  const steps: ImplementationStep[] = [];
+  for (const match of implMatch[1].trim().matchAll(/^(\d+)\.\s+(.+)$/gm)) {
+    steps.push({ num: parseInt(match[1], 10), text: match[2].trim() });
+  }
+  return steps;
+}
+
+function savePlanToDocs(task: Task, plan: string): string | null {
+  if (!task.project_path) return null;
+
+  const plansDir = join(task.project_path, "Docs", "plans");
+  mkdirSync(plansDir, { recursive: true });
+  const slug = task.title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60).toLowerCase();
+  const filename = `${(task.task_number ?? "").replace("#", "")}-${slug}.md`;
+  const planPath = join(plansDir, filename);
+  writeFileSync(planPath, `# ${task.title}\n\n${cleanRefinementPlan(plan)}`, "utf-8");
+  return planPath;
+}
+
+function extractStepWriteScope(stepText: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (raw: string) => {
+    const path = normalizePath(raw);
+    if (!path || seen.has(path)) return;
+    if (!path.includes("/") && !/\.[A-Za-z0-9]+$/.test(path)) return;
+    seen.add(path);
+    out.push(path);
+  };
+
+  for (const match of stepText.matchAll(/`([^`\n]+)`/g)) {
+    add(match[1]);
+  }
+  for (const match of stepText.matchAll(/(?:^|[\s(])((?:\.\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)(?=$|[\s),.;:])/g)) {
+    add(match[1]);
+  }
+  return out;
+}
+
+function createControllerDirectiveForPlan(ctx: RuntimeContext, task: Task, plan: string, now: number): string {
+  const directiveId = randomUUID();
+  ctx.db.prepare(
+    `INSERT INTO directives (
+       id, title, content, issued_by_type, issued_by_id, status, project_path,
+       controller_mode, controller_stage, created_at, updated_at
+     ) VALUES (?, ?, ?, 'user', NULL, 'active', ?, 1, 'implement', ?, ?)`,
+  ).run(
+    directiveId,
+    `Controller: ${task.task_number ? `${task.task_number} ` : ""}${task.title}`,
+    cleanRefinementPlan(plan),
+    task.project_path,
+    now,
+    now,
+  );
+  const directive = ctx.db.prepare("SELECT * FROM directives WHERE id = ?").get(directiveId);
+  ctx.ws.broadcast("directive_update", directive);
+  return directiveId;
+}
+
+function splitRefinementPlanIntoTasks(
+  ctx: RuntimeContext,
+  task: Task,
+  options: { controllerMode: boolean },
+): PlanSplitResult | { error: "no_refinement_plan" | "no_implementation_steps" } {
+  if (!task.refinement_plan) return { error: "no_refinement_plan" };
+
+  const steps = parseImplementationSteps(task.refinement_plan);
+  if (steps.length === 0) return { error: "no_implementation_steps" };
+
+  const db = ctx.db;
+  const now = Date.now();
+  const planPath = savePlanToDocs(task, task.refinement_plan);
+  const parentPlanClean = cleanRefinementPlan(task.refinement_plan);
+  const outputLanguage = resolveTaskOutputLanguage(db, task.id);
+  const repoUrl = task.repository_url ?? (task.project_path ? detectRepositoryUrl(task.project_path) : null);
+  const directiveId = options.controllerMode ? createControllerDirectiveForPlan(ctx, task, task.refinement_plan, now) : null;
+  const childTasks: Task[] = [];
+  const taskNumberMap = new Map<number, string>();
+
+  for (const step of steps) {
+    const childId = randomUUID();
+    const childNumber = nextTaskNumber(db);
+    taskNumberMap.set(step.num, childNumber);
+
+    const deps: string[] = [];
+    if (!options.controllerMode && step.num > 1) {
+      const prevNumber = taskNumberMap.get(step.num - 1);
+      if (prevNumber) deps.push(prevNumber);
+    }
+    const depsJson = deps.length > 0 ? JSON.stringify(deps) : null;
+    const splitArtifacts = buildRefinementSplitArtifacts({
+      language: outputLanguage,
+      parentTaskNumber: task.task_number,
+      stepNumber: step.num,
+      totalSteps: steps.length,
+      stepText: step.text,
+      childNumbers: childNumber,
+      planPath,
+    });
+    const childPlan = `${splitArtifacts.childPlan}\n\n${parentPlanClean}`;
+    const writeScope = options.controllerMode ? extractStepWriteScope(step.text) : [];
+    const scopedPlannedFiles = writeScope.length > 0 ? JSON.stringify(writeScope) : task.planned_files;
+
+    db.prepare(
+      `INSERT INTO tasks (
+         id, title, description, project_path, priority, task_size, task_number,
+         depends_on, refinement_plan, refinement_completed_at, planned_files,
+         repository_url, directive_id, controller_stage, write_scope,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      childId,
+      step.text,
+      splitArtifacts.description,
+      task.project_path,
+      task.priority,
+      task.task_size,
+      childNumber,
+      depsJson,
+      childPlan,
+      now,
+      scopedPlannedFiles,
+      repoUrl,
+      directiveId,
+      options.controllerMode ? "implement" : null,
+      writeScope.length > 0 ? JSON.stringify(writeScope) : null,
+      now,
+      now,
+    );
+
+    const child = db.prepare("SELECT * FROM tasks WHERE id = ?").get(childId) as unknown as Task;
+    childTasks.push(child);
+  }
+
+  const childNumbers = childTasks.map(c => c.task_number).join(", ");
+  const result = buildRefinementSplitArtifacts({
+    language: outputLanguage,
+    parentTaskNumber: task.task_number,
+    stepNumber: 1,
+    totalSteps: steps.length,
+    stepText: steps[0]?.text ?? task.title,
+    childNumbers,
+    planPath,
+  }).result;
+
+  db.prepare("UPDATE tasks SET status = 'done', result = ?, completed_at = ?, updated_at = ? WHERE id = ?")
+    .run(result, now, now, task.id);
+
+  try { tryCleanupCompletedTaskWorkspace(task); } catch { /* non-fatal */ }
+
+  if (task.assigned_agent_id) {
+    db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?")
+      .run(now, task.assigned_agent_id);
+    ctx.ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+  }
+
+  const updatedParent = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
+  ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(updatedParent));
+  for (const child of childTasks) {
+    ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(child));
+  }
+
+  const mode = options.controllerMode ? "Controller Mode task split" : "Task split";
+  db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)")
+    .run(task.id, `${mode} into ${childNumbers}. Plan saved to ${planPath ?? "(no project path)"}.`);
+
+  return { parent: updatedParent, children: childTasks, planPath, directiveId };
 }
 
 type InteractivePromptType = "exit_plan_mode" | "ask_user_question" | "text_input_request";
@@ -931,6 +1124,31 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       }
     }
 
+    if (isRefinement && next === "in_progress" && isControllerModeEnabled(db)) {
+      const splitResult = splitRefinementPlanIntoTasks(ctx, task, { controllerMode: true });
+      if (!("error" in splitResult)) {
+        setTimeout(() => {
+          for (const child of splitResult.children) {
+            autoDispatchTask(db, ws, child.id, { autoAssign: true, autoRun: true });
+          }
+        }, 500);
+
+        return res.json({
+          approved: true,
+          next_status: "done",
+          controller_mode: true,
+          directive_id: splitResult.directiveId,
+          children_count: splitResult.children.length,
+          children: splitResult.children.map((child) => ({
+            id: child.id,
+            task_number: child.task_number,
+            controller_stage: child.controller_stage,
+          })),
+          plan_path: splitResult.planPath,
+        });
+      }
+    }
+
     let approvedTaskForSpawn: Task | undefined;
     let approvedAgentForSpawn: Agent | undefined;
 
@@ -1049,137 +1267,25 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   router.post("/tasks/:id/split", (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
-    if (!task.refinement_plan) return res.status(400).json({ error: "no_refinement_plan" });
+    const splitResult = splitRefinementPlanIntoTasks(ctx, task, { controllerMode: isControllerModeEnabled(db) });
+    if ("error" in splitResult) return res.status(400).json({ error: splitResult.error });
 
-    // Parse implementation steps from the refinement plan
-    const plan = task.refinement_plan;
-    // Match both Japanese and English refinement-plan section headings.
-    // Legacy plans used `## 実装計画 (Implementation Plan)`; current plans
-    // emit either `## 実装計画` (ja) or `## Implementation Plan` (en).
-    const implMatch = plan.match(/## (?:実装計画(?: \(Implementation Plan\))?|Implementation Plan)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
-    if (!implMatch) return res.status(400).json({ error: "no_implementation_steps" });
-
-    const stepsRaw = implMatch[1].trim();
-    const steps: Array<{ num: number; text: string }> = [];
-    for (const match of stepsRaw.matchAll(/^(\d+)\.\s+(.+)$/gm)) {
-      steps.push({ num: parseInt(match[1], 10), text: match[2].trim() });
-    }
-    if (steps.length === 0) return res.status(400).json({ error: "no_implementation_steps" });
-
-    // Save plan to Docs/plans/
-    let planPath: string | null = null;
-    if (task.project_path) {
-      const plansDir = join(task.project_path, "Docs", "plans");
-      mkdirSync(plansDir, { recursive: true });
-      const slug = task.title.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60).toLowerCase();
-      const filename = `${(task.task_number ?? "").replace("#", "")}-${slug}.md`;
-      planPath = join(plansDir, filename);
-      const content = `# ${task.title}\n\n${plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "")}`;
-      writeFileSync(planPath, content, "utf-8");
-    }
-
-    // Build child refinement_plan referencing the parent plan
-    const parentPlanClean = plan.replace(/^---REFINEMENT PLAN---\n?/, "").replace(/\n?---END REFINEMENT---$/, "");
-
-    // Create child tasks with depends_on
-    const now = Date.now();
-    const childTasks: Task[] = [];
-    const taskNumberMap = new Map<number, string>(); // step num -> task_number
-    const outputLanguage = resolveTaskOutputLanguage(db, task.id);
-
-    for (const step of steps) {
-      const childId = randomUUID();
-      const childNumber = nextTaskNumber(db);
-      taskNumberMap.set(step.num, childNumber);
-
-      // Build depends_on from previous step
-      const deps: string[] = [];
-      if (step.num > 1) {
-        const prevNumber = taskNumberMap.get(step.num - 1);
-        if (prevNumber) deps.push(prevNumber);
+    setTimeout(() => {
+      const runnableChildren = isControllerModeEnabled(db)
+        ? splitResult.children.filter((child) => child.controller_stage === "implement")
+        : splitResult.children.filter((child) => !child.depends_on);
+      for (const child of runnableChildren) {
+        autoDispatchTask(db, ws, child.id, { autoAssign: true, autoRun: true });
       }
-      const depsJson = deps.length > 0 ? JSON.stringify(deps) : null;
-      const hasDeps = deps.length > 0;
-      const splitArtifacts = buildRefinementSplitArtifacts({
-        language: outputLanguage,
-        parentTaskNumber: task.task_number,
-        stepNumber: step.num,
-        totalSteps: steps.length,
-        stepText: step.text,
-        childNumbers: childNumber,
-        planPath,
-      });
-      const description = splitArtifacts.description;
-      // Inherit parent's refinement plan so child tasks skip refinement stage
-      const childPlan = `${splitArtifacts.childPlan}\n\n${parentPlanClean}`;
-      const repoUrl = task.repository_url ?? (task.project_path ? detectRepositoryUrl(task.project_path) : null);
+    }, 500);
 
-      // Stamp `refinement_completed_at = now` so the child task's
-      // `hasExistingPlan` check in spawnAgent treats the inherited plan
-      // as a completed refinement and skips the stage, matching the
-      // pre-#99-PR3 behavior where `refinement_plan != NULL` alone was
-      // enough. Without this stamp, the stricter `hasExistingPlan`
-      // rule (plan AND completed_at) would re-run refinement on every
-      // child task.
-      //
-      // Inherit `planned_files` from the parent so the file-conflict
-      // gate covers child tasks too. Without this, children would all
-      // have NULL planned_files and slip past `getFileConflicts` even
-      // when they obviously touch the same files as the parent's plan.
-      // The children are typically chained via `depends_on` (sequential
-      // execution), so this mainly protects against a user breaking
-      // that chain manually — at which point the file-conflict gate
-      // becomes the last line of defense.
-      db.prepare(
-        `INSERT INTO tasks (id, title, description, project_path, priority, task_size, task_number, depends_on, refinement_plan, refinement_completed_at, planned_files, repository_url, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(childId, step.text, description, task.project_path, task.priority, task.task_size, childNumber, depsJson, childPlan, now, task.planned_files, repoUrl, now, now);
-
-      const child = db.prepare("SELECT * FROM tasks WHERE id = ?").get(childId) as unknown as Task;
-      childTasks.push(child);
-    }
-
-    // Mark parent task as done with result
-    const childNumbers = childTasks.map(c => c.task_number).join(", ");
-    const result = buildRefinementSplitArtifacts({
-      language: outputLanguage,
-      parentTaskNumber: task.task_number,
-      stepNumber: 1,
-      totalSteps: steps.length,
-      stepText: steps[0]?.text ?? task.title,
-      childNumbers,
-      planPath,
-    }).result;
-    db.prepare("UPDATE tasks SET status = 'done', result = ?, completed_at = ?, updated_at = ? WHERE id = ?").run(result, now, now, task.id);
-
-    // Best-effort: drop the per-task worktree now that the task is
-    // terminal. See `tryCleanupCompletedTaskWorkspace` for safety
-    // semantics (preserves branches with unpushed commits).
-    try { tryCleanupCompletedTaskWorkspace(task); } catch { /* non-fatal */ }
-
-    // Release agent if assigned
-    if (task.assigned_agent_id) {
-      db.prepare("UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?").run(now, task.assigned_agent_id);
-      ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
-    }
-
-    const updatedParent = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    ws.broadcast("task_update", buildTaskSummaryUpdate(updatedParent));
-    for (const child of childTasks) {
-      ws.broadcast("task_update", buildTaskSummaryUpdate(child));
-    }
-
-    db.prepare(
-      "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
-    ).run(task.id, `Task split into ${childNumbers}. Plan saved to ${planPath ?? "(no project path)"}.`);
-
-    // Auto-dispatch the first child (no dependencies) immediately to in_progress
-    const firstChild = childTasks[0];
-    if (firstChild && !firstChild.depends_on) {
-      setTimeout(() => autoDispatchTask(db, ws, firstChild.id, { autoAssign: true, autoRun: true }), 500);
-    }
-
-    res.json({ parent: updatedParent, children: childTasks, plan_path: planPath });
+    res.json({
+      parent: splitResult.parent,
+      children: splitResult.children,
+      plan_path: splitResult.planPath,
+      directive_id: splitResult.directiveId,
+      controller_mode: splitResult.directiveId !== null,
+    });
   });
 
   // Get task logs

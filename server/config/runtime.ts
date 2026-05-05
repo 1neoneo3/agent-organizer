@@ -191,15 +191,11 @@ export const SETTINGS_DEFAULTS = {
   // and/or model is configured, the stage-specific resolver picks an
   // idle worker that matches the configured filters. Implementation
   // filters are constrained to implementer-capable workers so several
-  // matching implementers can run in parallel. `in_progress_agent_id`
-  // remains as a legacy single-agent pin and is only consulted when the
-  // implementation role/model pool is unconfigured. human_review
-  // automatic reviews intentionally reuse the review_agent_* filters
-  // because they perform the same read-only reviewer role against a
-  // later stage gate.
+  // matching implementers can run in parallel. human_review automatic
+  // reviews intentionally reuse the review_agent_* filters because they
+  // perform the same read-only reviewer role against a later stage gate.
   implementation_agent_role: "" as const,
   implementation_agent_model: "" as const,
-  in_progress_agent_id: "" as const,
   refinement_agent_role: "" as const,
   refinement_agent_model: "" as const,
   review_agent_role: "" as const,

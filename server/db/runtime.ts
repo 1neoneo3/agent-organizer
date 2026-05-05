@@ -72,6 +72,7 @@ export function initializeDb(dbPath?: string): DatabaseSync {
   migrateAddSettingsOverrides(db);
   migrateAddControllerFields(db);
   migrateStageAgentSelectionSettings(db);
+  migrateRemoveLegacyImplementationPin(db);
   const repairedTaskNumberMap = repairBrokenTaskNumbers(db);
   backfillTaskNumbers(db);
   repairBrokenDependsOnReferences(db, repairedTaskNumberMap);
@@ -483,6 +484,10 @@ function migrateStageAgentSelectionSettings(db: DatabaseSync): void {
   }
 
   db.prepare("DELETE FROM settings WHERE key = ?").run("ci_check_agent_id");
+}
+
+function migrateRemoveLegacyImplementationPin(db: DatabaseSync): void {
+  db.prepare("DELETE FROM settings WHERE key = ?").run("in_progress_agent_id");
 }
 
 function migrateAddMergedPrUrls(db: DatabaseSync): void {

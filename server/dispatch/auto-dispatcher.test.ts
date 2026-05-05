@@ -190,14 +190,14 @@ describe("dispatchAutoStartableTasks", () => {
     assert.equal(startedAgent.current_task_id, task.id);
   });
 
-  it("uses configured in_progress_agent_id for direct inbox implementation", () => {
+  it("ignores deprecated in_progress_agent_id for direct inbox implementation", () => {
     const db = createDb();
     const ws = createWs();
     insertSetting(db, "auto_dispatch_mode", "all_inbox");
     insertSetting(db, "default_enable_refinement", "false");
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertSetting(db, "in_progress_agent_id", "deprecated-pin");
     insertAgent(db, { id: "scored-impl", name: "Scored", role: "lead_engineer", stats_tasks_done: 100 });
-    insertAgent(db, { id: "configured-impl", name: "Configured", role: "architect", stats_tasks_done: 0 });
+    insertAgent(db, { id: "deprecated-pin", name: "Deprecated", role: "architect", stats_tasks_done: 0 });
     const task = insertTask(db, { title: "Implement assigned override" });
     const started: Array<{ taskId: string; agentId: string }> = [];
 
@@ -211,8 +211,8 @@ describe("dispatchAutoStartableTasks", () => {
       assigned_agent_id: string | null;
     };
     assert.equal(result.started, 1);
-    assert.equal(row.assigned_agent_id, "configured-impl");
-    assert.deepEqual(started, [{ taskId: task.id, agentId: "configured-impl" }]);
+    assert.equal(row.assigned_agent_id, "scored-impl");
+    assert.deepEqual(started, [{ taskId: task.id, agentId: "scored-impl" }]);
   });
 
   it("uses implementation role/model pool for parallel direct inbox implementation", () => {
@@ -222,8 +222,6 @@ describe("dispatchAutoStartableTasks", () => {
     insertSetting(db, "default_enable_refinement", "false");
     insertSetting(db, "implementation_agent_role", "lead_engineer");
     insertSetting(db, "implementation_agent_model", "gpt-5.5");
-    insertSetting(db, "in_progress_agent_id", "legacy-pin");
-    insertAgent(db, { id: "legacy-pin", name: "Legacy", role: "architect", cli_model: "gpt-5.4" });
     insertAgent(db, { id: "pool-1", name: "Pool 1", role: "lead_engineer", cli_model: "gpt-5.5", stats_tasks_done: 0 });
     insertAgent(db, { id: "pool-2", name: "Pool 2", role: "lead_engineer", cli_model: "gpt-5.5", stats_tasks_done: 1 });
     const first = insertTask(db, { id: "task-1", task_number: "#1", external_id: "1", title: "Implement pool one" });
@@ -243,13 +241,13 @@ describe("dispatchAutoStartableTasks", () => {
     ]);
   });
 
-  it("uses configured in_progress_agent_id when a refinement-completed inbox task retries", () => {
+  it("uses implementation role/model pool when a refinement-completed inbox task retries", () => {
     const db = createDb();
     const ws = createWs();
     insertSetting(db, "auto_dispatch_mode", "all_inbox");
     insertSetting(db, "default_enable_refinement", "true");
     insertSetting(db, "refinement_agent_role", "planner");
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertSetting(db, "implementation_agent_role", "lead_engineer");
     insertAgent(db, { id: "planner", name: "Planner", role: "planner", stats_tasks_done: 0 });
     insertAgent(db, { id: "configured-impl", name: "Configured", role: "lead_engineer", stats_tasks_done: 10 });
     const task = insertTask(db, { title: "Implement after approved plan retry" });
@@ -271,15 +269,15 @@ describe("dispatchAutoStartableTasks", () => {
     assert.deepEqual(started, [{ taskId: task.id, agentId: "configured-impl" }]);
   });
 
-  it("falls back when configured in_progress_agent_id has current_task_id", () => {
+  it("ignores deprecated in_progress_agent_id when it has current_task_id", () => {
     const db = createDb();
     const ws = createWs();
     insertSetting(db, "auto_dispatch_mode", "all_inbox");
     insertSetting(db, "default_enable_refinement", "false");
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertSetting(db, "in_progress_agent_id", "deprecated-pin");
     insertAgent(db, {
-      id: "configured-impl",
-      name: "Configured",
+      id: "deprecated-pin",
+      name: "Deprecated",
       role: "lead_engineer",
       status: "idle",
       current_task_id: "other-task",

@@ -88,11 +88,11 @@ async function postRun(baseUrl: string, taskId: string, body?: Record<string, st
 }
 
 describe("POST /tasks/:id/run in_progress implementer assignment", () => {
-  it("uses configured in_progress_agent_id over the existing task assignment", async () => {
+  it("ignores deprecated in_progress_agent_id and uses the existing task assignment", async () => {
     const db = initializeDb(":memory:");
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertSetting(db, "in_progress_agent_id", "deprecated-pin");
     insertAgent(db, { id: "assigned-impl", role: "lead_engineer" });
-    insertAgent(db, { id: "configured-impl", role: "architect" });
+    insertAgent(db, { id: "deprecated-pin", role: "architect" });
     insertInboxTask(db, "task-run-1", "assigned-impl");
 
     const spawned: Array<{ agentId: string; taskId: string }> = [];
@@ -112,18 +112,18 @@ describe("POST /tasks/:id/run in_progress implementer assignment", () => {
       const row = db.prepare("SELECT assigned_agent_id FROM tasks WHERE id = ?").get("task-run-1") as {
         assigned_agent_id: string | null;
       };
-      assert.equal(row.assigned_agent_id, "configured-impl");
-      assert.deepEqual(spawned, [{ agentId: "configured-impl", taskId: "task-run-1" }]);
+      assert.equal(row.assigned_agent_id, "assigned-impl");
+      assert.deepEqual(spawned, [{ agentId: "assigned-impl", taskId: "task-run-1" }]);
     } finally {
       await closeServer(server);
       db.close();
     }
   });
 
-  it("lets an explicit manual agent_id override the configured in_progress_agent_id", async () => {
+  it("lets an explicit manual agent_id override normal implementation selection", async () => {
     const db = initializeDb(":memory:");
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
-    insertAgent(db, { id: "configured-impl", role: "lead_engineer" });
+    insertSetting(db, "in_progress_agent_id", "deprecated-pin");
+    insertAgent(db, { id: "deprecated-pin", role: "lead_engineer" });
     insertAgent(db, { id: "requested-impl", role: "architect" });
     insertInboxTask(db, "task-run-2", null);
 

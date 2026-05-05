@@ -149,11 +149,11 @@ describe("resolveImplementerAgentForExecution", () => {
     assert.equal(result.source, "assigned");
   });
 
-  it("prefers configured in_progress_agent_id over an assigned implementer", () => {
+  it("ignores deprecated in_progress_agent_id and keeps an assigned implementer", () => {
     const db = createDb();
     insertAgent(db, { id: "assigned-impl", role: "lead_engineer" });
-    insertAgent(db, { id: "configured-impl", role: "architect" });
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertAgent(db, { id: "deprecated-pin", role: "architect" });
+    insertSetting(db, "in_progress_agent_id", "deprecated-pin");
 
     const result = resolveImplementerAgentForExecution(db, "assigned-impl", undefined, {
       taskId: "task-1",
@@ -161,17 +161,16 @@ describe("resolveImplementerAgentForExecution", () => {
 
     assert.equal(result.ok, true);
     if (!result.ok) return;
-    assert.equal(result.agent.id, "configured-impl");
-    assert.equal(result.source, "configured");
+    assert.equal(result.agent.id, "assigned-impl");
+    assert.equal(result.source, "assigned");
   });
 
-  it("prefers implementation role/model pool over the legacy single-agent pin", () => {
+  it("uses the implementation role/model pool", () => {
     const db = createDb();
-    insertAgent(db, { id: "legacy-pin", role: "lead_engineer", cli_model: "gpt-5.4" });
+    insertAgent(db, { id: "non-matching-impl", role: "lead_engineer", cli_model: "gpt-5.4" });
     insertAgent(db, { id: "pool-impl", role: "architect", cli_model: "gpt-5.5" });
     insertSetting(db, "implementation_agent_role", "architect");
     insertSetting(db, "implementation_agent_model", "gpt-5.5");
-    insertSetting(db, "in_progress_agent_id", "legacy-pin");
 
     const result = resolveImplementerAgentForExecution(db, null, undefined, {
       taskId: "task-1",
@@ -216,16 +215,16 @@ describe("resolveImplementerAgentForExecution", () => {
     assert.equal(result.error, "no_implementer_available");
   });
 
-  it("falls back when configured in_progress_agent_id is busy or owns another current_task_id", () => {
+  it("falls back normally when deprecated in_progress_agent_id points to a busy agent", () => {
     const db = createDb();
     insertAgent(db, {
-      id: "configured-impl",
+      id: "deprecated-pin",
       role: "lead_engineer",
       status: "working",
       current_task_id: "other-task",
     });
     insertAgent(db, { id: "fallback-impl", role: "architect" });
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertSetting(db, "in_progress_agent_id", "deprecated-pin");
 
     const result = resolveImplementerAgentForExecution(db, null, undefined, {
       taskId: "task-1",

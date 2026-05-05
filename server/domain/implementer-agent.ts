@@ -26,22 +26,6 @@ export function isRunnableImplementerAgent(
   return !!agent && isImplementerAgent(agent) && agent.status === "idle" && agent.current_task_id === null;
 }
 
-export function resolveConfiguredInProgressAgent(
-  db: DatabaseSync,
-  taskId?: string | null,
-  excludeIds: Array<string | null | undefined> = [],
-): Agent | undefined {
-  const configuredId = getTaskSetting(db, "in_progress_agent_id", taskId)?.trim() ?? "";
-  if (!configuredId) return undefined;
-
-  const excluded = new Set(excludeIds.filter((id): id is string => !!id));
-  if (excluded.has(configuredId)) return undefined;
-
-  const agent = db.prepare("SELECT * FROM agents WHERE id = ?").get(configuredId) as Agent | undefined;
-  if (!isRunnableImplementerAgent(agent)) return undefined;
-  return agent;
-}
-
 type ImplementationPoolResolution =
   | { status: "unconfigured" }
   | { status: "configured_match"; agent: Agent }
@@ -89,7 +73,7 @@ export function resolveConfiguredImplementationPoolAgent(
 }
 
 export type ImplementerResolutionResult =
-  | { ok: true; agent: Agent; source: "requested" | "configured_pool" | "configured" | "assigned" | "fallback" }
+  | { ok: true; agent: Agent; source: "requested" | "configured_pool" | "assigned" | "fallback" }
   | { ok: false; error: "no_implementer_available" | "agent_not_found" | "agent_busy" | "non_implementer_agent" };
 
 export interface ImplementerResolutionOptions {
@@ -125,11 +109,6 @@ export function resolveImplementerAgentForExecution(
   }
   if (configuredPool.status === "configured_no_match") {
     return { ok: false, error: "no_implementer_available" };
-  }
-
-  const configuredAgent = resolveConfiguredInProgressAgent(db, options.taskId, [...excluded]);
-  if (configuredAgent) {
-    return { ok: true, agent: configuredAgent, source: "configured" };
   }
 
   if (taskAssignedAgentId && !excluded.has(taskAssignedAgentId)) {

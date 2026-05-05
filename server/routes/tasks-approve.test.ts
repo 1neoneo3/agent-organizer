@@ -87,10 +87,96 @@ function insertRefinementTask(db: DatabaseSync, taskId: string, assignedAgentId:
 }
 
 describe("POST /tasks/:id/approve refinement implementer assignment", () => {
-  it("assigns and auto-runs the configured in_progress_agent_id after refinement approval", async () => {
+  it("splits an approved plan into parallel controller implement children when controller mode is enabled", async () => {
     const db = initializeDb(":memory:");
     insertSetting(db, "default_enable_refinement", "true");
-    insertSetting(db, "in_progress_agent_id", "configured-impl");
+    insertSetting(db, "enable_controller_mode", "true");
+    insertSetting(db, "implementation_agent_role", "lead_engineer");
+    insertAgent(db, { id: "planner", role: "planner" });
+    const now = Date.now();
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## Implementation Plan",
+      "1. Update `server/routes/tasks.ts` for controller split approval",
+      "2. Update `src/components/tasks/TaskDetailModal.tsx` copy",
+      "---END REFINEMENT---",
+    ].join("\n");
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, assigned_agent_id, status, task_size, task_number,
+        refinement_plan, refinement_completed_at, created_at, updated_at
+      ) VALUES (?, 'Controller split parent', 'Controller split parent', ?, 'refinement', 'medium', '#710', ?, ?, ?, ?)`,
+    ).run("task-controller-split", "planner", plan, now - 1_000, now, now);
+
+    const { server, baseUrl } = await startServer(db, {
+      spawnAgent: async () => {
+        throw new Error("parent task should not spawn directly");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/task-controller-split/approve`, { method: "POST" });
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as {
+        approved: boolean;
+        next_status: string;
+        controller_mode: boolean;
+        directive_id: string;
+        children_count: number;
+      };
+      assert.equal(body.approved, true);
+      assert.equal(body.next_status, "done");
+      assert.equal(body.controller_mode, true);
+      assert.equal(body.children_count, 2);
+
+      const directive = db.prepare("SELECT status, controller_mode, controller_stage FROM directives WHERE id = ?")
+        .get(body.directive_id) as { status: string; controller_mode: number; controller_stage: string };
+      assert.equal(directive.status, "active");
+      assert.equal(directive.controller_mode, 1);
+      assert.equal(directive.controller_stage, "implement");
+
+      const parent = db.prepare("SELECT status, result FROM tasks WHERE id = ?").get("task-controller-split") as {
+        status: string;
+        result: string | null;
+      };
+      assert.equal(parent.status, "done");
+      assert.match(parent.result ?? "", /#\d+/);
+
+      const children = db.prepare(
+        "SELECT status, depends_on, controller_stage, refinement_completed_at, planned_files FROM tasks WHERE directive_id = ? ORDER BY created_at ASC",
+      ).all(body.directive_id) as Array<{
+        status: string;
+        depends_on: string | null;
+        controller_stage: string | null;
+        refinement_completed_at: number | null;
+        planned_files: string | null;
+      }>;
+      assert.equal(children.length, 2);
+      assert.deepEqual(children.map((child) => child.status), ["inbox", "inbox"]);
+      assert.deepEqual(children.map((child) => child.depends_on), [null, null]);
+      assert.deepEqual(children.map((child) => child.controller_stage), ["implement", "implement"]);
+      assert.ok(children.every((child) => child.refinement_completed_at !== null));
+      assert.deepEqual(children.map((child) => JSON.parse(child.planned_files ?? "[]")), [
+        ["server/routes/tasks.ts"],
+        ["src/components/tasks/TaskDetailModal.tsx"],
+      ]);
+
+      const planner = db.prepare("SELECT status, current_task_id FROM agents WHERE id = 'planner'")
+        .get() as { status: string; current_task_id: string | null };
+      assert.equal(planner.status, "idle");
+      assert.equal(planner.current_task_id, null);
+
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    } finally {
+      await closeServer(server);
+      db.close();
+    }
+  });
+
+  it("assigns and auto-runs the implementation role/model pool agent after refinement approval", async () => {
+    const db = initializeDb(":memory:");
+    insertSetting(db, "default_enable_refinement", "true");
+    insertSetting(db, "implementation_agent_role", "architect");
     insertAgent(db, { id: "refinement-runner", role: "planner" });
     insertAgent(db, { id: "configured-impl", role: "architect" });
     insertAgent(db, { id: "fallback-impl", role: "lead_engineer" });
@@ -128,10 +214,10 @@ describe("POST /tasks/:id/approve refinement implementer assignment", () => {
   it("excludes the refinement runner and falls back to another implementer when configured agent is unavailable", async () => {
     const db = initializeDb(":memory:");
     insertSetting(db, "default_enable_refinement", "true");
-    insertSetting(db, "in_progress_agent_id", "configured-busy");
+    insertSetting(db, "in_progress_agent_id", "deprecated-busy");
     insertAgent(db, { id: "refinement-runner", role: "planner" });
     insertAgent(db, {
-      id: "configured-busy",
+      id: "deprecated-busy",
       role: "lead_engineer",
       status: "working",
       current_task_id: "other-task",
@@ -169,9 +255,7 @@ describe("POST /tasks/:id/approve refinement implementer assignment", () => {
   it("returns a retryable deferred response when only the refinement runner is available", async () => {
     const db = initializeDb(":memory:");
     insertSetting(db, "default_enable_refinement", "true");
-    insertSetting(db, "in_progress_agent_id", "configured-offline");
     insertAgent(db, { id: "refinement-runner", role: "planner" });
-    insertAgent(db, { id: "configured-offline", role: "lead_engineer", status: "offline" });
     insertRefinementTask(db, "task-approve-2", "refinement-runner");
 
     let spawnCalls = 0;
