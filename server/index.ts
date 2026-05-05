@@ -12,6 +12,7 @@ import { createWebhooksRouter } from "./routes/webhooks.js";
 import { mountStatic } from "./static-handlers.js";
 import { authMiddleware } from "./security/auth.js";
 import { startOrphanRecovery } from "./lifecycle/jobs.js";
+import { reconcileStaleAgentPointers } from "./lifecycle/agent-pointer-reconcile.js";
 import { restorePendingInteractivePrompts } from "./spawner/process-manager.js";
 import { startTelegramControlPoller } from "./notify/telegram-control.js";
 import { startAutoDispatchScheduler } from "./dispatch/auto-dispatcher.js";
@@ -112,6 +113,17 @@ wss.on("connection", (ws: WebSocket) => {
 restorePendingInteractivePrompts(db);
 const heartbeatManager = initHeartbeatManager(db);
 heartbeatManager.start();
+// At boot no agent process is alive yet, so any agent row stuck in
+// `working` is necessarily stale. Reconcile before orphan recovery starts so
+// the auto-dispatcher sees the correct idle pool on its first tick.
+{
+  const reconciled = reconcileStaleAgentPointers(db, wsHub);
+  if (reconciled.released.length > 0) {
+    console.log(
+      `[agents] reconcile-on-boot: released ${reconciled.released.length} stale working pointer(s)`,
+    );
+  }
+}
 startOrphanRecovery(db, wsHub);
 startGithubIssueSync(db, wsHub);
 startAutoDispatchScheduler(db, wsHub);

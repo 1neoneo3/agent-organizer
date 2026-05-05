@@ -1,12 +1,13 @@
 import type { DatabaseSync } from "node:sqlite";
 import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
-import { handleSpawnFailure } from "../spawner/spawn-failures.js";
+import { SpawnPreflightError, handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
 import { AUTO_STAGES, type AutoStage } from "../domain/task-status.js";
 import { ORPHAN_AUTO_RESPAWN_MAX } from "../config/runtime.js";
 import type { Agent, Task } from "../types/runtime.js";
 import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
+import { reconcileStaleAgentPointers } from "./agent-pointer-reconcile.js";
 
 const INTERACTIVE_PROMPT_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
 const pendingOrphanRespawns = new Set<string>();
@@ -54,6 +55,10 @@ export function startOrphanRecovery(
 
     recoverInProgressOrphans(db, ws, active, { pending });
     recoverStuckAutoStages(db, ws, active, startedAt, pending);
+    // Release agents stuck in `working` whose `current_task_id` points at a
+    // missing/done/cancelled task — defends against partial crashes that left
+    // the agent row in an inconsistent state without an active process.
+    reconcileStaleAgentPointers(db, ws, { activeTaskIds: active });
   }, intervalMs);
 }
 
@@ -186,6 +191,11 @@ export function recoverInProgressOrphans(
             source: "Orphan recovery auto-respawn",
           });
           if (handled.handled) {
+            if (error instanceof SpawnPreflightError) {
+              db.prepare(
+                "UPDATE tasks SET auto_respawn_count = ? WHERE id = ?",
+              ).run(task.auto_respawn_count, task.id);
+            }
             return;
           }
           const msg = error instanceof Error ? error.message : String(error);

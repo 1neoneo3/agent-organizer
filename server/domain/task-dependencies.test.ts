@@ -26,10 +26,11 @@ function insertTask(
   id: string,
   taskNumber: string,
   status: string,
+  directiveId: string | null = null,
 ): void {
   db.prepare(
-    "INSERT INTO tasks (id, title, status, task_size, task_number) VALUES (?, ?, ?, 'small', ?)",
-  ).run(id, `task ${taskNumber}`, status, taskNumber);
+    "INSERT INTO tasks (id, title, status, task_size, task_number, directive_id) VALUES (?, ?, ?, 'small', ?, ?)",
+  ).run(id, `task ${taskNumber}`, status, taskNumber, directiveId);
 }
 
 function insertTaskWithPlannedFiles(
@@ -38,10 +39,11 @@ function insertTaskWithPlannedFiles(
   taskNumber: string,
   status: string,
   plannedFiles: string[],
+  controllerStage: "implement" | "verify" | "integrate" | null = null,
 ): void {
   db.prepare(
-    "INSERT INTO tasks (id, title, status, task_size, task_number, planned_files) VALUES (?, ?, ?, 'small', ?, ?)",
-  ).run(id, `task ${taskNumber}`, status, taskNumber, JSON.stringify(plannedFiles));
+    "INSERT INTO tasks (id, title, status, task_size, task_number, planned_files, controller_stage) VALUES (?, ?, ?, 'small', ?, ?, ?)",
+  ).run(id, `task ${taskNumber}`, status, taskNumber, JSON.stringify(plannedFiles), controllerStage);
 }
 
 describe("parseDependsOn", () => {
@@ -115,6 +117,44 @@ describe("getBlockingDependencies", () => {
     insertTask(db, "d1", "#1", "cancelled");
     const blockers = getBlockingDependencies(db, { depends_on: '["#1"]' });
     assert.deepStrictEqual(blockers, [{ task_number: "#1", status: "cancelled" }]);
+  });
+
+  it("scopes task_number dependencies by directive_id when present", () => {
+    const db = createDb();
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-a", "A", "A");
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-b", "B", "B");
+    insertTask(db, "a1", "T01", "done", "d-a");
+    insertTask(db, "b1", "T01", "in_progress", "d-b");
+
+    const blockers = getBlockingDependencies(db, {
+      directive_id: "d-a",
+      depends_on: '["T01"]',
+    });
+
+    assert.deepStrictEqual(blockers, []);
+  });
+
+  it("does not pass a dependency because a different directive has the same done task_number", () => {
+    const db = createDb();
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-a", "A", "A");
+    db.prepare(
+      "INSERT INTO directives (id, title, content, status) VALUES (?, ?, ?, 'active')",
+    ).run("d-b", "B", "B");
+    insertTask(db, "a1", "T01", "done", "d-a");
+    insertTask(db, "b1", "T01", "in_progress", "d-b");
+
+    const blockers = getBlockingDependencies(db, {
+      directive_id: "d-b",
+      depends_on: '["T01"]',
+    });
+
+    assert.deepStrictEqual(blockers, [{ task_number: "T01", status: "in_progress" }]);
   });
 });
 
@@ -215,6 +255,28 @@ describe("getFileConflicts", () => {
     const conflicts = getFileConflicts(db, {
       id: "tme",
       planned_files: JSON.stringify(["src/a.ts"]),
+    });
+    assert.deepStrictEqual(conflicts, []);
+  });
+
+  it("does not apply file-conflict gate to verify controller tasks", () => {
+    const db = createDb();
+    insertTaskWithPlannedFiles(db, "busy", "T01", "in_progress", ["src/a.ts"], "implement");
+    const conflicts = getFileConflicts(db, {
+      id: "tme",
+      planned_files: JSON.stringify(["src/a.ts"]),
+      controller_stage: "verify",
+    });
+    assert.deepStrictEqual(conflicts, []);
+  });
+
+  it("does not treat active verify controller tasks as file-conflict blockers", () => {
+    const db = createDb();
+    insertTaskWithPlannedFiles(db, "busy", "T01", "in_progress", ["src/a.ts"], "verify");
+    const conflicts = getFileConflicts(db, {
+      id: "tme",
+      planned_files: JSON.stringify(["src/a.ts"]),
+      controller_stage: "implement",
     });
     assert.deepStrictEqual(conflicts, []);
   });

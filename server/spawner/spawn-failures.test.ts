@@ -7,6 +7,7 @@ import {
   computeTransientRetryDelayMs,
   createHookFailureFromCommands,
   handleSpawnFailure,
+  SpawnPreflightError,
 } from "./spawn-failures.js";
 
 function createDb(): DatabaseSync {
@@ -72,6 +73,36 @@ describe("handleSpawnFailure", () => {
     assert.match(log.message, /Auto dispatch: before_run failed: pnpm install, pnpm lint/);
     assert.match(log.message, /Moved to human_review/);
     assert.ok(ws.events.some((event) => event.type === "task_update"));
+  });
+
+  it("moves a non-retryable workspace repository mismatch to human_review", () => {
+    const db = createDb();
+    seedTaskAndAgent(db, "in_progress");
+    const ws = createWs();
+
+    const result = handleSpawnFailure(
+      db,
+      ws as never,
+      "task-1",
+      new SpawnPreflightError(
+        "workspace_repository_mismatch",
+        "repository_url does not match project_path origin; task_id=task-1; project_path=/repo; git_toplevel=/repo; actual_repository_url=https://github.com/acme/wrong; expected_repository_url=https://github.com/acme/right",
+        false,
+      ),
+      { source: "Auto dispatch" },
+    );
+
+    assert.equal(result.handled, true);
+    assert.equal(result.retryable, false);
+    assert.equal(result.code, "workspace_repository_mismatch");
+
+    const task = db.prepare("SELECT status FROM tasks WHERE id = 'task-1'").get() as { status: string };
+    assert.equal(task.status, "human_review");
+
+    const log = db.prepare("SELECT message FROM task_logs WHERE task_id = 'task-1' ORDER BY id DESC LIMIT 1").get() as {
+      message: string;
+    };
+    assert.match(log.message, /expected_repository_url=https:\/\/github.com\/acme\/right/);
   });
 
   it("leaves generic spawn failures to the caller", () => {

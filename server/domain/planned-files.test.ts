@@ -65,6 +65,37 @@ describe("extractPlannedFilesFromPlan", () => {
     ]);
   });
 
+  it("extracts paths from a JSON array under the `planned_files` heading", () => {
+    const plan = [
+      "## planned_files",
+      "",
+      "[",
+      '  "server/domain/planned-files.ts",',
+      '  "./server/spawner/process-manager.ts",',
+      '  "server//db/runtime.ts"',
+      "]",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "server/domain/planned-files.ts",
+      "server/spawner/process-manager.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
+  it("extracts paths from a fenced JSON array under the `Planned Files` heading", () => {
+    const plan = [
+      "## Planned Files",
+      "",
+      "```json",
+      "[",
+      '  "src/a.ts",',
+      '  "./src/b.ts/"',
+      "]",
+      "```",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
+  });
+
   it("extracts under the JA heading 修正するファイル", () => {
     const plan = [
       "## 修正するファイル",
@@ -120,6 +151,137 @@ describe("extractPlannedFilesFromPlan", () => {
       "- `a.ts` — x",
     ].join("\n");
     assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["a.ts"]);
+  });
+
+  it("extracts under the JA heading 変更対象ファイル", () => {
+    // The JA refinement prompt in prompt-builder.ts uses 変更対象ファイル.
+    // Without this entry, every JA-language refinement plan was returning
+    // [] from the extractor, and the file-conflict gate stayed silent.
+    const plan = [
+      "## 変更対象ファイル",
+      "",
+      "- `server/routes/tasks.ts` — handler 拡張",
+      "- `server/domain/task-rules.ts` — 新規ヘルパー",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "server/routes/tasks.ts",
+      "server/domain/task-rules.ts",
+    ]);
+  });
+
+  it("extracts backtick paths from the first column of a Markdown table", () => {
+    const plan = [
+      "## 変更対象ファイル",
+      "",
+      "| ファイル | 変更内容 |",
+      "|----------|----------|",
+      "| `server/domain/planned-files.ts` | table extraction |",
+      "| `server/db/runtime.ts` | backfill |",
+      "",
+      "## 実装計画",
+      "1. update extractor",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "server/domain/planned-files.ts",
+      "server/db/runtime.ts",
+    ]);
+  });
+
+  it("supports mixed bullet and table rows while deduplicating", () => {
+    const plan = [
+      "## Files to Modify",
+      "",
+      "- `src/a.ts` — bullet",
+      "| `src/b.ts` | table |",
+      "| `./src/a.ts` | duplicate normalized path |",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
+  });
+
+  it("merges bullet, table, and JSON array paths from the same section", () => {
+    const plan = [
+      "## planned_files",
+      "",
+      "- `src/a.ts` — bullet",
+      "| `src/b.ts` | table |",
+      "[",
+      '  "./src/a.ts",',
+      '  "src/c.ts"',
+      "]",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), [
+      "src/a.ts",
+      "src/b.ts",
+      "src/c.ts",
+    ]);
+  });
+
+  it("accepts a parenthesized bilingual annotation after the heading", () => {
+    // Refinement plans authored by JA agents commonly include a bilingual
+    // hint, e.g. `## 変更対象ファイル (Files to Modify)`. The strict
+    // `\\s*$` form rejected these and lost the planned_files data.
+    const plan = [
+      "## 変更対象ファイル (Files to Modify)",
+      "",
+      "- `src/a.ts` — x",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts"]);
+  });
+
+  it("accepts a parenthesized status note like `(planned)` after the heading", () => {
+    const plan = [
+      "## Files to Modify (planned)",
+      "",
+      "- `src/a.ts` — x",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts"]);
+  });
+
+  it("recognizes the spaced variant `planned files`", () => {
+    const plan = [
+      "## planned files",
+      "",
+      '["src/a.ts", "src/b.ts"]',
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), ["src/a.ts", "src/b.ts"]);
+  });
+
+  it("does NOT match `## Files to Modify Backup` (extra trailing word, no parens)", () => {
+    // False-positive guard: a section called "Files to Modify Backup" is
+    // not the planned-files section. Treating it as one would route stale
+    // backup paths into the file-conflict gate.
+    const plan = [
+      "## Files to Modify Backup",
+      "",
+      "- `src/old-backup.ts` — historical",
+      "",
+      "## Files to Modify",
+      "",
+      "- `src/active.ts` — current target",
+    ].join("\n");
+    assert.deepStrictEqual(
+      extractPlannedFilesFromPlan(plan),
+      ["src/active.ts"],
+      "must skip the Backup section and only pick the canonical heading",
+    );
+  });
+
+  it("does NOT match `## Files to Modify Or Skip`", () => {
+    const plan = [
+      "## Files to Modify Or Skip",
+      "",
+      "- `src/maybe.ts` — undecided",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), []);
+  });
+
+  it("does NOT match a heading with a trailing word AFTER the parenthesized annotation", () => {
+    const plan = [
+      "## Files to Modify (planned) Backup",
+      "",
+      "- `src/should-not-leak.ts` — x",
+    ].join("\n");
+    assert.deepStrictEqual(extractPlannedFilesFromPlan(plan), []);
   });
 });
 

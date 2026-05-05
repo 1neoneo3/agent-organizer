@@ -77,6 +77,12 @@ describe("SETTINGS_DEFAULTS.in_progress_agent_id", () => {
   });
 });
 
+describe("SETTINGS_DEFAULTS.enable_controller_mode", () => {
+  it("defaults to false", () => {
+    assert.equal(SETTINGS_DEFAULTS.enable_controller_mode, "false");
+  });
+});
+
 describe("isOutputLanguage", () => {
   it("returns true for 'ja'", () => {
     assert.equal(isOutputLanguage("ja"), true);

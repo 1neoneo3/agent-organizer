@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   __hasActiveCheckRun,
+  getLatestCheckResults,
   isAutoChecksEnabled,
   resolveCheckSpecs,
   runChecks,
@@ -24,14 +25,21 @@ import {
  */
 function createFakeDb(settings: Record<string, string> = {}) {
   const logs: Array<{ taskId: string; kind: string; message: string }> = [];
+  const effectiveSettings = {
+    default_workspace_mode: "shared",
+    ...settings,
+  };
   const db = {
     logs,
     prepare(sql: string) {
       if (sql.startsWith("SELECT value FROM settings")) {
         return {
           get: (key: unknown) => {
+            if (key === undefined && sql.includes("default_workspace_mode")) {
+              return { value: effectiveSettings.default_workspace_mode };
+            }
             if (typeof key !== "string") return undefined;
-            const value = settings[key];
+            const value = effectiveSettings[key as keyof typeof effectiveSettings];
             return value === undefined ? undefined : { value };
           },
         };
@@ -365,6 +373,33 @@ describe("triggerAutoChecks", () => {
       .sort();
     assert.deepEqual(kinds, ["lint", "tests", "types"]);
     assert.equal(__hasActiveCheckRun(task.id), false);
+  });
+
+  it("records workspace failure and does not run commands when workspace resolution fails", () => {
+    const db = createFakeDb({
+      auto_checks_enabled: "true",
+      default_workspace_mode: "git-worktree",
+      check_types_cmd: "echo should-not-run",
+    });
+    const ws = createWsStub();
+    const task = makeFakeTask("task-workspace-fail");
+
+    triggerAutoChecks(db as never, ws as never, task as never);
+
+    assert.equal(__hasActiveCheckRun(task.id), false);
+    assert.ok(
+      db.logs.some((l) => l.message.startsWith("[CHECK:FAIL:workspace]")),
+      "expected workspace failure log",
+    );
+    assert.equal(
+      db.logs.some((l) => l.message.startsWith("[CHECK:START:")),
+      false,
+      "commands must not start after workspace failure",
+    );
+    const results = getLatestCheckResults(task.id);
+    assert.equal(results?.length, 1);
+    assert.equal(results?.[0]?.ok, false);
+    assert.match(results?.[0]?.output ?? "", /workspace resolution failed/);
   });
 
   it("writes FAIL tag for a failing check and PASS tag for siblings", async () => {

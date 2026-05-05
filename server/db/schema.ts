@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   task_size TEXT NOT NULL DEFAULT 'small' CHECK(task_size IN ('small','medium','large')),
   task_number TEXT,
   depends_on TEXT,
+  controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate')),
+  write_scope TEXT,
   result TEXT,
   refinement_plan TEXT,
   refinement_completed_at INTEGER,
@@ -116,11 +118,16 @@ CREATE TABLE IF NOT EXISTS directives (
   issued_by_id TEXT,
   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','decomposing','active','completed','cancelled')),
   project_path TEXT,
+  controller_mode INTEGER NOT NULL DEFAULT 0,
+  controller_stage TEXT CHECK(controller_stage IN ('implement','verify','integrate','blocked','completed')),
+  aggregated_result TEXT,
+  completed_at INTEGER,
   created_at INTEGER NOT NULL DEFAULT (unixepoch()*1000),
   updated_at INTEGER NOT NULL DEFAULT (unixepoch()*1000)
 );
 
 CREATE INDEX IF NOT EXISTS idx_directives_status ON directives(status);
+CREATE INDEX IF NOT EXISTS idx_directives_controller ON directives(controller_mode, status, controller_stage);
 
 CREATE TABLE IF NOT EXISTS api_providers (
   id TEXT PRIMARY KEY,
@@ -135,6 +142,7 @@ CREATE TABLE IF NOT EXISTS api_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(assigned_agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_directive_controller_stage ON tasks(directive_id, controller_stage, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status_priority_created ON tasks(status, priority DESC, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_external_ref ON tasks(external_source, external_id);
 CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id);

@@ -1,9 +1,19 @@
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { AUTO_DISPATCH_INTERVAL_MS } from "../config/runtime.js";
-import { spawnAgent } from "../spawner/process-manager.js";
+import {
+  getActiveProcesses,
+  getPendingSpawns,
+  getReviewerSession,
+  spawnAgent,
+} from "../spawner/process-manager.js";
 import { handleSpawnFailure } from "../spawner/spawn-failures.js";
-import { resolveStageAgentOverride } from "../spawner/stage-agent-resolver.js";
+import { resolveStageAgentSelection } from "../spawner/stage-agent-resolver.js";
+import { triggerAutoHumanReview } from "../spawner/auto-human-reviewer.js";
+import { triggerAutoQa } from "../spawner/auto-qa.js";
+import { triggerAutoReview } from "../spawner/auto-reviewer.js";
+import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
+import { writeDispatchLog } from "../tasks/dispatch-logs.js";
 import type { Agent, Task } from "../types/runtime.js";
 import type { WsHub } from "../ws/hub.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
@@ -14,6 +24,8 @@ import {
   formatAllBlockers,
   isBlocked,
 } from "../domain/task-dependencies.js";
+import { getTaskSetting } from "../domain/task-settings.js";
+import { isControllerModeEnabled, isControllerTaskStartable, reconcileControllerDirective } from "../controller/orchestrator.js";
 
 export type AutoDispatchMode = "disabled" | "github_only" | "all_inbox";
 
@@ -27,7 +39,13 @@ interface DispatchOptions {
   startTask?: (task: Task, agent: Agent) => void;
 }
 
-const AUTO_DISPATCH_LOG_PREFIX = "[Auto Dispatch]";
+export interface AutoStageRetryTriggers {
+  triggerTestGen?: (task: Task) => void | Promise<void>;
+  triggerQa?: (task: Task) => void | Promise<void>;
+  triggerReview?: (task: Task) => void | Promise<void>;
+  triggerHumanReview?: (task: Task) => void | Promise<void>;
+}
+
 const ROLE_HINTS: Record<string, string[]> = {
   tester: ["test", "tests", "testing", "qa", "spec", "e2e", "playwright", "flaky"],
   code_reviewer: ["review", "audit"],
@@ -59,6 +77,18 @@ function getInboxTasks(db: DatabaseSync): Task[] {
   ).all() as unknown as Task[];
 }
 
+function getRetryableAutoStageTasks(db: DatabaseSync): Task[] {
+  return db.prepare(
+    `SELECT * FROM tasks
+     WHERE status IN ('test_generation', 'qa_testing', 'pr_review', 'human_review')
+     ORDER BY priority DESC, updated_at ASC`,
+  ).all() as unknown as Task[];
+}
+
+function isAutoHumanReviewEnabled(db: DatabaseSync, taskId: string): boolean {
+  return getTaskSetting(db, "auto_human_review", taskId) === "true";
+}
+
 function getIdleWorkers(db: DatabaseSync): Agent[] {
   return db.prepare(
     "SELECT * FROM agents WHERE status = 'idle' AND current_task_id IS NULL AND agent_type = 'worker' ORDER BY stats_tasks_done DESC, created_at ASC"
@@ -81,6 +111,10 @@ function tokenizeProjectPath(projectPath: string | null): string[] {
 }
 
 function detectPreferredRoles(task: Task): string[] {
+  return detectTextPreferredRoles(task);
+}
+
+function detectTextPreferredRoles(task: Task): string[] {
   const text = buildTaskSearchText(task);
   const scored = Object.entries(ROLE_HINTS)
     .map(([role, keywords]) => ({
@@ -150,22 +184,62 @@ function scoreAgentForTask(agent: Agent, task: Task, preferredRoles: string[]): 
   return score;
 }
 
+type RefinementSelection =
+  | { kind: "default" }
+  | { kind: "use"; agent: Agent }
+  | { kind: "skip"; reason: string };
+
+/**
+ * Decide whether the configured refinement-stage agent override applies
+ * to a freshly-eligible inbox task.
+ *
+ *  - Returns `default` when:
+ *    - the task's first active stage is not `refinement` (override
+ *      simply does not apply, regardless of settings), OR
+ *    - the role/model settings are both empty (unconfigured).
+ *  - Returns `use` when the override is configured and a matching idle
+ *    worker is available in the current tick's pool.
+ *  - Returns `skip` when the override is configured but no matching
+ *    idle worker exists in the DB, OR all matching workers were
+ *    already consumed earlier in the same tick. The dispatcher must
+ *    NOT silently fall back to a non-matching agent: that would let
+ *    the task run with the wrong worker just because the configured
+ *    one was momentarily unavailable.
+ */
 function resolveRefinementAgentForInbox(
   db: DatabaseSync,
   task: Task,
   availableAgents: Map<string, Agent>,
-): Agent | undefined {
-  const override = resolveStageAgentOverride(
+): RefinementSelection {
+  if (resolveFirstInboxExecutionStage(db, task) !== "refinement") {
+    return { kind: "default" };
+  }
+
+  const result = resolveStageAgentSelection(
     db,
     "refinement_agent_role",
     "refinement_agent_model",
+    { candidatePool: new Set(availableAgents.keys()) },
   );
-  if (!override) return undefined;
-  if (!availableAgents.has(override.id)) return undefined;
 
-  if (resolveFirstInboxExecutionStage(db, task) !== "refinement") return undefined;
-
-  return override;
+  switch (result.status) {
+    case "unconfigured":
+      return { kind: "default" };
+    case "configured_match":
+      return { kind: "use", agent: result.agent };
+    case "configured_no_match":
+      return {
+        kind: "skip",
+        reason:
+          "skipped: refinement_agent_role/model is configured but no matching idle worker exists; will retry next tick",
+      };
+    case "configured_no_match_in_pool":
+      return {
+        kind: "skip",
+        reason:
+          "skipped: refinement_agent_role/model match was already taken in this tick; will retry next tick",
+      };
+  }
 }
 
 function resolveTaskActiveStages(db: DatabaseSync, task: Task): ReturnType<typeof resolveActiveStages> {
@@ -210,50 +284,6 @@ function chooseBestAgent(task: Task, agents: Agent[]): Agent | undefined {
   })[0];
 }
 
-/**
- * SQLite extended error code for FOREIGN KEY constraint violations.
- * Surfaces as `errcode: 787` on the thrown DatabaseError.
- */
-const SQLITE_CONSTRAINT_FOREIGNKEY = 787;
-
-function isForeignKeyViolation(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const code = (error as { errcode?: unknown }).errcode;
-  return code === SQLITE_CONSTRAINT_FOREIGNKEY;
-}
-
-function writeDispatchLog(db: DatabaseSync, task: Task, message: string): void {
-  const fullMessage = `${AUTO_DISPATCH_LOG_PREFIX} ${message}`;
-
-  try {
-    const lastLog = db.prepare(
-      "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' ORDER BY id DESC LIMIT 1"
-    ).get(task.id) as { message: string } | undefined;
-
-    if (lastLog?.message === fullMessage) {
-      return;
-    }
-
-    const now = Date.now();
-    db.prepare("INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)")
-      .run(task.id, fullMessage);
-    db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, task.id);
-  } catch (error) {
-    // The task may have been deleted (UI delete, github-sync close,
-    // dependency cascade, manual SQL cleanup) between the inbox
-    // snapshot at the top of the dispatch tick and this log write.
-    // FK 787 on the task_logs INSERT is the canonical signal of that
-    // race. Swallow it: crashing the whole dispatcher into systemd
-    // would only delay the next tick by RestartSec while spamming the
-    // journal, and the task we were trying to log against is already
-    // gone — no actor remains to inform.
-    if (isForeignKeyViolation(error)) {
-      return;
-    }
-    throw error;
-  }
-}
-
 function assignTaskToAgent(db: DatabaseSync, task: Task, agent: Agent): Task {
   if (task.assigned_agent_id === agent.id) {
     return task;
@@ -280,6 +310,76 @@ function createDefaultTaskStarter(
       console.error(`[auto-dispatcher] spawnAgent failed for task ${task.id}:`, err);
     });
   };
+}
+
+function runAutoStageTrigger(
+  promiseOrVoid: void | Promise<void>,
+  task: Task,
+  source: string,
+): void {
+  if (promiseOrVoid && typeof (promiseOrVoid as Promise<void>).catch === "function") {
+    (promiseOrVoid as Promise<void>).catch((error) => {
+      console.error(`[auto-dispatcher] ${source} retry failed for task ${task.id}:`, error);
+    });
+  }
+}
+
+export function retryAutoStageTasks(
+  db: DatabaseSync,
+  ws: WsHub,
+  triggers: AutoStageRetryTriggers = {},
+): AutoDispatchSummary {
+  const summary: AutoDispatchSummary = { started: 0, assigned: 0, skipped: 0 };
+  const activeProcesses = getActiveProcesses();
+  const pendingSpawns = getPendingSpawns();
+
+  for (const task of getRetryableAutoStageTasks(db)) {
+    if (activeProcesses.has(task.id) || pendingSpawns.has(task.id) || getReviewerSession(task.id)) {
+      summary.skipped += 1;
+      continue;
+    }
+    if (task.status === "human_review" && !isAutoHumanReviewEnabled(db, task.id)) {
+      summary.skipped += 1;
+      continue;
+    }
+
+    switch (task.status) {
+      case "test_generation":
+        runAutoStageTrigger(
+          (triggers.triggerTestGen ?? ((retryTask) => triggerAutoTestGen(db, ws, retryTask)))(task),
+          task,
+          "test_generation",
+        );
+        summary.started += 1;
+        break;
+      case "qa_testing":
+        runAutoStageTrigger(
+          (triggers.triggerQa ?? ((retryTask) => triggerAutoQa(db, ws, retryTask)))(task),
+          task,
+          "qa_testing",
+        );
+        summary.started += 1;
+        break;
+      case "pr_review":
+        runAutoStageTrigger(
+          (triggers.triggerReview ?? ((retryTask) => triggerAutoReview(db, ws, retryTask)))(task),
+          task,
+          "pr_review",
+        );
+        summary.started += 1;
+        break;
+      case "human_review":
+        runAutoStageTrigger(
+          (triggers.triggerHumanReview ?? ((retryTask) => triggerAutoHumanReview(db, ws, retryTask)))(task),
+          task,
+          "human_review",
+        );
+        summary.started += 1;
+        break;
+    }
+  }
+
+  return summary;
 }
 
 // Dependency-blocking logic lives in `server/domain/task-dependencies.ts`
@@ -310,13 +410,32 @@ export function dispatchAutoStartableTasks(
     return summary;
   }
 
+  const retrySummary = retryAutoStageTasks(db, ws);
+  summary.started += retrySummary.started;
+  summary.skipped += retrySummary.skipped;
+
   const startTask = options?.startTask ?? createDefaultTaskStarter(db, ws);
+  if (isControllerModeEnabled(db)) {
+    const activeControllerDirectives = db.prepare(
+      "SELECT id FROM directives WHERE controller_mode = 1 AND status = 'active'",
+    ).all() as Array<{ id: string }>;
+    for (const directive of activeControllerDirectives) {
+      reconcileControllerDirective({ db, ws }, directive.id);
+    }
+  }
+
   const idleWorkers = getIdleWorkers(db);
   const availableAgents = new Map(idleWorkers.map((agent) => [agent.id, agent]));
   const inboxTasks = getInboxTasks(db);
 
   for (const task of inboxTasks) {
     try {
+    if (!isControllerTaskStartable(db, task)) {
+      summary.skipped += 1;
+      writeDispatchLog(db, ws, task, "blocked: controller stage gate is not open for this task");
+      continue;
+    }
+
     // Combined gate: declared depends_on chain AND static file-overlap
     // (planned_files intersection with any other actively-editing task).
     // A dependency in `in_progress` / `refinement` / `pr_review` / … is
@@ -325,14 +444,14 @@ export function dispatchAutoStartableTasks(
     const blockers = collectAllBlockers(db, task);
     if (isBlocked(blockers)) {
       summary.skipped += 1;
-      writeDispatchLog(db, task, `blocked (${formatAllBlockers(blockers)})`);
+      writeDispatchLog(db, ws, task, `blocked (${formatAllBlockers(blockers)})`);
       continue;
     }
 
     const skipReason = getEligibilitySkipReason(task, mode);
     if (skipReason) {
       summary.skipped += 1;
-      writeDispatchLog(db, task, skipReason);
+      writeDispatchLog(db, ws, task, skipReason);
       continue;
     }
 
@@ -348,7 +467,7 @@ export function dispatchAutoStartableTasks(
       });
       if (!resolution.ok || !availableAgents.has(resolution.agent.id)) {
         summary.skipped += 1;
-        writeDispatchLog(db, task, "skipped: no idle implementer agent is available");
+        writeDispatchLog(db, ws, task, "skipped: no idle implementer agent is available");
         continue;
       }
 
@@ -358,6 +477,7 @@ export function dispatchAutoStartableTasks(
       try {
         writeDispatchLog(
           db,
+          ws,
           assignedTask,
           `assigned "${selectedAgent.name}"${selectedAgent.role ? ` [${selectedAgent.role}]` : ""} and starting task`,
         );
@@ -368,7 +488,7 @@ export function dispatchAutoStartableTasks(
       } catch (error) {
         summary.skipped += 1;
         const message = error instanceof Error ? error.message : String(error);
-        writeDispatchLog(db, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`);
+        writeDispatchLog(db, ws, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`);
       }
       continue;
     }
@@ -377,18 +497,19 @@ export function dispatchAutoStartableTasks(
       const assignedAgent = db.prepare("SELECT * FROM agents WHERE id = ?").get(task.assigned_agent_id) as Agent | undefined;
       if (!assignedAgent) {
         summary.skipped += 1;
-        writeDispatchLog(db, task, `skipped: assigned agent "${task.assigned_agent_id}" was not found`);
+        writeDispatchLog(db, ws, task, `skipped: assigned agent "${task.assigned_agent_id}" was not found`);
         continue;
       }
       if (assignedAgent.status !== "idle") {
         summary.skipped += 1;
-        writeDispatchLog(db, task, `skipped: assigned agent is not idle (${assignedAgent.name})`);
+        writeDispatchLog(db, ws, task, `skipped: assigned agent is not idle (${assignedAgent.name})`);
         continue;
       }
 
       try {
         writeDispatchLog(
           db,
+          ws,
           task,
           `starting with assigned agent "${assignedAgent.name}"${assignedAgent.role ? ` [${assignedAgent.role}]` : ""}`,
         );
@@ -398,22 +519,29 @@ export function dispatchAutoStartableTasks(
       } catch (error) {
         summary.skipped += 1;
         const message = error instanceof Error ? error.message : String(error);
-        writeDispatchLog(db, task, `failed to start with assigned agent "${assignedAgent.name}": ${message}`);
+        writeDispatchLog(db, ws, task, `failed to start with assigned agent "${assignedAgent.name}": ${message}`);
       }
       continue;
     }
 
     // Stage-specific default: when the task's first active stage is
-    // `refinement`, honour the stage-specific role/model selection
-    // before falling back to role-based scoring. The override only
-    // applies if the agent is currently idle (i.e. present in
-    // `availableAgents`); otherwise we defer to `chooseBestAgent` so
-    // a busy override does not starve the queue.
-    const refinementOverride = resolveRefinementAgentForInbox(db, task, availableAgents);
-    const selectedAgent = refinementOverride ?? chooseBestAgent(task, [...availableAgents.values()]);
+    // `refinement`, honour the stage-specific role/model selection as
+    // a hard constraint. If the user configured the filter but no
+    // matching idle worker is available *in this tick*, we skip the
+    // task and retry next tick instead of dispatching to a
+    // non-matching agent.
+    const refinementSelection = resolveRefinementAgentForInbox(db, task, availableAgents);
+    if (refinementSelection.kind === "skip") {
+      summary.skipped += 1;
+      writeDispatchLog(db, ws, task, refinementSelection.reason);
+      continue;
+    }
+    const selectedAgent = refinementSelection.kind === "use"
+      ? refinementSelection.agent
+      : chooseBestAgent(task, [...availableAgents.values()]);
     if (!selectedAgent) {
       summary.skipped += 1;
-      writeDispatchLog(db, task, "skipped: no idle worker agent is available");
+      writeDispatchLog(db, ws, task, "skipped: no idle worker agent is available");
       continue;
     }
 
@@ -422,6 +550,7 @@ export function dispatchAutoStartableTasks(
     try {
       writeDispatchLog(
         db,
+        ws,
         assignedTask,
         `assigned "${selectedAgent.name}"${selectedAgent.role ? ` [${selectedAgent.role}]` : ""} and starting task`,
       );
@@ -432,7 +561,7 @@ export function dispatchAutoStartableTasks(
     } catch (error) {
       summary.skipped += 1;
       const message = error instanceof Error ? error.message : String(error);
-      writeDispatchLog(db, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`);
+      writeDispatchLog(db, ws, assignedTask, `failed to start with agent "${selectedAgent.name}": ${message}`);
     }
     } catch (iterationError) {
       // Defensive outer guard: any unexpected error from the iteration
@@ -447,7 +576,7 @@ export function dispatchAutoStartableTasks(
       const message = iterationError instanceof Error ? iterationError.message : String(iterationError);
       console.warn(`[auto-dispatcher] iteration failed for task ${task.id}: ${message}`);
       try {
-        writeDispatchLog(db, task, `iteration aborted: ${message}`);
+        writeDispatchLog(db, ws, task, `iteration aborted: ${message}`);
       } catch {
         // Already best-effort; nothing else to do.
       }

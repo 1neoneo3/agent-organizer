@@ -8,7 +8,8 @@ import {
   recoverInProgressOrphans,
   recoverStuckAutoStages,
 } from "./jobs.js";
-import { createHookFailureFromCommands } from "../spawner/spawn-failures.js";
+import { reconcileStaleAgentPointers } from "./agent-pointer-reconcile.js";
+import { SpawnPreflightError, createHookFailureFromCommands } from "../spawner/spawn-failures.js";
 
 // ---- Test doubles ---------------------------------------------------------
 
@@ -490,6 +491,39 @@ describe("recoverInProgressOrphans", () => {
     const finishSpawn = resolveSpawn as () => void;
     finishSpawn();
     await new Promise((resolve) => setImmediate(resolve));
+  });
+
+  it("rolls back auto_respawn_count when auto-respawn fails with non-retryable workspace preflight", async () => {
+    insertTask(db, { id: "t1", status: "in_progress", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'idle' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const fakeSpawn = (() => Promise.reject(
+      new SpawnPreflightError(
+        "workspace_repository_mismatch",
+        "repository_url does not match project_path origin; task_id=t1; project_path=/repo; git_toplevel=/repo; actual_repository_url=https://github.com/acme/wrong; expected_repository_url=https://github.com/acme/right",
+        false,
+      ),
+    )) as never;
+
+    recoverInProgressOrphans(db, ws as never, new Set(), {
+      spawnAgent: fakeSpawn,
+      maxAutoRespawn: 3,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const row = db.prepare("SELECT status, auto_respawn_count FROM tasks WHERE id = 't1'").get() as {
+      status: string;
+      auto_respawn_count: number;
+    };
+    assert.equal(row.status, "human_review");
+    assert.equal(row.auto_respawn_count, 0);
+
+    const log = db.prepare(
+      "SELECT message FROM task_logs WHERE task_id = 't1' AND message LIKE '%expected_repository_url=%' ORDER BY id DESC LIMIT 1",
+    ).get() as { message: string } | undefined;
+    assert.ok(log?.message);
   });
 
   it("allows a new auto-respawn only after the previous in-flight respawn settles", async () => {
@@ -1007,5 +1041,80 @@ describe("recoverStuckAutoStages", () => {
     recoverStuckAutoStages(db, ws as never, new Set(), PAST_START, pending);
     const after = db.prepare("SELECT status FROM tasks WHERE id = 'lifecycle'").get() as { status: string };
     assert.equal(after.status, "human_review", "promoted after preflight completed");
+  });
+});
+
+// ---- reconcileStaleAgentPointers (orphan recovery integration) ------
+
+describe("reconcileStaleAgentPointers (orphan tick integration)", () => {
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = createInMemoryDb();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("releases a working agent pointing at a done task during orphan tick", () => {
+    insertTask(db, { id: "t-done", status: "done", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'working', current_task_id = 't-done' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const { released } = reconcileStaleAgentPointers(db, ws as never, {
+      activeTaskIds: new Map(),
+    });
+
+    assert.equal(released.length, 1);
+    assert.equal(released[0].id, "agent-1");
+    assert.equal(released[0].reason, "done");
+    const agent = db.prepare("SELECT status, current_task_id FROM agents WHERE id = 'agent-1'").get() as {
+      status: string;
+      current_task_id: string | null;
+    };
+    assert.equal(agent.status, "idle");
+    assert.equal(agent.current_task_id, null);
+  });
+
+  it("skips a working agent whose task has an active process", () => {
+    insertTask(db, { id: "t-done", status: "done", assigned_agent_id: "agent-1" });
+    db.prepare("UPDATE agents SET status = 'working', current_task_id = 't-done' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const activeMap = new Map<string, unknown>([["t-done", { pid: 1234 }]]);
+    const { released } = reconcileStaleAgentPointers(db, ws as never, {
+      activeTaskIds: activeMap,
+    });
+
+    assert.equal(released.length, 0, "active process protects the agent");
+  });
+
+  it("releases a working agent whose task was deleted (missing row)", () => {
+    db.prepare("UPDATE agents SET status = 'working', current_task_id = 'deleted-task' WHERE id = 'agent-1'").run();
+    const ws = createFakeWs();
+
+    const { released } = reconcileStaleAgentPointers(db, ws as never, {
+      activeTaskIds: new Map(),
+    });
+
+    assert.equal(released.length, 1);
+    assert.equal(released[0].reason, "missing");
+  });
+
+  it("boot-time reconcile (no activeTaskIds) releases all stale working agents", () => {
+    insertTask(db, { id: "t-done", status: "done" });
+    db.prepare("UPDATE agents SET status = 'working', current_task_id = 't-done' WHERE id = 'agent-1'").run();
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO agents (id, name, cli_provider, status, current_task_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("agent-2", "tester-2", "claude", "working", "no-such-task", now, now);
+    const ws = createFakeWs();
+
+    const { released } = reconcileStaleAgentPointers(db, ws as never);
+
+    assert.equal(released.length, 2, "both stale agents released at boot");
+    const reasons = released.map((r) => r.reason).sort();
+    assert.deepEqual(reasons, ["done", "missing"]);
   });
 });

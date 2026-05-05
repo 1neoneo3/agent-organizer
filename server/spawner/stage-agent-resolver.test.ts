@@ -3,9 +3,12 @@ import { describe, it, beforeEach } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import {
   resolveStageAgentOverride,
+  resolveStageAgentSelection,
+  resolveStageRunner,
   type StageModelSettingKey,
   type StageSettingKey,
 } from "./stage-agent-resolver.js";
+import type { Agent } from "../types/runtime.js";
 
 /**
  * In-memory SQLite fixture with the minimal `agents` + `settings`
@@ -70,6 +73,25 @@ function setModelSetting(db: DatabaseSync, key: StageModelSettingKey, value: str
     "INSERT INTO settings (key, value) VALUES (?, ?) " +
       "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
   ).run(key, value);
+}
+
+function createRunner(overrides: Partial<Agent> & { id: string }): Agent {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? overrides.id,
+    cli_provider: overrides.cli_provider ?? "claude",
+    cli_model: overrides.cli_model ?? null,
+    cli_reasoning_level: overrides.cli_reasoning_level ?? null,
+    avatar_emoji: overrides.avatar_emoji ?? "A",
+    role: overrides.role ?? null,
+    agent_type: overrides.agent_type ?? "worker",
+    personality: overrides.personality ?? null,
+    status: overrides.status ?? "idle",
+    current_task_id: overrides.current_task_id ?? null,
+    stats_tasks_done: overrides.stats_tasks_done ?? 0,
+    created_at: overrides.created_at ?? 1_000,
+    updated_at: overrides.updated_at ?? 1_000,
+  };
 }
 
 describe("resolveStageAgentOverride", () => {
@@ -182,5 +204,212 @@ describe("resolveStageAgentOverride", () => {
     assert.equal(resolveStageAgentOverride(db, "qa_agent_role", "qa_agent_model")?.id, "qa");
     assert.equal(resolveStageAgentOverride(db, "review_agent_role", "review_agent_model"), undefined);
     assert.equal(resolveStageAgentOverride(db, "test_generation_agent_role", "test_generation_agent_model"), undefined);
+  });
+});
+
+describe("resolveStageAgentSelection", () => {
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = createFixture();
+  });
+
+  it("returns `unconfigured` when both filters are missing", () => {
+    insertAgent(db, { id: "a1", role: "code_reviewer" });
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model");
+    assert.equal(result.status, "unconfigured");
+  });
+
+  it("returns `unconfigured` when both filter values are whitespace-only", () => {
+    setSetting(db, "review_agent_role", "  ");
+    setModelSetting(db, "review_agent_model", "  ");
+    insertAgent(db, { id: "a1", role: "code_reviewer" });
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model");
+    assert.equal(result.status, "unconfigured");
+  });
+
+  it("returns `configured_match` when an idle worker satisfies the filters", () => {
+    insertAgent(db, { id: "reviewer", role: "code_reviewer", cli_model: "gpt-5.4" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setModelSetting(db, "review_agent_model", "gpt-5.4");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model");
+    assert.equal(result.status, "configured_match");
+    if (result.status === "configured_match") {
+      assert.equal(result.agent.id, "reviewer");
+    }
+  });
+
+  it("returns `configured_no_match` when filters are set but no idle worker matches", () => {
+    insertAgent(db, { id: "reviewer", role: "code_reviewer", cli_model: "gpt-5.4" });
+    setSetting(db, "review_agent_role", "tester"); // No tester registered.
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model");
+    assert.equal(result.status, "configured_no_match");
+  });
+
+  it("returns `configured_no_match` when the only matching worker is busy", () => {
+    insertAgent(db, {
+      id: "busy-reviewer",
+      role: "code_reviewer",
+      status: "working",
+    });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model");
+    assert.equal(result.status, "configured_no_match");
+  });
+
+  it("returns `configured_no_match` when the only matching idle worker has a stale current_task_id", () => {
+    insertAgent(db, {
+      id: "stale-reviewer",
+      role: "code_reviewer",
+      status: "idle",
+      current_task_id: "stale-task",
+    });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model");
+    assert.equal(result.status, "configured_no_match");
+  });
+
+  it("returns `configured_no_match` when the only matching worker is excluded", () => {
+    insertAgent(db, { id: "excluded", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model", {
+      excludeIds: ["excluded"],
+    });
+    assert.equal(result.status, "configured_no_match");
+  });
+
+  it("returns `configured_no_match` when only a non-worker (ceo) matches", () => {
+    insertAgent(db, { id: "ceo-1", role: "code_reviewer", agent_type: "ceo" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model");
+    assert.equal(result.status, "configured_no_match");
+  });
+
+  it("returns `configured_no_match_in_pool` when matching workers exist but none are in the candidate pool", () => {
+    insertAgent(db, { id: "match-1", role: "code_reviewer" });
+    insertAgent(db, { id: "match-2", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model", {
+      candidatePool: new Set(["unrelated-1"]),
+    });
+    assert.equal(result.status, "configured_no_match_in_pool");
+    if (result.status === "configured_no_match_in_pool") {
+      assert.deepEqual(
+        [...result.matchingIds].sort(),
+        ["match-1", "match-2"],
+      );
+    }
+  });
+
+  it("returns `configured_match` restricted to the pool when both DB matches and pool overlap", () => {
+    insertAgent(db, { id: "match-1", role: "code_reviewer" });
+    insertAgent(db, { id: "match-2", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model", {
+      candidatePool: new Set(["match-2"]),
+    });
+    assert.equal(result.status, "configured_match");
+    if (result.status === "configured_match") {
+      assert.equal(result.agent.id, "match-2");
+    }
+  });
+
+  it("returns `configured_no_match` when DB has no match even if pool would have allowed it", () => {
+    // candidatePool listing an id that does not exist in agents must not
+    // produce a match — DB filter is the source of truth.
+    setSetting(db, "review_agent_role", "code_reviewer");
+    const result = resolveStageAgentSelection(db, "review_agent_role", "review_agent_model", {
+      candidatePool: new Set(["ghost-id"]),
+    });
+    assert.equal(result.status, "configured_no_match");
+  });
+});
+
+describe("resolveStageRunner", () => {
+  let db: DatabaseSync;
+
+  beforeEach(() => {
+    db = createFixture();
+  });
+
+  it("redirects test_generation away from the lifecycle owner when a matching idle tester exists", () => {
+    insertAgent(db, { id: "tester-1", role: "tester", cli_model: "gpt-5.4" });
+    insertAgent(db, { id: "implementer", role: "lead_engineer", cli_model: "gpt-5.4" });
+    setSetting(db, "test_generation_agent_role", "tester");
+
+    const result = resolveStageRunner(
+      db,
+      "test_generation",
+      createRunner({ id: "implementer", role: "lead_engineer", cli_model: "gpt-5.4" }),
+      "implementer",
+    );
+
+    assert.equal(result.status, "redirect");
+    if (result.status === "redirect") {
+      assert.equal(result.agent.id, "tester-1");
+      assert.match(result.reason, /test_generation/);
+    }
+  });
+
+  it("skips qa_testing when the configured runner is missing instead of allowing the implementer", () => {
+    insertAgent(db, { id: "implementer", role: "lead_engineer" });
+    setSetting(db, "qa_agent_role", "tester");
+
+    const result = resolveStageRunner(
+      db,
+      "qa_testing",
+      createRunner({ id: "implementer", role: "lead_engineer" }),
+      "implementer",
+    );
+
+    assert.equal(result.status, "skip");
+    if (result.status === "skip") {
+      assert.match(result.reason, /qa_agent_role\/model/);
+      assert.match(result.reason, /no matching idle worker/i);
+    }
+  });
+
+  it("allows pr_review when the requested runner satisfies the configured role and model", () => {
+    setSetting(db, "review_agent_role", "code_reviewer");
+    setModelSetting(db, "review_agent_model", "gpt-5.4");
+
+    const result = resolveStageRunner(
+      db,
+      "pr_review",
+      createRunner({ id: "reviewer", role: "code_reviewer", cli_model: "gpt-5.4" }),
+      "implementer",
+    );
+
+    assert.equal(result.status, "allowed");
+    if (result.status === "allowed") {
+      assert.equal(result.agent.id, "reviewer");
+    }
+  });
+
+  it("treats human_review as review-agent guarded and excludes the lifecycle owner", () => {
+    insertAgent(db, { id: "implementer", role: "code_reviewer" });
+    setSetting(db, "review_agent_role", "code_reviewer");
+
+    const result = resolveStageRunner(
+      db,
+      "human_review",
+      createRunner({ id: "implementer", role: "code_reviewer" }),
+      "implementer",
+    );
+
+    assert.equal(result.status, "skip");
+  });
+
+  it("does not guard non-auto implementer stages", () => {
+    setSetting(db, "qa_agent_role", "tester");
+
+    const result = resolveStageRunner(
+      db,
+      "in_progress",
+      createRunner({ id: "implementer", role: "lead_engineer" }),
+      "implementer",
+    );
+
+    assert.equal(result.status, "unconfigured");
   });
 });
