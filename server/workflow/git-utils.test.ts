@@ -138,6 +138,17 @@ describe("detectRepositoryUrl", () => {
     assert.equal(detectRepositoryUrl(root), "https://github.com/acme/widget");
   });
 
+  it("falls back to another git remote when origin is local", () => {
+    const root = mkdtempSync(join(tmpdir(), "ao-git-"));
+    const localRemote = mkdtempSync(join(tmpdir(), "ao-local-origin-"));
+    initGitRepo(root, localRemote);
+    spawnSync("git", ["-C", root, "remote", "add", "github", "git@github.com:acme/widget.git"], {
+      encoding: "utf8",
+    });
+
+    assert.equal(detectRepositoryUrl(root), "https://github.com/acme/widget");
+  });
+
   it("returns null when the path is NOT the git toplevel", () => {
     // A common misfire: projectPath is a subdirectory that happens to sit
     // under an unrelated parent repo. git walks up and finds origin, but
@@ -216,7 +227,22 @@ describe("assertRepositoryIdentity", () => {
     const identity = assertRepositoryIdentity("task-identity", root, "https://github.com/acme/widget");
 
     assert.equal(identity.actualRepositoryUrl, "https://github.com/acme/widget");
+    assert.deepEqual(identity.actualRepositoryUrls, ["https://github.com/acme/widget"]);
     assert.equal(identity.expectedRepositoryUrl, "https://github.com/acme/widget");
+  });
+
+  it("accepts a matching non-origin remote when origin points at a local mirror", () => {
+    const root = mkdtempSync(join(tmpdir(), "ao-git-identity-"));
+    const localRemote = mkdtempSync(join(tmpdir(), "ao-local-origin-"));
+    initGitRepo(root, localRemote);
+    spawnSync("git", ["-C", root, "remote", "add", "github", "git@github.com:acme/widget.git"], {
+      encoding: "utf8",
+    });
+
+    const identity = assertRepositoryIdentity("task-github-remote", root, "https://github.com/acme/widget");
+
+    assert.equal(identity.actualRepositoryUrl, "https://github.com/acme/widget");
+    assert.deepEqual(identity.actualRepositoryUrls, [localRemote, "https://github.com/acme/widget"]);
   });
 
   it("rejects non-toplevel paths with task and repository details", () => {

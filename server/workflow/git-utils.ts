@@ -13,6 +13,7 @@ export interface RepositoryIdentity {
   gitToplevel: string | null;
   resolvedGitToplevel: string | null;
   actualRepositoryUrl: string | null;
+  actualRepositoryUrls: string[];
   expectedRepositoryUrl: string | null;
   expectedRepositoryUrls: string[];
 }
@@ -149,9 +150,39 @@ function formatRepositoryIdentityError(reason: string, identity: RepositoryIdent
     `task_id=${identity.taskId}`,
     `project_path=${identity.projectPath}`,
     `git_toplevel=${identity.gitToplevel ?? "null"}`,
-    `actual_repository_url=${redactGitUrl(identity.actualRepositoryUrl) ?? "null"}`,
+    `actual_repository_url=${identity.actualRepositoryUrls.map((url) => redactGitUrl(url)).join(",") || "null"}`,
     `expected_repository_url=${identity.expectedRepositoryUrls.map((url) => redactGitUrl(url)).join(",") || "null"}`,
   ].join("; ");
+}
+
+function detectRepositoryUrlsFromGit(projectPath: string): string[] {
+  const remoteNames = runGit(projectPath, ["remote"])?.split(/\r?\n/).map((name) => name.trim()).filter(Boolean) ?? [];
+  const orderedRemoteNames = [
+    ...remoteNames.filter((name) => name === "origin"),
+    ...remoteNames.filter((name) => name !== "origin"),
+  ];
+  const urls: string[] = [];
+  for (const remoteName of orderedRemoteNames) {
+    const rawRemote = runGit(projectPath, ["remote", "get-url", remoteName]);
+    const normalized = normalizeComparableGitUrl(rawRemote);
+    if (normalized) urls.push(normalized);
+  }
+  return Array.from(new Set(urls));
+}
+
+function detectDisplayRepositoryUrlsFromGit(projectPath: string): string[] {
+  const remoteNames = runGit(projectPath, ["remote"])?.split(/\r?\n/).map((name) => name.trim()).filter(Boolean) ?? [];
+  const orderedRemoteNames = [
+    ...remoteNames.filter((name) => name === "origin"),
+    ...remoteNames.filter((name) => name !== "origin"),
+  ];
+  const urls: string[] = [];
+  for (const remoteName of orderedRemoteNames) {
+    const rawRemote = runGit(projectPath, ["remote", "get-url", remoteName]);
+    const normalized = normalizeGitUrl(rawRemote);
+    if (normalized) urls.push(normalized);
+  }
+  return Array.from(new Set(urls));
 }
 
 export function inspectRepositoryIdentity(
@@ -171,6 +202,7 @@ export function inspectRepositoryIdentity(
       gitToplevel: null,
       resolvedGitToplevel: null,
       actualRepositoryUrl: null,
+      actualRepositoryUrls: [],
       expectedRepositoryUrl: expectedRepositoryUrls[0] ?? null,
       expectedRepositoryUrls,
     };
@@ -186,13 +218,12 @@ export function inspectRepositoryIdentity(
     }
   }
 
-  const rawRemote = gitToplevel
-    ? runGit(resolvedProjectPath, ["remote", "get-url", "origin"])
-    : null;
-  const actualRepositoryUrl = normalizeComparableGitUrl(rawRemote);
+  const actualRepositoryUrls = gitToplevel ? detectRepositoryUrlsFromGit(resolvedProjectPath) : [];
   const expected = expectedRepositoryUrls.length > 0
     ? expectedRepositoryUrls
-    : actualRepositoryUrl ? [actualRepositoryUrl] : [];
+    : actualRepositoryUrls;
+  const matchingActualRepositoryUrl = expected.find((expectedUrl) => actualRepositoryUrls.includes(expectedUrl)) ?? null;
+  const actualRepositoryUrl = matchingActualRepositoryUrl ?? actualRepositoryUrls[0] ?? null;
 
   return {
     taskId,
@@ -201,6 +232,7 @@ export function inspectRepositoryIdentity(
     gitToplevel,
     resolvedGitToplevel,
     actualRepositoryUrl,
+    actualRepositoryUrls,
     expectedRepositoryUrl: expected[0] ?? null,
     expectedRepositoryUrls: expected,
   };
@@ -229,19 +261,19 @@ export function assertRepositoryIdentity(
     );
   }
 
-  if (!identity.actualRepositoryUrl || identity.expectedRepositoryUrls.length === 0) {
+  if (identity.actualRepositoryUrls.length === 0 || identity.expectedRepositoryUrls.length === 0) {
     throw new RepositoryIdentityError(
       "workspace_not_git_repository",
       identity,
-      "repository_url could not be auto-detected from origin",
+      "repository_url could not be auto-detected from git remotes",
     );
   }
 
-  if (!identity.expectedRepositoryUrls.includes(identity.actualRepositoryUrl)) {
+  if (!identity.actualRepositoryUrls.some((url) => identity.expectedRepositoryUrls.includes(url))) {
     throw new RepositoryIdentityError(
       "workspace_repository_mismatch",
       identity,
-      "repository_url does not match project_path origin",
+      "repository_url does not match project_path git remotes",
     );
   }
 
@@ -249,11 +281,12 @@ export function assertRepositoryIdentity(
 }
 
 /**
- * Read the `remote.origin.url` config for a project path, normalize it,
+ * Read the configured git remotes for a project path, normalize the first
+ * usable URL with `origin` preferred,
  * and return the HTTPS form. Returns `null` when:
  *   - the path is empty or unreadable
  *   - the path is not a git repository (or git itself fails)
- *   - there is no `origin` remote
+ *   - there are no usable remotes
  *   - the remote URL is an unrecognized shape
  *   - the path is NOT the git worktree toplevel (see below)
  *
@@ -303,13 +336,7 @@ export function detectRepositoryUrl(projectPath: string): string | null {
     }
     if (resolvedToplevel !== resolvedPath) return null;
 
-    const originResult = spawnSync(
-      "git",
-      ["-C", resolvedPath, "remote", "get-url", "origin"],
-      { timeout: 2000, encoding: "utf8" },
-    );
-    if (originResult.status !== 0) return null;
-    return normalizeGitUrl(originResult.stdout);
+    return detectDisplayRepositoryUrlsFromGit(resolvedPath)[0] ?? null;
   } catch {
     return null;
   }

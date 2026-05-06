@@ -86,7 +86,7 @@ describe("handleSpawnFailure", () => {
       "task-1",
       new SpawnPreflightError(
         "workspace_repository_mismatch",
-        "repository_url does not match project_path origin; task_id=task-1; project_path=/repo; git_toplevel=/repo; actual_repository_url=https://github.com/acme/wrong; expected_repository_url=https://github.com/acme/right",
+        "repository_url does not match project_path git remotes; task_id=task-1; project_path=/repo; git_toplevel=/repo; actual_repository_url=https://github.com/acme/wrong; expected_repository_url=https://github.com/acme/right",
         false,
       ),
       { source: "Auto dispatch" },

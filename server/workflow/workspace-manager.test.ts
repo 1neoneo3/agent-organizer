@@ -149,7 +149,7 @@ describe("prepareTaskWorkspace", () => {
     assert.equal(existsSync(join(repo, ".ao-worktrees", "task-child-path")), false);
   });
 
-  it("rejects tasks whose expected repository_url does not match project_path origin", () => {
+  it("rejects tasks whose expected repository_url does not match project_path git remotes", () => {
     const repo = initRepo();
 
     assert.throws(
@@ -185,7 +185,7 @@ describe("prepareTaskWorkspace", () => {
           checkE2eCmd: null,
         },
       ),
-      /repository_url does not match project_path origin; task_id=task-mismatch/,
+      /repository_url does not match project_path git remotes; task_id=task-mismatch/,
     );
   });
 
@@ -414,7 +414,7 @@ describe("prepareTaskWorkspace", () => {
           checkE2eCmd: null,
         },
       ),
-      /repository_url does not match project_path origin; task_id=task-foreign-worktree/,
+      /repository_url does not match project_path git remotes; task_id=task-foreign-worktree/,
     );
   });
 
@@ -771,7 +771,7 @@ describe("prepareTaskWorkspace — origin/main enforcement", () => {
         checkE2eCmd: null,
       } as never,
       ),
-      /repository_url could not be auto-detected from origin/,
+      /repository_url could not be auto-detected from git remotes/,
     );
   });
 });
