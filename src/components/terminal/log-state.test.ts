@@ -441,6 +441,49 @@ describe("groupLogsByStage", () => {
     assert.equal(segments[1]?.agentId, "agent-b");
   });
 
+  it("uses the first in-stage output agent instead of the transition marker agent", () => {
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", agent_id: "implementer", message: "implementation" }),
+      createLog(2, {
+        stage: "test_generation",
+        kind: "system",
+        agent_id: "implementer",
+        message: `${STAGE_TRANSITION_PREFIX}in_progress→test_generation`,
+      }),
+      createLog(3, { stage: "test_generation", agent_id: "tester", message: "generated tests" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 2);
+    assert.equal(segments[0]?.agentId, "implementer");
+    assert.equal(segments[1]?.agentId, "tester");
+  });
+
+  it("uses the dominant in-stage agent when the transition owner emits setup logs", () => {
+    const logs: TaskLog[] = [
+      createLog(1, { stage: "in_progress", agent_id: "implementer", message: "implementation" }),
+      createLog(2, {
+        stage: "qa_testing",
+        kind: "system",
+        agent_id: "implementer",
+        message: `${STAGE_TRANSITION_PREFIX}test_generation→qa_testing`,
+      }),
+      createLog(3, {
+        stage: "qa_testing",
+        kind: "system",
+        agent_id: "implementer",
+        message: 'Auto QA started: agent="tester"',
+      }),
+      createLog(4, { stage: "qa_testing", kind: "stdout", agent_id: "tester", message: "raw cli event" }),
+      createLog(5, { stage: "qa_testing", kind: "assistant", agent_id: "tester", message: "QA result" }),
+      createLog(6, { stage: "qa_testing", kind: "stdout", agent_id: "tester", message: "more raw output" }),
+    ];
+
+    const segments = groupLogsByStage(logs);
+    assert.equal(segments.length, 2);
+    assert.equal(segments[1]?.agentId, "tester");
+  });
+
   it("drops non-assistant kinds from the grouped segment text", () => {
     // Only assistant messages should survive formatting; stdout / stderr /
     // system are dropped wholesale so raw CLI noise cannot reach the terminal.

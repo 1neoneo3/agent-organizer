@@ -145,6 +145,10 @@ export interface StageSegment {
   entryCount: number;
 }
 
+type MutableStageSegment = StageSegment & {
+  agentCounts: Map<string, number>;
+};
+
 /**
  * Group a chronological list of task_logs into contiguous per-stage segments.
  * Each stage transition marker starts a new segment. Non-transition rows are
@@ -160,20 +164,39 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
   });
 
   const segments: StageSegment[] = [];
-  let current: StageSegment | null = null;
+  let current: MutableStageSegment | null = null;
 
   const startSegment = (
     log: TaskLog,
-    options: { stageOverride?: string | null; fromStage?: string | null } = {},
-  ): StageSegment => ({
+    options: { stageOverride?: string | null; fromStage?: string | null; agentId?: string | null } = {},
+  ): MutableStageSegment => ({
     id: `seg-${log.id}`,
     stage: options.stageOverride !== undefined ? options.stageOverride : log.stage,
     fromStage: options.fromStage ?? null,
-    agentId: log.agent_id,
+    agentId: options.agentId !== undefined ? options.agentId : log.agent_id,
     startedAt: log.created_at,
     text: "",
     entryCount: 0,
+    agentCounts: new Map(),
   });
+
+  const recordSegmentAgent = (segment: MutableStageSegment, log: TaskLog): void => {
+    if (!log.agent_id) return;
+    segment.agentCounts.set(log.agent_id, (segment.agentCounts.get(log.agent_id) ?? 0) + 1);
+  };
+
+  const pushSegment = (segment: MutableStageSegment): void => {
+    let dominantAgentId: string | null = null;
+    let dominantCount = 0;
+    for (const [agentId, count] of segment.agentCounts) {
+      if (count > dominantCount) {
+        dominantAgentId = agentId;
+        dominantCount = count;
+      }
+    }
+    segment.agentId = dominantAgentId ?? segment.agentId;
+    segments.push(segment);
+  };
 
   for (const log of chronologicalLogs) {
     const transition = parseStageTransition(log.message);
@@ -191,8 +214,8 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
         }
         continue;
       }
-      if (current) segments.push(current);
-      current = startSegment(log, { stageOverride: transition.to, fromStage: transition.from });
+      if (current) pushSegment(current);
+      current = startSegment(log, { stageOverride: transition.to, fromStage: transition.from, agentId: null });
       continue;
     }
 
@@ -209,18 +232,23 @@ export function groupLogsByStage(logs: TaskLog[]): StageSegment[] {
       current = startSegment(log);
     } else if (chunk.length > 0 && log.stage !== null && current.stage !== null && log.stage !== current.stage) {
       const previousStage = current.stage;
-      segments.push(current);
+      pushSegment(current);
       current = startSegment(log, { fromStage: previousStage });
     }
 
+    recordSegmentAgent(current, log);
+
     if (chunk.length > 0) {
+      if (current.agentId === null && log.agent_id) {
+        current.agentId = log.agent_id;
+      }
       current.text += current.text.endsWith("\n") || current.text.length === 0 ? chunk : `\n${chunk}`;
       if (!current.text.endsWith("\n")) current.text += "\n";
       current.entryCount += 1;
     }
   }
 
-  if (current) segments.push(current);
+  if (current) pushSegment(current);
   return segments;
 }
 
