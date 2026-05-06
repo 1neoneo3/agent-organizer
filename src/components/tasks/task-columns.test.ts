@@ -21,6 +21,7 @@ function createTask(id: string, status: TaskSummary["status"], createdAt = 1): T
     task_size: "small",
     task_number: null,
     depends_on: null,
+    planned_files: null,
     pr_url: null,
     review_count: 0,
     directive_id: null,

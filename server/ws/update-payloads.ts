@@ -23,9 +23,10 @@ export function pickTaskUpdate(
 /**
  * Columns shipped over WebSocket `task_update` broadcasts and over the
  * `GET /tasks` summary list. Excludes heavy fields (description, result,
- * refinement_plan, planned_files, interactive_prompt_data, repository_urls,
- * pr_urls, merged_pr_urls) — those are only fetched on demand via
- * `GET /tasks/:id`.
+ * refinement_plan, interactive_prompt_data, repository_urls, pr_urls,
+ * merged_pr_urls) — those are only fetched on demand via `GET /tasks/:id`.
+ * `planned_files` is intentionally included because the kanban computes
+ * live file-conflict blockers from the visible task set.
  */
 export const TASK_SUMMARY_KEYS: readonly TaskUpdateKey[] = [
   "title",
@@ -35,7 +36,12 @@ export const TASK_SUMMARY_KEYS: readonly TaskUpdateKey[] = [
   "priority",
   "task_size",
   "task_number",
+  "parent_task_id",
+  "parent_task_number",
+  "split_index",
+  "split_total",
   "depends_on",
+  "planned_files",
   "controller_stage",
   "refinement_completed_at",
   "refinement_revision_requested_at",
@@ -76,11 +82,19 @@ export function buildTaskSummaryUpdate(
   const payload = pickTaskUpdate(task, TASK_SUMMARY_KEYS) as
     Partial<Task> & { id: string } & Partial<TaskDerivedFields>;
   const derived = deriveTaskFields({
+    parent_task_id: task.parent_task_id ?? null,
+    parent_task_number: task.parent_task_number ?? null,
+    split_index: task.split_index ?? null,
+    split_total: task.split_total ?? null,
     description: task.description ?? null,
     result: task.result ?? null,
     refinement_plan: task.refinement_plan ?? null,
   });
+  payload.parent_task_id = derived.parent_task_id;
   payload.parent_task_number = derived.parent_task_number;
+  payload.parent_task_title = derived.parent_task_title;
+  payload.split_index = derived.split_index;
+  payload.split_total = derived.split_total;
   payload.child_task_numbers = derived.child_task_numbers;
   payload.has_refinement_plan = derived.has_refinement_plan;
   return payload as Partial<Task> & { id: string } & TaskDerivedFields;

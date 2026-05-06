@@ -139,6 +139,41 @@ describe("POST /tasks — task_number and title validation regressions", () => {
     }
   });
 
+  it("accepts task-level controller mode override on creation", async () => {
+    const { db, server, baseUrl } = await setupServer();
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "Controller mode override task",
+          settings_overrides: {
+            enable_controller_mode: "true",
+            default_enable_refinement: "true",
+          },
+        }),
+      });
+
+      assert.equal(response.status, 201);
+      const body = (await response.json()) as { id: string; settings_overrides: string | null };
+      assert.deepEqual(JSON.parse(body.settings_overrides ?? "{}"), {
+        enable_controller_mode: "true",
+        default_enable_refinement: "true",
+      });
+
+      const row = db.prepare("SELECT settings_overrides FROM tasks WHERE id = ?").get(body.id) as {
+        settings_overrides: string | null;
+      };
+      assert.deepEqual(JSON.parse(row.settings_overrides ?? "{}"), {
+        enable_controller_mode: "true",
+        default_enable_refinement: "true",
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("assigns correct sequential task_number ignoring hex fragments in DB", async () => {
     const { db, server, baseUrl } = await setupServer();
     const now = Date.now();

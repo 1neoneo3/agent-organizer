@@ -14,6 +14,7 @@ function createTask(overrides: Partial<TaskSummary> = {}): TaskSummary {
     task_size: "medium",
     task_number: null,
     depends_on: null,
+    planned_files: null,
     refinement_completed_at: null,
     refinement_revision_requested_at: null,
     refinement_revision_completed_at: null,

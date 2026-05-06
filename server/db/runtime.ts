@@ -10,6 +10,7 @@ import {
   isUuidLikeTitle,
 } from "../domain/task-number.js";
 import { extractPlannedFilesFromPlan } from "../domain/planned-files.js";
+import { deriveParentTaskNumber, deriveSplitIndex } from "../domain/task-derived-fields.js";
 
 let db: DatabaseSync | null = null;
 
@@ -71,6 +72,7 @@ export function initializeDb(dbPath?: string): DatabaseSync {
   migrateAddMergedPrUrls(db);
   migrateAddSettingsOverrides(db);
   migrateAddControllerFields(db);
+  migrateAddTaskParentSplitFields(db);
   migrateStageAgentSelectionSettings(db);
   migrateRemoveLegacyImplementationPin(db);
   const repairedTaskNumberMap = repairBrokenTaskNumbers(db);
@@ -147,6 +149,62 @@ function migrateAddControllerFields(db: DatabaseSync): void {
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_directives_controller ON directives(controller_mode, status, controller_stage)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_directive_controller_stage ON tasks(directive_id, controller_stage, status)");
+}
+
+function migrateAddTaskParentSplitFields(db: DatabaseSync): void {
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (!taskCols.some((c) => c.name === "parent_task_id")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT");
+  }
+  if (!taskCols.some((c) => c.name === "parent_task_number")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN parent_task_number TEXT");
+  }
+  if (!taskCols.some((c) => c.name === "split_index")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN split_index INTEGER");
+  }
+  if (!taskCols.some((c) => c.name === "split_total")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN split_total INTEGER");
+  }
+  backfillTaskParentSplitFields(db);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_parent_task_id ON tasks(parent_task_id)");
+}
+
+function backfillTaskParentSplitFields(db: DatabaseSync): void {
+  const rows = db.prepare(
+    "SELECT id, description FROM tasks WHERE parent_task_number IS NULL AND description IS NOT NULL",
+  ).all() as Array<{ id: string; description: string | null }>;
+
+  for (const row of rows) {
+    const parentNumber = deriveParentTaskNumber(row.description);
+    if (!parentNumber) continue;
+    const parent = db.prepare(
+      "SELECT id FROM tasks WHERE task_number = ? ORDER BY CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END, created_at DESC LIMIT 1",
+    ).get(parentNumber) as { id: string } | undefined;
+    db.prepare(
+      "UPDATE tasks SET parent_task_id = ?, parent_task_number = ?, split_index = COALESCE(split_index, ?) WHERE id = ?",
+    ).run(parent?.id ?? null, parentNumber, deriveSplitIndex(row.description), row.id);
+  }
+
+  const groups = db.prepare(
+    "SELECT parent_task_number, COUNT(*) AS child_count FROM tasks WHERE parent_task_number IS NOT NULL GROUP BY parent_task_number",
+  ).all() as Array<{ parent_task_number: string; child_count: number }>;
+  for (const group of groups) {
+    db.prepare(
+      "UPDATE tasks SET split_total = COALESCE(split_total, ?) WHERE parent_task_number = ?",
+    ).run(group.child_count, group.parent_task_number);
+  }
+
+  const parentRefs = db.prepare(
+    "SELECT DISTINCT parent_task_number FROM tasks WHERE parent_task_number IS NOT NULL",
+  ).all() as Array<{ parent_task_number: string }>;
+  for (const ref of parentRefs) {
+    const parent = db.prepare(
+      "SELECT id FROM tasks WHERE task_number = ? ORDER BY CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END, created_at DESC LIMIT 1",
+    ).get(ref.parent_task_number) as { id: string } | undefined;
+    if (!parent) continue;
+    db.prepare("UPDATE tasks SET parent_task_id = ? WHERE parent_task_number = ?")
+      .run(parent.id, ref.parent_task_number);
+  }
 }
 
 function migrateAddInteractivePrompt(db: DatabaseSync): void {

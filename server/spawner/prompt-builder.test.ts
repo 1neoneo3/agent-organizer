@@ -272,6 +272,42 @@ describe("buildRefinementPrompt", () => {
     assert.match(prompt, /計画書の作成・保存・PR 化のみ許可されます/);
     assert.match(prompt, /計画書 Markdown の作成・更新、git 操作、PR 作成のみ許可されます/);
   });
+
+  it("documents controller split-ready implementation plans when controller mode is enabled", () => {
+    const jaPrompt = buildRefinementPrompt(
+      {
+        id: "task-refinement-controller",
+        title: "Plan parallel work",
+        description: "Draft a refinement plan for controller split.",
+        project_path: "/tmp/project",
+        status: "refinement",
+      } as never,
+      undefined,
+      { controllerMode: true },
+    );
+
+    assert.match(jaPrompt, /AO の Split into Tasks/);
+    assert.match(jaPrompt, /Write scope:/);
+    assert.match(jaPrompt, /## 統合方針/);
+    assert.match(jaPrompt, /child task に分割されない/);
+
+    const enPrompt = buildRefinementPrompt(
+      {
+        id: "task-refinement-controller-en",
+        title: "Plan parallel work",
+        description: "Draft a refinement plan for controller split.",
+        project_path: "/tmp/project",
+        status: "refinement",
+      } as never,
+      undefined,
+      { controllerMode: true, language: "en" },
+    );
+
+    assert.match(enPrompt, /parallel controller child tasks/);
+    assert.match(enPrompt, /Write scope:/);
+    assert.match(enPrompt, /## Integration Plan/);
+    assert.match(enPrompt, /not split into child tasks/);
+  });
 });
 
 describe("buildReviewPrompt", () => {

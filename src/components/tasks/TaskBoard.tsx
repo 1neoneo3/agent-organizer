@@ -11,6 +11,7 @@ import { PixelAvatar } from "../agents/PixelAvatar.js";
 import { useSfx } from "../../hooks/useSfx.js";
 import type { Task, TaskSummary, Agent, InteractivePrompt, WSEventType } from "../../types/index.js";
 import { buildAgentViewState } from "./agent-view.js";
+import { collectTaskCardBlockers, type TaskCardBlockers } from "./task-blockers.js";
 import { TASK_BOARD_COLUMNS, createEmptyTaskColumns, groupTasksByStatusStable, type TaskColumns } from "./task-columns.js";
 
 interface TaskBoardProps {
@@ -31,6 +32,7 @@ interface TaskColumnProps {
   idleAgents: Agent[];
   roleLabelByAgentId: Map<string, string>;
   interactivePrompts: Map<string, InteractivePrompt>;
+  blockersByTaskId: Map<string, TaskCardBlockers>;
   onRun: (taskId: string, agentId: string) => Promise<void>;
   onStop: (taskId: string) => Promise<void>;
   onResume: (taskId: string, agentId: string) => Promise<void>;
@@ -49,6 +51,7 @@ const TaskColumn = memo(function TaskColumn({
   idleAgents,
   roleLabelByAgentId,
   interactivePrompts,
+  blockersByTaskId,
   onRun,
   onStop,
   onResume,
@@ -90,6 +93,7 @@ const TaskColumn = memo(function TaskColumn({
           <TaskCard
             key={task.id}
             task={task}
+            blockers={blockersByTaskId.get(task.id)}
             assignedAgent={task.assigned_agent_id ? assignedAgentById.get(task.assigned_agent_id) : undefined}
             idleAgents={idleAgents}
             roleLabelByAgentId={roleLabelByAgentId}
@@ -256,6 +260,10 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
     columnsRef.current = grouped;
     return grouped;
   }, [tasks]);
+  const blockersByTaskId = useMemo(
+    () => new Map(tasks.map((task) => [task.id, collectTaskCardBlockers(task, tasks)])),
+    [tasks],
+  );
 
   const handleBoardRender = useCallback((id: string, phase: "mount" | "update" | "nested-update", actualDuration: number) => {
     if (typeof window === "undefined") {
@@ -321,6 +329,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
               idleAgents={agentView.idleAgents}
               roleLabelByAgentId={agentView.roleLabelById}
               interactivePrompts={interactivePrompts}
+              blockersByTaskId={blockersByTaskId}
               onRun={handleRun}
               onStop={handleStop}
               onResume={handleResume}
@@ -348,7 +357,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
           description: null,
           result: null,
           refinement_plan: null,
-          planned_files: null,
+          planned_files: summary.planned_files ?? null,
           interactive_prompt_data: null,
           repository_urls: null,
           pr_urls: null,

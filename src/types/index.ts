@@ -26,7 +26,12 @@ export interface TaskSummary {
   priority: number;
   task_size: "small" | "medium" | "large";
   task_number: string | null;
+  parent_task_id?: string | null;
+  parent_task_title?: string | null;
+  split_index?: number | null;
+  split_total?: number | null;
   depends_on: string | null;
+  planned_files?: string | null;
   controller_stage?: "implement" | "verify" | "integrate" | null;
   refinement_completed_at?: number | null;
   refinement_revision_requested_at?: number | null;

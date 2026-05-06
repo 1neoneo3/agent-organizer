@@ -34,6 +34,7 @@ import {
 } from "../domain/implementer-agent.js";
 import {
   deriveParentTaskNumber,
+  deriveSplitIndex,
   deriveChildTaskNumbers,
 } from "../domain/task-derived-fields.js";
 import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
@@ -46,6 +47,7 @@ import {
 import { detectRepositoryUrl, normalizeGitUrl } from "../workflow/git-utils.js";
 import { nextTaskNumber, isUuidLikeTitle } from "../domain/task-number.js";
 import {
+  getTaskSetting,
   isTaskOverridableKey,
   mergeOverrides,
   safeParseOverrides,
@@ -53,7 +55,7 @@ import {
   validateOverridesPatch,
 } from "../domain/task-settings.js";
 import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
-import { isControllerModeEnabled, reconcileControllerDirective } from "../controller/orchestrator.js";
+import { reconcileControllerDirective } from "../controller/orchestrator.js";
 
 // Accept overrides as a flat string→string record on create/update so
 // callers can seed stage toggles (default_enable_refinement, review_mode,
@@ -155,8 +157,13 @@ function resolveTaskOutputLanguage(
   return "ja";
 }
 
+function isTaskControllerModeEnabled(db: RuntimeContext["db"], taskId: string): boolean {
+  return getTaskSetting(db, "enable_controller_mode", taskId) === "true";
+}
+
 interface ImplementationStep {
   num: number;
+  title: string;
   text: string;
 }
 
@@ -165,6 +172,12 @@ interface PlanSplitResult {
   children: Task[];
   planPath: string | null;
   directiveId: string | null;
+}
+
+interface PlanSplitError {
+  error: "no_refinement_plan" | "no_implementation_steps" | "missing_write_scope";
+  message?: string;
+  step?: number;
 }
 
 function cleanRefinementPlan(plan: string): string {
@@ -176,12 +189,20 @@ function parseImplementationSteps(plan: string): ImplementationStep[] {
   // Legacy plans used `## 実装計画 (Implementation Plan)`; current plans
   // emit either `## 実装計画` (ja) or `## Implementation Plan` (en).
   const implMatch = plan.match(/## (?:実装計画(?: \(Implementation Plan\))?|Implementation Plan)\s*\n([\s\S]*?)(?=\n## |\n---END REFINEMENT---)/);
-  if (!implMatch) return [];
 
   const steps: ImplementationStep[] = [];
-  for (const match of implMatch[1].trim().matchAll(/^(\d+)\.\s+(.+)$/gm)) {
-    steps.push({ num: parseInt(match[1], 10), text: match[2].trim() });
+  const body = (implMatch?.[1] ?? cleanRefinementPlan(plan)).trim();
+  const stepPattern = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:(\d+)\.\s+|Step\s+(\d+)\s*[:：]\s*)([^\n]*)([\s\S]*?)(?=\n\s*(?:#{1,6}\s*)?(?:\d+\.\s+|Step\s+\d+\s*[:：]\s*)|$)/gi;
+  for (const match of body.matchAll(stepPattern)) {
+    const num = match[1] ?? match[2];
+    const titleLine = match[3].trim();
+    const rest = match[4].trim();
+    const text = [titleLine, rest].filter(Boolean).join("\n").trim();
+    if (!text) continue;
+    const title = titleLine || text.split(/\r?\n/, 1)[0]?.trim() || text;
+    steps.push({ num: parseInt(num, 10), title, text });
   }
+
   return steps;
 }
 
@@ -197,22 +218,29 @@ function savePlanToDocs(task: Task, plan: string): string | null {
   return planPath;
 }
 
+function isWriteScopePath(path: string): boolean {
+  if (path.includes("/")) return true;
+  if (path.startsWith(".")) return true;
+  if (/^(README|AGENTS|LICENSE|CHANGELOG|CONTRIBUTING)(?:\.[A-Za-z0-9]+)?$/.test(path)) return true;
+  return /^[a-z0-9][a-z0-9_.-]*\.[a-z0-9][a-z0-9_.-]*$/.test(path);
+}
+
 function extractStepWriteScope(stepText: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   const add = (raw: string) => {
     const path = normalizePath(raw);
     if (!path || seen.has(path)) return;
-    if (!path.includes("/") && !/\.[A-Za-z0-9]+$/.test(path)) return;
+    if (!isWriteScopePath(path)) return;
     seen.add(path);
     out.push(path);
   };
 
-  for (const match of stepText.matchAll(/`([^`\n]+)`/g)) {
-    add(match[1]);
-  }
-  for (const match of stepText.matchAll(/(?:^|[\s(])((?:\.\/)?(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)(?=$|[\s),.;:])/g)) {
-    add(match[1]);
+  for (const line of stepText.split(/\r?\n/)) {
+    if (!/^\s*(?:[-*]\s*)?(?:Write scope|書き込み(?:対象|範囲))\s*(?:は|:|：)/i.test(line)) continue;
+    for (const match of line.matchAll(/`([^`\n]+)`/g)) {
+      add(match[1]);
+    }
   }
   return out;
 }
@@ -241,11 +269,30 @@ function splitRefinementPlanIntoTasks(
   ctx: RuntimeContext,
   task: Task,
   options: { controllerMode: boolean },
-): PlanSplitResult | { error: "no_refinement_plan" | "no_implementation_steps" } {
+): PlanSplitResult | PlanSplitError {
   if (!task.refinement_plan) return { error: "no_refinement_plan" };
 
   const steps = parseImplementationSteps(task.refinement_plan);
-  if (steps.length === 0) return { error: "no_implementation_steps" };
+  if (steps.length === 0) {
+    return {
+      error: "no_implementation_steps",
+      message:
+        "Refinement plan must include implementation steps as `1. ...` or `Step 1:` entries, preferably under `## 実装計画` / `## Implementation Plan`.",
+    };
+  }
+
+  if (options.controllerMode) {
+    for (const step of steps) {
+      const writeScope = extractStepWriteScope(step.text);
+      if (writeScope.length === 0) {
+        return {
+          error: "missing_write_scope",
+          step: step.num,
+          message: `Controller split step ${step.num} is missing a backtick-quoted Write scope file path.`,
+        };
+      }
+    }
+  }
 
   const db = ctx.db;
   const now = Date.now();
@@ -284,18 +331,23 @@ function splitRefinementPlanIntoTasks(
     db.prepare(
       `INSERT INTO tasks (
          id, title, description, project_path, priority, task_size, task_number,
+         parent_task_id, parent_task_number, split_index, split_total,
          depends_on, refinement_plan, refinement_completed_at, planned_files,
          repository_url, directive_id, controller_stage, write_scope,
          created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       childId,
-      step.text,
+      step.title,
       splitArtifacts.description,
       task.project_path,
       task.priority,
       task.task_size,
       childNumber,
+      task.id,
+      task.task_number,
+      step.num,
+      steps.length,
       depsJson,
       childPlan,
       now,
@@ -503,7 +555,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
   const TASK_SUMMARY_COLS = [
     "id", "title", "assigned_agent_id", "project_path", "status",
-    "priority", "task_size", "task_number", "depends_on",
+    "priority", "task_size", "task_number", "parent_task_id",
+    "parent_task_number", "split_index", "split_total", "depends_on",
+    "planned_files",
     "controller_stage",
     "refinement_completed_at", "refinement_revision_requested_at",
     "refinement_revision_completed_at", "review_count", "directive_id",
@@ -524,14 +578,64 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   ].join(", ");
 
   function attachDerivedFields(rows: unknown[]): unknown[] {
-    return rows.map((raw) => {
+    const parentNumberByRow = rows.map((raw) => {
+      const r = raw as { parent_task_number?: string | null; _desc_head?: string | null };
+      return r.parent_task_number ?? deriveParentTaskNumber(r._desc_head ?? null);
+    });
+    const parentIds = Array.from(new Set(
+      rows
+        .map((raw) => (raw as { parent_task_id?: string | null }).parent_task_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ));
+    const parentNumbers = Array.from(new Set(
+      parentNumberByRow.filter((num): num is string => typeof num === "string" && num.length > 0),
+    ));
+    const parentTitleById = new Map<string, string>();
+    const parentIdByNumber = new Map<string, string>();
+    const parentTitleByNumber = new Map<string, string>();
+    if (parentIds.length > 0) {
+      const placeholders = parentIds.map(() => "?").join(", ");
+      const parentRows = db.prepare(`SELECT id, title FROM tasks WHERE id IN (${placeholders})`).all(...parentIds) as Array<{
+        id: string;
+        title: string;
+      }>;
+      for (const parent of parentRows) parentTitleById.set(parent.id, parent.title);
+    }
+    if (parentNumbers.length > 0) {
+      const placeholders = parentNumbers.map(() => "?").join(", ");
+      const parentRows = db.prepare(
+        `SELECT id, task_number, title FROM tasks WHERE task_number IN (${placeholders}) ORDER BY CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END, created_at DESC`,
+      ).all(...parentNumbers) as Array<{
+        id: string;
+        task_number: string;
+        title: string;
+      }>;
+      for (const parent of parentRows) {
+        if (parentIdByNumber.has(parent.task_number)) continue;
+        parentIdByNumber.set(parent.task_number, parent.id);
+        parentTitleByNumber.set(parent.task_number, parent.title);
+      }
+    }
+
+    return rows.map((raw, index) => {
       const r = raw as {
+        parent_task_id?: string | null;
+        parent_task_number?: string | null;
+        split_index?: number | null;
+        split_total?: number | null;
         _desc_head?: string | null;
         _result_head?: string | null;
         has_refinement_plan?: number | boolean;
       } & Record<string, unknown>;
       const out: Record<string, unknown> = { ...r };
-      out.parent_task_number = deriveParentTaskNumber(r._desc_head ?? null);
+      const parentNumber = parentNumberByRow[index] ?? null;
+      const parentId = r.parent_task_id ?? (parentNumber ? parentIdByNumber.get(parentNumber) ?? null : null);
+      out.parent_task_id = parentId;
+      out.parent_task_number = parentNumber;
+      out.parent_task_title = parentId
+        ? parentTitleById.get(parentId) ?? (parentNumber ? parentTitleByNumber.get(parentNumber) ?? null : null)
+        : parentNumber ? parentTitleByNumber.get(parentNumber) ?? null : null;
+      out.split_index = r.split_index ?? deriveSplitIndex(r._desc_head ?? null);
       out.child_task_numbers = deriveChildTaskNumbers(r._result_head ?? null);
       out.has_refinement_plan = Boolean(r.has_refinement_plan);
       delete out._desc_head;
@@ -564,9 +668,27 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
   router.get("/tasks/:id", (req, res) => {
     const t0 = performance.now();
-    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id);
+    const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Record<string, unknown> | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
-    sendMeasuredJson(res, "/tasks/:id", t0, task);
+    const parentNumber = typeof task.parent_task_number === "string"
+      ? task.parent_task_number
+      : deriveParentTaskNumber(typeof task.description === "string" ? task.description : null);
+    const parent = typeof task.parent_task_id === "string"
+      ? db.prepare("SELECT id, title FROM tasks WHERE id = ?").get(task.parent_task_id) as { id: string; title: string } | undefined
+      : parentNumber
+        ? db.prepare("SELECT id, title FROM tasks WHERE task_number = ? ORDER BY CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END, created_at DESC LIMIT 1").get(parentNumber) as { id: string; title: string } | undefined
+        : undefined;
+    const splitIndex = typeof task.split_index === "number"
+      ? task.split_index
+      : deriveSplitIndex(typeof task.description === "string" ? task.description : null);
+    const parentTitle = parent?.title ?? null;
+    sendMeasuredJson(res, "/tasks/:id", t0, {
+      ...task,
+      parent_task_id: task.parent_task_id ?? parent?.id ?? null,
+      parent_task_number: parentNumber,
+      parent_task_title: parentTitle,
+      split_index: splitIndex,
+    });
   });
 
   router.post("/tasks", (req, res) => {
@@ -1082,7 +1204,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     const isRefinement = task.status === "refinement";
     const workflow = loadProjectWorkflow(task.project_path);
-    const activeStages = resolveActiveStages(db, workflow, task.task_size);
+    const activeStages = resolveActiveStages(db, workflow, task.task_size, task.id);
     const next = nextStage(task.status as "human_review" | "refinement", activeStages);
     const now = Date.now();
 
@@ -1124,8 +1246,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       }
     }
 
-    if (isRefinement && next === "in_progress" && isControllerModeEnabled(db)) {
-      const splitResult = splitRefinementPlanIntoTasks(ctx, task, { controllerMode: true });
+    const taskControllerMode = isTaskControllerModeEnabled(db, task.id);
+    if (isRefinement && next === "in_progress" && taskControllerMode) {
+      const splitResult = splitRefinementPlanIntoTasks(ctx, task, { controllerMode: taskControllerMode });
       if (!("error" in splitResult)) {
         setTimeout(() => {
           for (const child of splitResult.children) {
@@ -1147,6 +1270,12 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
           plan_path: splitResult.planPath,
         });
       }
+
+      return res.status(400).json({
+        error: splitResult.error,
+        message: splitResult.message,
+        step: splitResult.step,
+      });
     }
 
     let approvedTaskForSpawn: Task | undefined;
@@ -1267,11 +1396,18 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   router.post("/tasks/:id/split", (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
-    const splitResult = splitRefinementPlanIntoTasks(ctx, task, { controllerMode: isControllerModeEnabled(db) });
-    if ("error" in splitResult) return res.status(400).json({ error: splitResult.error });
+    const taskControllerMode = isTaskControllerModeEnabled(db, task.id);
+    const splitResult = splitRefinementPlanIntoTasks(ctx, task, { controllerMode: taskControllerMode });
+    if ("error" in splitResult) {
+      return res.status(400).json({
+        error: splitResult.error,
+        message: splitResult.message,
+        step: splitResult.step,
+      });
+    }
 
     setTimeout(() => {
-      const runnableChildren = isControllerModeEnabled(db)
+      const runnableChildren = taskControllerMode
         ? splitResult.children.filter((child) => child.controller_stage === "implement")
         : splitResult.children.filter((child) => !child.depends_on);
       for (const child of runnableChildren) {

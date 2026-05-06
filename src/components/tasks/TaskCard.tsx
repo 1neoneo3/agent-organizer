@@ -8,6 +8,7 @@ import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 import { getTaskRevisionUi } from "./task-revision-ui.js";
+import type { TaskCardBlockers, TaskBlockerRef } from "./task-blockers.js";
 
 const SIZE_LABEL: Record<string, string> = {
   small: "S",
@@ -41,6 +42,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 interface TaskCardProps {
   task: TaskSummary;
+  blockers?: TaskCardBlockers;
   assignedAgent?: Agent;
   idleAgents: Agent[];
   roleLabelByAgentId: Map<string, string>;
@@ -55,7 +57,72 @@ interface TaskCardProps {
   onDelete?: (taskId: string) => void;
 }
 
-function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, hasInteractivePrompt, interactivePrompt, onRun, onStop, onResume, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
+function formatBlockerFiles(blocker: TaskBlockerRef): string | null {
+  const files = blocker.overlappingFiles ?? [];
+  if (files.length === 0) return null;
+  const visible = files.slice(0, 2).join(", ");
+  return files.length > 2 ? `${visible} +${files.length - 2}` : visible;
+}
+
+function BlockerLine({
+  label,
+  color,
+  blockers,
+}: {
+  label: string;
+  color: string;
+  blockers: TaskBlockerRef[];
+}) {
+  if (blockers.length === 0) return null;
+  return (
+    <div style={{ fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "flex-start", gap: "4px", flexWrap: "wrap" }}>
+      <span style={{ color, fontWeight: 600 }}>{label}</span>
+      {blockers.map((blocker) => {
+        const files = formatBlockerFiles(blocker);
+        const title = [
+          `${blocker.taskNumber} (${blocker.status})`,
+          files ? `Files: ${(blocker.overlappingFiles ?? []).join(", ")}` : null,
+        ].filter(Boolean).join("\n");
+        return (
+          <span
+            key={`${blocker.kind}:${blocker.taskNumber}:${files ?? ""}`}
+            title={title}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "3px",
+              maxWidth: "100%",
+              padding: "1px 5px",
+              borderRadius: "4px",
+              background: "var(--bg-tertiary)",
+              color: "var(--text-secondary)",
+              fontFamily: "var(--font-mono)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span>{blocker.taskNumber}</span>
+            <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-sans)" }}>({blocker.status})</span>
+            {files && (
+              <span style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-sans)", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {files}
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatParentStep(task: TaskSummary): string | null {
+  if (typeof task.split_index !== "number") return null;
+  if (typeof task.split_total !== "number") return `Step ${task.split_index}`;
+  return `Step ${task.split_index}/${task.split_total}`;
+}
+
+function TaskCardInner({ task, blockers, assignedAgent, idleAgents, roleLabelByAgentId, hasInteractivePrompt, interactivePrompt, onRun, onStop, onResume, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
   const agent = assignedAgent;
   const roleLabel = agent ? roleLabelByAgentId.get(agent.id) ?? null : null;
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
@@ -168,37 +235,84 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
             )}
             <span style={{ wordBreak: "break-word" }}>{task.title}</span>
           </div>
-          {/* Parent/child relationship + dependency display.
+          {/* Parent/child relationship + blocker display.
               parent_task_number / child_task_numbers are server-derived
               fields populated from description/result heads — the
               regex extraction lives in server/domain/task-derived-fields.ts
               so the kanban does not need the full description/result
-              columns shipped to the client. */}
+              columns shipped to the client. Blockers are computed from
+              current task summaries so the card reflects dependencies and
+              file conflicts without parsing dispatch log text. */}
           {(() => {
-            const lines: Array<{ label: string; color: string; values: string[] }> = [];
-            if (task.parent_task_number) {
-              lines.push({ label: "Parent", color: "var(--status-refinement)", values: [task.parent_task_number] });
-            }
-            if (task.child_task_numbers && task.child_task_numbers.length > 0) {
-              lines.push({ label: "Children", color: "var(--status-refinement)", values: task.child_task_numbers });
-            }
-            if (task.depends_on) {
-              try {
-                const deps = JSON.parse(task.depends_on) as string[];
-                if (deps.length > 0) lines.push({ label: "Blocked by", color: "var(--status-cancelled)", values: deps });
-              } catch { /* ignore */ }
-            }
-            if (lines.length === 0) return null;
+            const parentStep = formatParentStep(task);
+            const hasParentInfo = Boolean(task.parent_task_number);
+            const parentAccent = "var(--status-qa)";
+            const childLine = task.child_task_numbers && task.child_task_numbers.length > 0
+              ? { label: "Children", color: "var(--status-refinement)", values: task.child_task_numbers }
+              : null;
+            const hasBlockingInfo = (blockers?.dependencies.length ?? 0) > 0 || (blockers?.fileConflicts.length ?? 0) > 0;
+            if (!hasParentInfo && !childLine && !hasBlockingInfo) return null;
             return (
-              <div style={{ marginTop: "2px", display: "flex", flexDirection: "column", gap: "1px" }}>
-                {lines.map((line) => (
-                  <div key={line.label} style={{ fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
-                    <span style={{ color: line.color, fontWeight: 600 }}>{line.label}</span>
-                    {line.values.map((v) => (
+              <div style={{ marginTop: "4px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                {hasParentInfo && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      flexWrap: "wrap",
+                      padding: "5px 6px",
+                      border: `1px solid color-mix(in srgb, ${parentAccent} 42%, var(--border-default))`,
+                      borderRadius: "6px",
+                      background: `color-mix(in srgb, ${parentAccent} 12%, var(--bg-secondary))`,
+                    }}
+                  >
+                    <span style={{ color: parentAccent, fontSize: "10px", fontWeight: 700 }}>Parent Task</span>
+                    <button
+                      type="button"
+                      disabled={!task.parent_task_id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (task.parent_task_id) onSelect?.(task.parent_task_id);
+                      }}
+                      title={task.parent_task_title ? `${task.parent_task_number} ${task.parent_task_title}` : task.parent_task_number ?? undefined}
+                      style={{
+                        appearance: "none",
+                        border: 0,
+                        padding: 0,
+                        margin: 0,
+                        background: "transparent",
+                        color: "var(--text-primary)",
+                        cursor: task.parent_task_id ? "pointer" : "default",
+                        display: "inline-flex",
+                        alignItems: "baseline",
+                        gap: "4px",
+                        minWidth: 0,
+                        maxWidth: "100%",
+                      }}
+                    >
+                      <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)", fontSize: "10px", fontWeight: 700 }}>{task.parent_task_number}</span>
+                      {task.parent_task_title && (
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "11px", maxWidth: "150px" }}>
+                          {task.parent_task_title}
+                        </span>
+                      )}
+                    </button>
+                    {parentStep && (
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--text-tertiary)" }}>{parentStep}</span>
+                    )}
+                  </div>
+                )}
+                {childLine && (
+                  <div style={{ fontSize: "10px", color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: "4px", flexWrap: "wrap" }}>
+                    <span style={{ color: childLine.color, fontWeight: 600 }}>{childLine.label}</span>
+                    {childLine.values.map((v) => (
                       <span key={v} style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>{v}</span>
                     ))}
                   </div>
-                ))}
+                )}
+                <BlockerLine label="Blocked by" color="var(--status-cancelled)" blockers={blockers?.dependencies ?? []} />
+                <BlockerLine label="File conflict" color="var(--status-cancelled)" blockers={blockers?.fileConflicts ?? []} />
               </div>
             );
           })()}
@@ -641,6 +755,7 @@ function TaskCardInner({ task, assignedAgent, idleAgents, roleLabelByAgentId, ha
 
 function areTaskCardPropsEqual(prev: TaskCardProps, next: TaskCardProps): boolean {
   return prev.task === next.task
+    && prev.blockers === next.blockers
     && prev.assignedAgent === next.assignedAgent
     && prev.idleAgents === next.idleAgents
     && prev.hasInteractivePrompt === next.hasInteractivePrompt

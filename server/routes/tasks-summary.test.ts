@@ -11,7 +11,6 @@ const HEAVY_COLUMNS = [
   "description",
   "result",
   "refinement_plan",
-  "planned_files",
   "interactive_prompt_data",
   "repository_urls",
   "pr_urls",
@@ -20,7 +19,9 @@ const HEAVY_COLUMNS = [
 
 const SUMMARY_COLUMNS = [
   "id", "title", "assigned_agent_id", "project_path", "status",
-  "priority", "task_size", "task_number", "depends_on",
+  "priority", "task_size", "task_number", "parent_task_id",
+  "parent_task_number", "parent_task_title", "split_index", "split_total",
+  "depends_on", "planned_files", "controller_stage",
   "refinement_completed_at", "refinement_revision_requested_at",
   "refinement_revision_completed_at", "review_count", "directive_id",
   "pr_url", "external_source", "external_id", "review_branch",
@@ -140,6 +141,113 @@ describe("GET /tasks summary", () => {
         `GET /tasks should include '${col}', but it was missing`,
       );
     }
+  });
+
+  it("returns explicit split parent metadata with the parent title", async () => {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('parent-task', '親の実装計画', 'parent', 'done', 'large', '#900', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number,
+        parent_task_id, parent_task_number, split_index, split_total,
+        created_at, updated_at
+      ) VALUES ('child-task', '子タスク', 'child', 'inbox', 'small', '#901',
+        'parent-task', '#900', 2, 4, ?, ?)`,
+    ).run(now + 2, now + 2);
+
+    const res = await fetch(`${baseUrl}/tasks`);
+    assert.equal(res.status, 200);
+    const tasks = (await res.json()) as Array<Record<string, unknown>>;
+    const child = tasks.find((task) => task.id === "child-task");
+
+    assert.ok(child);
+    assert.equal(child.parent_task_id, "parent-task");
+    assert.equal(child.parent_task_number, "#900");
+    assert.equal(child.parent_task_title, "親の実装計画");
+    assert.equal(child.split_index, 2);
+    assert.equal(child.split_total, 4);
+  });
+
+  it("falls back to Japanese split descriptions for existing child tasks", async () => {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('legacy-parent', '既存の親タスク', 'parent', 'done', 'large', '#910', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('legacy-child', '既存の子タスク', '#910 のステップ 3: UI components/styles', 'in_progress', 'small', '#913', ?, ?)`,
+    ).run(now + 2, now + 2);
+
+    const res = await fetch(`${baseUrl}/tasks`);
+    assert.equal(res.status, 200);
+    const tasks = (await res.json()) as Array<Record<string, unknown>>;
+    const child = tasks.find((task) => task.id === "legacy-child");
+
+    assert.ok(child);
+    assert.equal(child.parent_task_id, "legacy-parent");
+    assert.equal(child.parent_task_number, "#910");
+    assert.equal(child.parent_task_title, "既存の親タスク");
+    assert.equal(child.split_index, 3);
+  });
+
+  it("falls back to T-prefixed parent task numbers for controller children", async () => {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('t04-parent', 'Integrate controller results', 'parent', 'done', 'large', 'T04', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('t04-child', 'fallback metadata', 'T04 のステップ 1: fallback metadata', 'human_review', 'small', '#82168', ?, ?)`,
+    ).run(now + 2, now + 2);
+
+    const res = await fetch(`${baseUrl}/tasks`);
+    assert.equal(res.status, 200);
+    const tasks = (await res.json()) as Array<Record<string, unknown>>;
+    const child = tasks.find((task) => task.id === "t04-child");
+
+    assert.ok(child);
+    assert.equal(child.parent_task_id, "t04-parent");
+    assert.equal(child.parent_task_number, "T04");
+    assert.equal(child.parent_task_title, "Integrate controller results");
+    assert.equal(child.split_index, 1);
+  });
+
+  it("prefers the latest non-cancelled parent when task numbers are duplicated", async () => {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('old-t04-parent', 'Old cancelled T04', 'old parent', 'cancelled', 'large', 'T04', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('new-t04-parent', 'Current T04', 'new parent', 'done', 'large', 'T04', ?, ?)`,
+    ).run(now + 2, now + 2);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('duplicate-t04-child', 'child', 'T04 のステップ 2: child', 'human_review', 'small', '#82200', ?, ?)`,
+    ).run(now + 3, now + 3);
+
+    const res = await fetch(`${baseUrl}/tasks`);
+    assert.equal(res.status, 200);
+    const tasks = (await res.json()) as Array<Record<string, unknown>>;
+    const child = tasks.find((task) => task.id === "duplicate-t04-child");
+
+    assert.ok(child);
+    assert.equal(child.parent_task_id, "new-t04-parent");
+    assert.equal(child.parent_task_title, "Current T04");
   });
 
   it("returns tasks ordered by priority DESC, created_at DESC", async () => {

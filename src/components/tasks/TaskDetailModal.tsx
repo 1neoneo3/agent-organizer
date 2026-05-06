@@ -204,6 +204,8 @@ export function TaskDetailModal({
   const [sendingFeedback, setSendingFeedback] = useState(false);
   const [refinementFeedback, setRefinementFeedback] = useState("");
   const [sendingRefinementFeedback, setSendingRefinementFeedback] = useState(false);
+  const [refinementActionError, setRefinementActionError] = useState<string | null>(null);
+  const [runningRefinementAction, setRunningRefinementAction] = useState(false);
   const agentView = useMemo(() => buildAgentViewState(agents), [agents]);
   const agent = task.assigned_agent_id ? agentView.agentById.get(task.assigned_agent_id) : undefined;
   const idleAgents = agentView.idleAgents;
@@ -221,6 +223,19 @@ export function TaskDetailModal({
       console.error("Failed to send feedback:", err);
     } finally {
       setSendingFeedback(false);
+    }
+  };
+
+  const runRefinementAction = async (action: () => Promise<unknown>) => {
+    if (runningRefinementAction) return;
+    setRunningRefinementAction(true);
+    setRefinementActionError(null);
+    try {
+      await action();
+    } catch (err) {
+      setRefinementActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunningRefinementAction(false);
     }
   };
 
@@ -589,30 +604,49 @@ export function TaskDetailModal({
             >
               <div style={{ display: "flex", gap: "8px" }}>
                 <button
-                  onClick={async () => { await approveTask(task.id); }}
+                  onClick={() => runRefinementAction(() => approveTask(task.id))}
+                  disabled={runningRefinementAction}
                   className="eb-btn eb-btn--primary"
-                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", opacity: runningRefinementAction ? 0.5 : 1 }}
                 >
                   Approve Plan
                 </button>
                 <button
-                  onClick={async () => {
+                  onClick={() => runRefinementAction(async () => {
                     if (!confirm("Split this plan into individual tasks? The parent task will be marked as done.")) return;
                     await splitTask(task.id);
-                  }}
+                  })}
+                  disabled={runningRefinementAction}
                   className="eb-btn"
-                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", background: "var(--status-refinement)", color: "#fff" }}
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", background: "var(--status-refinement)", color: "#fff", opacity: runningRefinementAction ? 0.5 : 1 }}
                 >
                   Split into Tasks
                 </button>
                 <button
-                  onClick={async () => { await rejectTask(task.id); }}
+                  onClick={() => runRefinementAction(() => rejectTask(task.id))}
+                  disabled={runningRefinementAction}
                   className="eb-btn eb-btn--danger"
-                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px" }}
+                  style={{ flex: 1, fontSize: "12px", padding: "8px 12px", opacity: runningRefinementAction ? 0.5 : 1 }}
                 >
                   Reject Plan
                 </button>
               </div>
+              {refinementActionError && (
+                <div
+                  role="alert"
+                  style={{
+                    background: "rgba(239, 68, 68, 0.12)",
+                    border: "1px solid rgba(239, 68, 68, 0.35)",
+                    borderRadius: "6px",
+                    color: "var(--status-cancelled)",
+                    fontSize: "12px",
+                    lineHeight: 1.4,
+                    padding: "8px 10px",
+                  }}
+                >
+                  {refinementActionError}
+                </div>
+              )}
               <div style={{ display: "flex", gap: "6px" }}>
                 <textarea
                   value={refinementFeedback}

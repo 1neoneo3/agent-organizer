@@ -34,6 +34,11 @@ export interface Task {
   priority: number;
   task_size: "small" | "medium" | "large";
   task_number: string | null;
+  parent_task_id?: string | null;
+  parent_task_number?: string | null;
+  parent_task_title?: string | null;
+  split_index?: number | null;
+  split_total?: number | null;
   depends_on: string | null;
   controller_stage?: "implement" | "verify" | "integrate" | null;
   write_scope?: string | null;

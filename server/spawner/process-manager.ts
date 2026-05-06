@@ -1009,7 +1009,11 @@ export async function spawnAgent(
               "SELECT task_number, title, status, project_path, description FROM tasks WHERE status NOT IN ('done','cancelled') AND id != ? ORDER BY created_at DESC LIMIT 20"
             ).all(task.id) as Array<{ task_number: string; title: string; status: string; project_path: string | null; description: string | null }>;
             return rows;
-          })(), { asPr: refinementAsPr, language: outputLanguage })
+          })(), {
+            asPr: refinementAsPr,
+            language: outputLanguage,
+            controllerMode: getSetting(db, "enable_controller_mode", task.id) === "true",
+          })
         : (isTestGenRun
           ? buildTestGenerationPrompt(task, workflow?.projectType ?? "generic", {
               parallel: isParallelTester,

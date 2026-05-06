@@ -40,6 +40,7 @@ function toReviewTask(task: ReviewTask): TaskSummary {
     task_size: "small",
     task_number: null,
     depends_on: null,
+    planned_files: null,
     pr_url: null,
     review_count: 0,
     directive_id: null,

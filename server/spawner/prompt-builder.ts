@@ -799,6 +799,12 @@ export interface BuildRefinementPromptOptions {
   asPr?: boolean;
   /** Output language for the natural-language portions. */
   language?: OutputLanguage;
+  /**
+   * When true, approval may split the Implementation Plan into controller
+   * child tasks. The refinement plan should therefore make the numbered
+   * Implementation Plan a parallel-safe task split contract.
+   */
+  controllerMode?: boolean;
 }
 
 export function buildRefinementPrompt(
@@ -807,6 +813,7 @@ export function buildRefinementPrompt(
   opts: BuildRefinementPromptOptions = {},
 ): string {
   const refinementAsPr = opts.asPr ?? false;
+  const controllerMode = opts.controllerMode ?? false;
   const parts: string[] = [];
   const language: OutputLanguage = opts.language ?? DEFAULT_OUTPUT_LANGUAGE;
   const isEn = language === "en";
@@ -935,13 +942,39 @@ export function buildRefinementPrompt(
     parts.push("");
     parts.push("## Implementation Plan");
     parts.push("");
-    parts.push(
-      "Give concrete, numbered steps for the change. Each step must name the target file(s).",
-    );
+    if (controllerMode) {
+      parts.push(
+        "Give concrete, numbered steps that are safe to split into parallel controller child tasks.",
+      );
+      parts.push("The `/tasks/:id/split` parser will turn each numbered item in this section into one child task.");
+      parts.push("Rules for this section:");
+      parts.push("- Each numbered item must be independently implementable.");
+      parts.push("- Each numbered item must include a `Write scope:` line with every file path in backticks.");
+      parts.push("- Keep final integration, app wiring, E2E, docs, and cross-slice verification out of this numbered list unless they are truly independent.");
+      parts.push("- Put final integration and verification details in `## Integration Plan` instead; that section is not split into child tasks.");
+    } else {
+      parts.push(
+        "Give concrete, numbered steps for the change. Each step must name the target file(s).",
+      );
+    }
     parts.push("Each item must start with `1. ` `2. ` etc.:");
     parts.push("");
-    parts.push("1. Target file and specific change");
-    parts.push("2. Target file and specific change");
+    if (controllerMode) {
+      parts.push("1. Independent slice name");
+      parts.push("   Write scope: `path/to/file.ts`, `path/to/file.test.ts`");
+      parts.push("   Implement this slice with focused tests.");
+      parts.push("2. Independent slice name");
+      parts.push("   Write scope: `path/to/other-file.ts`, `path/to/other-file.test.ts`");
+      parts.push("   Implement this slice with focused tests.");
+      parts.push("");
+      parts.push("## Integration Plan");
+      parts.push("");
+      parts.push("Describe final app wiring, cross-slice verification, E2E, README, and build/test commands here.");
+      parts.push("Do not number these as Implementation Plan child tasks.");
+    } else {
+      parts.push("1. Target file and specific change");
+      parts.push("2. Target file and specific change");
+    }
     parts.push("");
     parts.push("## Risks & Considerations");
     parts.push("");
@@ -1064,11 +1097,35 @@ export function buildRefinementPrompt(
     parts.push("");
     parts.push("## 実装計画");
     parts.push("");
-    parts.push("具体的な変更手順を番号付きリストで列挙する。各ステップに対象ファイルを明記する。");
+    if (controllerMode) {
+      parts.push("AO の Split into Tasks で並列 child task 化して安全に実行できる粒度で、番号付きリストを列挙する。");
+      parts.push("`/tasks/:id/split` はこのセクションの各 numbered item を1つの子タスクに変換する。");
+      parts.push("このセクションのルール:");
+      parts.push("- 各 numbered item は独立して実装できる単位にする。");
+      parts.push("- 各 numbered item には `Write scope:` 行を含め、対象ファイルパスをすべて backtick 付きで明記する。");
+      parts.push("- 最終統合、App 配線、E2E、README、横断検証は、本当に独立していない限り numbered list に入れない。");
+      parts.push("- 最終統合と検証の詳細は `## 統合方針` に書く。このセクションは child task に分割されない。");
+    } else {
+      parts.push("具体的な変更手順を番号付きリストで列挙する。各ステップに対象ファイルを明記する。");
+    }
     parts.push("各項目は `1. ` `2. ` のように番号で始める:");
     parts.push("");
-    parts.push("1. 対象ファイルと具体的な変更内容");
-    parts.push("2. 対象ファイルと具体的な変更内容");
+    if (controllerMode) {
+      parts.push("1. 独立実装スライス名");
+      parts.push("   Write scope: `path/to/file.ts`, `path/to/file.test.ts`");
+      parts.push("   このスライスの実装と focused test を行う。");
+      parts.push("2. 独立実装スライス名");
+      parts.push("   Write scope: `path/to/other-file.ts`, `path/to/other-file.test.ts`");
+      parts.push("   このスライスの実装と focused test を行う。");
+      parts.push("");
+      parts.push("## 統合方針");
+      parts.push("");
+      parts.push("最後の App 配線、横断検証、E2E、README、build/test コマンドをここに書く。");
+      parts.push("これらを実装計画の numbered child task として番号付けしない。");
+    } else {
+      parts.push("1. 対象ファイルと具体的な変更内容");
+      parts.push("2. 対象ファイルと具体的な変更内容");
+    }
     parts.push("");
     parts.push("## リスク・注意点");
     parts.push("");
