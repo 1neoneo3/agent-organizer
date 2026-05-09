@@ -8,6 +8,7 @@ import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 import { getTaskRevisionUi } from "./task-revision-ui.js";
+import { getHumanReviewRunUi } from "./task-human-review-ui.js";
 import type { TaskCardBlockers, TaskBlockerRef } from "./task-blockers.js";
 
 const SIZE_LABEL: Record<string, string> = {
@@ -44,6 +45,7 @@ interface TaskCardProps {
   task: TaskSummary;
   blockers?: TaskCardBlockers;
   assignedAgent?: Agent;
+  activeAgent?: Agent;
   idleAgents: Agent[];
   roleLabelByAgentId: Map<string, string>;
   hasInteractivePrompt?: boolean;
@@ -122,7 +124,7 @@ function formatParentStep(task: TaskSummary): string | null {
   return `Step ${task.split_index}/${task.split_total}`;
 }
 
-function TaskCardInner({ task, blockers, assignedAgent, idleAgents, roleLabelByAgentId, hasInteractivePrompt, interactivePrompt, onRun, onStop, onResume, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
+function TaskCardInner({ task, blockers, assignedAgent, activeAgent, idleAgents, roleLabelByAgentId, hasInteractivePrompt, interactivePrompt, onRun, onStop, onResume, onDone, onSelect, onShowLog, onDelete }: TaskCardProps) {
   const agent = assignedAgent;
   const roleLabel = agent ? roleLabelByAgentId.get(agent.id) ?? null : null;
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
@@ -200,6 +202,9 @@ function TaskCardInner({ task, blockers, assignedAgent, idleAgents, roleLabelByA
   const createdAtTooltip = formatTaskTimestamp(task.created_at);
   const feedbackUi = getTaskFeedbackUi(task.status);
   const { revisionBadge, planBanner } = getTaskRevisionUi(task);
+  const activeHumanReviewAgent =
+    activeAgent && activeAgent.id !== task.assigned_agent_id ? activeAgent : null;
+  const humanReviewRunUi = getHumanReviewRunUi(task, activeHumanReviewAgent);
 
   return (
     <div
@@ -342,6 +347,18 @@ function TaskCardInner({ task, blockers, assignedAgent, idleAgents, roleLabelByA
               {revisionBadge.label}
             </span>
           )}
+          {humanReviewRunUi && (
+            <span style={{
+              padding: "2px 6px",
+              background: humanReviewRunUi.badge.background,
+              color: humanReviewRunUi.badge.color,
+              borderRadius: "4px",
+              fontSize: "10px",
+              fontWeight: 600,
+            }}>
+              {humanReviewRunUi.badge.label}
+            </span>
+          )}
           <span style={{
             display: "inline-flex",
             alignItems: "center",
@@ -426,8 +443,30 @@ function TaskCardInner({ task, blockers, assignedAgent, idleAgents, roleLabelByA
         </div>
       )}
 
+      {/* Auto Human Review status */}
+      {humanReviewRunUi && (
+        <div
+          style={{
+            padding: "8px 12px",
+            background: "var(--bg-tertiary)",
+            borderTop: "1px solid var(--border-default)",
+            borderBottom: "1px solid var(--border-default)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "4px",
+          }}
+        >
+          <span style={{ fontSize: "11px", fontWeight: 600, color: humanReviewRunUi.banner.color }}>
+            {humanReviewRunUi.banner.label}
+          </span>
+          <span style={{ fontSize: "10px", color: "var(--text-secondary)", lineHeight: 1.4 }}>
+            {humanReviewRunUi.banner.description}
+          </span>
+        </div>
+      )}
+
       {/* Human Review Approval */}
-      {task.status === "human_review" && (
+      {task.status === "human_review" && !humanReviewRunUi && (
         <div
           onClick={(e) => e.stopPropagation()}
           style={{

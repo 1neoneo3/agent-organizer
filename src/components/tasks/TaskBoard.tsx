@@ -29,6 +29,7 @@ interface TaskColumnProps {
   accentColor: string;
   tasks: TaskSummary[];
   assignedAgentById: Map<string, Agent>;
+  activeAgentByTaskId: Map<string, Agent>;
   idleAgents: Agent[];
   roleLabelByAgentId: Map<string, string>;
   interactivePrompts: Map<string, InteractivePrompt>;
@@ -48,6 +49,7 @@ const TaskColumn = memo(function TaskColumn({
   accentColor,
   tasks,
   assignedAgentById,
+  activeAgentByTaskId,
   idleAgents,
   roleLabelByAgentId,
   interactivePrompts,
@@ -95,6 +97,7 @@ const TaskColumn = memo(function TaskColumn({
             task={task}
             blockers={blockersByTaskId.get(task.id)}
             assignedAgent={task.assigned_agent_id ? assignedAgentById.get(task.assigned_agent_id) : undefined}
+            activeAgent={activeAgentByTaskId.get(task.id)}
             idleAgents={idleAgents}
             roleLabelByAgentId={roleLabelByAgentId}
             hasInteractivePrompt={interactivePrompts.has(task.id)}
@@ -264,6 +267,16 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
     () => new Map(tasks.map((task) => [task.id, collectTaskCardBlockers(task, tasks)])),
     [tasks],
   );
+  const activeAgentByTaskId = useMemo(() => {
+    const byTask = new Map<string, Agent>();
+    for (const agent of agents) {
+      if (agent.status !== "working" || !agent.current_task_id) continue;
+      if (!byTask.has(agent.current_task_id)) {
+        byTask.set(agent.current_task_id, agent);
+      }
+    }
+    return byTask;
+  }, [agents]);
 
   const handleBoardRender = useCallback((id: string, phase: "mount" | "update" | "nested-update", actualDuration: number) => {
     if (typeof window === "undefined") {
@@ -326,6 +339,7 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
               accentColor={col.accentColor}
               tasks={colTasks}
               assignedAgentById={agentView.agentById}
+              activeAgentByTaskId={activeAgentByTaskId}
               idleAgents={agentView.idleAgents}
               roleLabelByAgentId={agentView.roleLabelById}
               interactivePrompts={interactivePrompts}
