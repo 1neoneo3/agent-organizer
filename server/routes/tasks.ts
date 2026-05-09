@@ -7,16 +7,21 @@ import { z } from "zod";
 import { parseFeedbackRequest } from "./feedback-validation.js";
 import { recordReadApi } from "../perf/metrics.js";
 import type { RuntimeContext, Agent, Task } from "../types/runtime.js";
-import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt } from "../spawner/process-manager.js";
+import { spawnAgent, killAgent, queueFeedbackAndRestart, getCapturedSessionId, getPendingInteractivePrompt, getAllPendingInteractivePrompts, clearPendingInteractivePrompt, isTaskProcessActive } from "../spawner/process-manager.js";
 import { releaseAgentsForDeletedTask } from "../lifecycle/agent-pointer-reconcile.js";
-import { formatSpawnFailureForUser, handleSpawnFailure } from "../spawner/spawn-failures.js";
+import { formatSpawnFailureForUser, handleSpawnFailure, SpawnPreflightError } from "../spawner/spawn-failures.js";
 import { isGuardedStage } from "../spawner/stage-agent-resolver.js";
 import { triggerAutoReview } from "../spawner/auto-reviewer.js";
 import { triggerAutoQa } from "../spawner/auto-qa.js";
 import { triggerAutoTestGen } from "../spawner/auto-test-gen.js";
 import { resolveActiveStages, nextStage, recordFailedStage, validateStatusTransition } from "../workflow/stage-pipeline.js";
 import { loadProjectWorkflow } from "../workflow/loader.js";
-import { tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
+import { resolveWorkspaceMode, tryCleanupCompletedTaskWorkspace } from "../workflow/workspace-manager.js";
+import {
+  assertRepositoryIdentity,
+  parseExpectedRepositoryUrls,
+  RepositoryIdentityError,
+} from "../workflow/git-utils.js";
 import { AUTO_ASSIGN_TASK_ON_CREATE, AUTO_RUN_TASK_ON_CREATE, isOutputLanguage, type OutputLanguage } from "../config/runtime.js";
 import { autoDispatchTask } from "../tasks/auto-dispatch.js";
 import {
@@ -540,9 +545,34 @@ function fetchTaskById(
   return db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
 }
 
+function createFeedbackResumePreflightError(
+  db: RuntimeContext["db"],
+  task: Task,
+): SpawnPreflightError | null {
+  if (!task.project_path) return null;
+
+  const workflow = loadProjectWorkflow(task.project_path);
+  if (resolveWorkspaceMode(workflow, db) !== "git-worktree") return null;
+
+  try {
+    assertRepositoryIdentity(
+      task.id,
+      task.project_path,
+      parseExpectedRepositoryUrls(task.repository_urls, task.repository_url),
+    );
+    return null;
+  } catch (error) {
+    if (error instanceof RepositoryIdentityError) {
+      return new SpawnPreflightError(error.code, error.message, false);
+    }
+    throw error;
+  }
+}
+
 type TasksRouterDeps = {
   spawnAgent?: typeof spawnAgent;
   queueFeedbackAndRestart?: typeof queueFeedbackAndRestart;
+  isTaskProcessActive?: typeof isTaskProcessActive;
 };
 
 const STAGE_TRANSITION_MESSAGE_PREFIX = "__STAGE_TRANSITION__:";
@@ -552,6 +582,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   const { db, ws } = ctx;
   const taskSpawner = deps.spawnAgent ?? spawnAgent;
   const feedbackRestarter = deps.queueFeedbackAndRestart ?? queueFeedbackAndRestart;
+  const processActive = deps.isTaskProcessActive ?? isTaskProcessActive;
 
   const TASK_SUMMARY_COLS = [
     "id", "title", "assigned_agent_id", "project_path", "status",
@@ -1492,7 +1523,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   });
 
   // CEO Feedback: send directive to a task (in_progress or finished)
-  router.post("/tasks/:id/feedback", (req, res) => {
+  router.post("/tasks/:id/feedback", async (req, res) => {
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(req.params.id) as Task | undefined;
     if (!task) return res.status(404).json({ error: "not_found" });
 
@@ -1548,6 +1579,28 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     let refinementTransitionDone = false;
 
     if (task.status === "in_progress" || task.status === "refinement") {
+      if (processActive(task.id)) {
+        const preflightError = createFeedbackResumePreflightError(db, task);
+        if (preflightError) {
+          const resolution = `Feedback resume: ${preflightError.message}`;
+          db.prepare(
+            "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+          ).run(task.id, resolution);
+          ws.broadcast(
+            "cli_output",
+            { task_id: task.id, kind: "system", message: resolution },
+            { taskId: task.id },
+          );
+          return res.json({
+            sent: true,
+            restarted: false,
+            feedback_path: feedbackPath,
+            error: preflightError.code,
+            resolution,
+          });
+        }
+      }
+
       // Running refinement: log the inbox round-trip before killing
       if (task.status === "refinement") {
         db.prepare("UPDATE tasks SET status = 'inbox', completed_at = NULL, updated_at = ? WHERE id = ?").run(now, task.id);
@@ -1644,15 +1697,30 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     if (previousStatus === "refinement") {
       ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
     }
-    taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus }).catch((err) => {
+    try {
+      await taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus });
+    } catch (err) {
       const handled = handleSpawnFailure(db, ws, task.id, err, {
         source: "Feedback resume",
       });
       if (handled.handled) {
-        return;
+        return res.json({
+          sent: true,
+          restarted: false,
+          feedback_path: feedbackPath,
+          error: handled.code,
+          resolution: handled.message,
+        });
       }
       console.error(`[tasks.feedback] spawnAgent failed for task ${task.id}:`, err);
-    });
+      return res.status(500).json({
+        sent: true,
+        restarted: false,
+        feedback_path: feedbackPath,
+        error: "spawn_failed",
+        message: formatSpawnFailureForUser(err),
+      });
+    }
 
     res.json({ sent: true, restarted: true, feedback_path: feedbackPath });
   });

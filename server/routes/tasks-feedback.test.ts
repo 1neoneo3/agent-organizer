@@ -13,6 +13,7 @@ import {
   clearPendingInteractivePrompt,
   getAllPendingInteractivePrompts,
 } from "../spawner/process-manager.js";
+import { SpawnPreflightError } from "../spawner/spawn-failures.js";
 
 function createWsRecorder() {
   const events: Array<{ type: string; payload: unknown; options?: unknown }> = [];
@@ -194,6 +195,56 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
     }
   });
 
+  it("does not queue active-process feedback when workspace preflight fails", async () => {
+    const db = createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "working");
+    insertRefinementTask(db, taskId, agentId);
+    db.prepare("UPDATE tasks SET project_path = ? WHERE id = ?").run(
+      "/definitely/not/a/git/repo",
+      taskId,
+    );
+
+    let queueCalls = 0;
+    const { server, baseUrl } = await startServer(db, {
+      isTaskProcessActive: () => true,
+      queueFeedbackAndRestart: () => {
+        queueCalls += 1;
+        return true;
+      },
+      spawnAgent: async () => {
+        throw new Error("spawnAgent should not run when preflight fails");
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise the plan." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as {
+        restarted: boolean;
+        error?: string;
+        resolution?: string;
+      };
+      assert.equal(body.restarted, false);
+      assert.equal(body.error, "workspace_not_git_repository");
+      assert.match(body.resolution ?? "", /Feedback resume: project_path is not a git repository/);
+      assert.equal(queueCalls, 0);
+      assert.equal(getTaskField(db, taskId, "status"), "refinement");
+      assert.deepEqual(getTransitions(db, taskId), []);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
   it("does not duplicate transitions when feedback falls through to idle-agent respawn", async () => {
     const db = createDb();
     const agentId = randomUUID();
@@ -335,6 +386,55 @@ describe("POST /tasks/:id/feedback refinement regressions", () => {
         "[Revise] Refinement plan revision requested. Returning to inbox before re-entering refinement.",
         "__STAGE_TRANSITION__:inbox→refinement",
       ]);
+    } finally {
+      db.close();
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
+  });
+
+  it("reports restarted false when feedback respawn fails preflight", async () => {
+    const db = createDb();
+    const agentId = randomUUID();
+    const taskId = randomUUID();
+    insertAgent(db, agentId, "idle");
+    insertRefinementTask(db, taskId, agentId);
+
+    const { server, baseUrl } = await startServer(db, {
+      queueFeedbackAndRestart: () => false,
+      spawnAgent: async () => {
+        throw new SpawnPreflightError(
+          "workspace_not_git_repository",
+          "project_path is not a git repository",
+          false,
+        );
+      },
+    });
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/${taskId}/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Revise the plan after checking project_path." }),
+      });
+      assert.equal(response.status, 200);
+
+      const body = await response.json() as {
+        restarted: boolean;
+        error?: string;
+        resolution?: string;
+      };
+      assert.equal(body.restarted, false);
+      assert.equal(body.error, "workspace_not_git_repository");
+      assert.match(body.resolution ?? "", /Feedback resume: project_path is not a git repository/);
+      assert.equal(getTaskField(db, taskId, "status"), "human_review");
+      assert.ok(
+        getSystemLogs(db, taskId).some((message) =>
+          message.includes("Feedback resume: project_path is not a git repository"),
+        ),
+        "preflight failure should be recorded in task logs",
+      );
     } finally {
       db.close();
       await new Promise<void>((resolve, reject) => {

@@ -208,6 +208,11 @@ export function getActiveProcesses(): Map<string, ChildProcess> {
   return activeProcesses;
 }
 
+export function isTaskProcessActive(taskId: string): boolean {
+  const child = activeProcesses.get(taskId);
+  return !!child && child.pid !== undefined && !child.killed;
+}
+
 export function getPendingSpawns(): ReadonlySet<string> {
   return pendingSpawns;
 }
@@ -1745,6 +1750,12 @@ export async function spawnAgent(
           continuePrompt: feedback.message,
           previousStatus: feedback.previousStatus,
         }).catch((err) => {
+          const handled = handleSpawnFailure(db, ws, task.id, err, {
+            source: "Feedback resume",
+          });
+          if (handled.handled) {
+            return;
+          }
           console.error(`[process-manager] feedback respawn failed for task ${task.id}:`, err);
         });
       }
