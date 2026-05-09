@@ -10,3 +10,4 @@ data/
 tmp/
 test-results/
 playwright-report/
+output/
