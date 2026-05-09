@@ -741,6 +741,52 @@ describe("recoverInProgressOrphans", () => {
     assert.equal(payload.status, "refinement");
   });
 
+  it("salvages a usable refinement plan from logs when the saved plan is only a placeholder", () => {
+    insertTask(db, { id: "t-placeholder-salvage", status: "refinement", assigned_agent_id: "agent-1", started_at: 1_000 });
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = '---REFINEMENT PLAN---` ... `---END REFINEMENT---' WHERE id = 't-placeholder-salvage'",
+    ).run();
+    const usablePlan = [
+      "---REFINEMENT PLAN---",
+      "## Implementation Plan",
+      "1. Add triggerAutoReview regression coverage",
+      "---END REFINEMENT---",
+    ].join("\n");
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'assistant', ?, 'refinement', ?)",
+    ).run("t-placeholder-salvage", usablePlan, 2_000);
+    const ws = createFakeWs();
+
+    recoverInProgressOrphans(db, ws as never, new Set());
+
+    const row = db.prepare(
+      "SELECT refinement_plan, refinement_completed_at, completed_at FROM tasks WHERE id = 't-placeholder-salvage'",
+    ).get() as {
+      refinement_plan: string | null;
+      refinement_completed_at: number | null;
+      completed_at: number | null;
+    };
+    assert.equal(row.refinement_plan, usablePlan);
+    assert.ok(row.refinement_completed_at, "salvaged plan should be stamped as refinement-completed");
+    assert.ok(row.completed_at, "orphan recovery should complete the salvaged refinement");
+  });
+
+  it("does not complete a refinement orphan whose saved plan is only a placeholder", () => {
+    insertTask(db, { id: "t-placeholder-only", status: "refinement", assigned_agent_id: "agent-1", started_at: 1_000 });
+    db.prepare(
+      "UPDATE tasks SET refinement_plan = '---REFINEMENT PLAN---` ... `---END REFINEMENT---' WHERE id = 't-placeholder-only'",
+    ).run();
+    const ws = createFakeWs();
+
+    recoverInProgressOrphans(db, ws as never, new Set());
+
+    const row = db.prepare(
+      "SELECT completed_at, refinement_revision_completed_at FROM tasks WHERE id = 't-placeholder-only'",
+    ).get() as { completed_at: number | null; refinement_revision_completed_at: number | null };
+    assert.equal(row.completed_at, null, "placeholder plan must not be marked ready");
+    assert.equal(row.refinement_revision_completed_at, null, "placeholder plan must not complete the revision");
+  });
+
   it("stamps refinement_revision_completed_at for orphan with pending revision", () => {
     const requestedAt = Date.now() - 60_000;
     insertTask(db, { id: "t4", status: "refinement", assigned_agent_id: "agent-1" });

@@ -1,5 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
-import { getActiveProcesses, getPendingSpawns, getPendingInteractivePrompt, clearPendingInteractivePrompt, spawnAgent as defaultSpawnAgent } from "../spawner/process-manager.js";
+import {
+  getActiveProcesses,
+  getPendingSpawns,
+  getPendingInteractivePrompt,
+  clearPendingInteractivePrompt,
+  extractRefinementPlanFromLogs,
+  isUsableRefinementPlan,
+  persistRefinementPlanExtraction,
+  spawnAgent as defaultSpawnAgent,
+} from "../spawner/process-manager.js";
 import { SpawnPreflightError, handleSpawnFailure } from "../spawner/spawn-failures.js";
 import type { WsHub } from "../ws/hub.js";
 import { isNonImplementerRole, pickIdleImplementerAgent } from "../domain/implementer-agent.js";
@@ -112,36 +121,63 @@ export function recoverInProgressOrphans(
 
     const now = Date.now();
 
-    // Refinement orphan with a plan: stamp completed_at so UI shows
-    // approve/reject buttons. The plan is already saved; only the
-    // process died before finalization could run.
+    // Refinement orphan with a usable plan: stamp completed_at so UI shows
+    // approve/reject buttons. If the saved plan is a placeholder-only
+    // marker block, first try to salvage a usable plan from the refinement
+    // logs; otherwise clear it so the no-plan recovery path restarts
+    // refinement from inbox.
     if (task.status === "refinement" && task.refinement_plan) {
-      const result = db.prepare(
-        `UPDATE tasks
-         SET completed_at = ?,
-             refinement_revision_completed_at = CASE
-               WHEN refinement_revision_requested_at IS NOT NULL THEN ?
-               ELSE refinement_revision_completed_at
-             END,
-             updated_at = ?
-         WHERE id = ? AND status = 'refinement' AND completed_at IS NULL`,
-      ).run(now, now, now, task.id);
-      if (result.changes === 0) continue;
-
-      db.prepare(
-        "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
-      ).run(task.id, "Refinement plan ready (recovered by orphan recovery — agent process exited before finalization).");
-
-      if (task.assigned_agent_id) {
-        db.prepare(
-          "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
-        ).run(now, task.assigned_agent_id);
-        ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+      if (!isUsableRefinementPlan(task.refinement_plan)) {
+        const extraction = extractRefinementPlanFromLogs(db, task.id, task.started_at ?? 0);
+        if (extraction.kind === "plan" && isUsableRefinementPlan(extraction.plan)) {
+          persistRefinementPlanExtraction(db, task.id, extraction, {
+            stage: "refinement",
+            agentId: task.assigned_agent_id,
+            now,
+          });
+        } else {
+          db.prepare("UPDATE tasks SET refinement_plan = NULL WHERE id = ?").run(task.id);
+          db.prepare(
+            "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+          ).run(
+            task.id,
+            "Refinement orphan recovery ignored placeholder-only refinement_plan; returning to inbox for a fresh refinement run.",
+          );
+          // Fall through to the refinement-without-plan branch below.
+        }
       }
 
-      const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
-      ws.broadcast("task_update", freshTask ? buildTaskSummaryUpdate(freshTask) : { id: task.id, status: "refinement" as const, completed_at: now });
-      continue;
+      const refreshed = db.prepare("SELECT refinement_plan FROM tasks WHERE id = ?").get(task.id) as
+        | { refinement_plan: string | null }
+        | undefined;
+      if (isUsableRefinementPlan(refreshed?.refinement_plan)) {
+        const result = db.prepare(
+          `UPDATE tasks
+           SET completed_at = ?,
+               refinement_revision_completed_at = CASE
+                 WHEN refinement_revision_requested_at IS NOT NULL THEN ?
+                 ELSE refinement_revision_completed_at
+               END,
+               updated_at = ?
+           WHERE id = ? AND status = 'refinement' AND completed_at IS NULL`,
+        ).run(now, now, now, task.id);
+        if (result.changes === 0) continue;
+
+        db.prepare(
+          "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)",
+        ).run(task.id, "Refinement plan ready (recovered by orphan recovery — agent process exited before finalization).");
+
+        if (task.assigned_agent_id) {
+          db.prepare(
+            "UPDATE agents SET status = 'idle', current_task_id = NULL, updated_at = ? WHERE id = ?",
+          ).run(now, task.assigned_agent_id);
+          ws.broadcast("agent_status", { id: task.assigned_agent_id, status: "idle", current_task_id: null });
+        }
+
+        const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
+        ws.broadcast("task_update", freshTask ? buildTaskSummaryUpdate(freshTask) : { id: task.id, status: "refinement" as const, completed_at: now });
+        continue;
+      }
     }
 
     // in_progress orphan: park the task at in_progress and release the

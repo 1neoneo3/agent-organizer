@@ -440,6 +440,27 @@ export type RefinementPlanExtractionResult =
   | { kind: "fallback"; plan: string }
   | { kind: "empty" };
 
+const REFINEMENT_PLAN_BLOCK_RE = /---REFINEMENT PLAN---([\s\S]*?)---END REFINEMENT---/g;
+
+function isPlaceholderOnlyPlanBody(body: string): boolean {
+  const normalized = body
+    .trim()
+    .replace(/[`*_~\s]/g, "")
+    .replace(/\u2026/g, "...");
+  return /^\.{3,}$/.test(normalized);
+}
+
+function isUsableRefinementPlanBlock(match: RegExpMatchArray): boolean {
+  return !isPlaceholderOnlyPlanBody(match[1] ?? "");
+}
+
+export function isUsableRefinementPlan(plan: string | null | undefined): boolean {
+  if (!plan || plan.trim().length === 0) return false;
+  const matches = Array.from(plan.matchAll(REFINEMENT_PLAN_BLOCK_RE));
+  if (matches.length === 0) return true;
+  return matches.some(isUsableRefinementPlanBlock);
+}
+
 export function buildRefinementRevisionPrompt(feedback: string): string {
   return [
     "Revise the existing implementation plan according to the user feedback below.",
@@ -531,13 +552,13 @@ export function extractRefinementPlanFromLogs(
   // a draft plan, then a revised final plan in the same run; taking the
   // first match would freeze the draft. Using the last match aligns with
   // the user-visible "final answer" semantics.
-  const planMatches = Array.from(
-    combined.matchAll(/---REFINEMENT PLAN---([\s\S]*?)---END REFINEMENT---/g),
-  );
+  const planMatches = Array.from(combined.matchAll(REFINEMENT_PLAN_BLOCK_RE));
+  const usablePlanMatches = planMatches.filter(isUsableRefinementPlanBlock);
 
-  if (planMatches.length > 0) {
-    return { kind: "plan", plan: planMatches[planMatches.length - 1][0] };
+  if (usablePlanMatches.length > 0) {
+    return { kind: "plan", plan: usablePlanMatches[usablePlanMatches.length - 1][0] };
   }
+  if (planMatches.length > 0) return { kind: "empty" };
   if (combined.length > 0) return { kind: "fallback", plan: combined.slice(-5000) };
   return { kind: "empty" };
 }
@@ -571,10 +592,20 @@ export function persistRefinementPlanExtraction(
     "INSERT INTO task_logs (task_id, kind, message, stage, agent_id) VALUES (?, 'system', ?, ?, ?)",
   );
 
-  if (extraction.kind === "plan") {
+  if (extraction.kind === "plan" && isUsableRefinementPlan(extraction.plan)) {
     const plannedFiles = extractPlannedFilesFromPlan(extraction.plan);
     const plannedFilesJson = plannedFiles.length > 0 ? JSON.stringify(plannedFiles) : null;
     updatePlanStmt.run(extraction.plan, now, now, plannedFilesJson, taskId);
+    return;
+  }
+
+  if (extraction.kind === "plan") {
+    insertLogStmt.run(
+      taskId,
+      "[refinement] ignored placeholder-only refinement plan; refinement_plan unchanged",
+      context.stage,
+      context.agentId,
+    );
     return;
   }
 

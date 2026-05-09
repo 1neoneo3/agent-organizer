@@ -1221,6 +1221,47 @@ describe("extractRefinementPlanFromLogs", () => {
       assert.doesNotMatch(result.plan, /DRAFT v1/);
     }
   });
+
+  it("ignores placeholder-only plan blocks and returns the last usable plan", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tplaceholder" });
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      [
+        "---REFINEMENT PLAN---",
+        "## Implementation Plan",
+        "1. Add the regression test",
+        "---END REFINEMENT---",
+        "",
+        "---REFINEMENT PLAN---` ... `---END REFINEMENT---",
+      ].join("\n"),
+      2_000,
+    );
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "plan");
+    if (result.kind === "plan") {
+      assert.match(result.plan, /Add the regression test/);
+      assert.doesNotMatch(result.plan, /` \.\.\. `/);
+    }
+  });
+
+  it("returns empty when the only canonical block is a placeholder", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tonly-placeholder" });
+    insertStagedAssistantLog(
+      db,
+      task.id,
+      "refinement",
+      "---REFINEMENT PLAN---` ... `---END REFINEMENT---",
+      2_000,
+    );
+
+    const result = extractRefinementPlanFromLogs(db, task.id, 1_500);
+    assert.equal(result.kind, "empty");
+  });
 });
 
 describe("createPlanBlockTracker", () => {
