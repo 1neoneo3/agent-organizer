@@ -18,8 +18,10 @@ import {
   initReviewerSession,
   isHumanReviewRunTask,
   isReviewRunTask,
+  normalizeStderrForLoop,
   persistRefinementPlanExtraction,
   resolveCompletionStatusAfterPromotion,
+  shouldIgnoreStderrForLoopDetection,
   spawnAgent,
   spawnSecondaryReviewer,
   tryStartPendingSpawn,
@@ -170,6 +172,35 @@ describe("buildSpawnStartTaskUpdate", () => {
       completed_at: null,
       updated_at: 9_000,
     });
+  });
+});
+
+describe("stderr loop detection helpers", () => {
+  it("normalizes volatile stderr values before pattern counting", () => {
+    assert.equal(
+      normalizeStderrForLoop("2026-05-13T06:00:37.511409Z error at line 42 addr 0xabc:12:34"),
+      "TIMESTAMPZ error at line N addr 0xADDR:N:N",
+    );
+  });
+
+  it("ignores Codex loader and discoverable plugin warnings", () => {
+    const warnings = [
+      "2026-05-13T05:57:06.272971Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path must not contain '..'",
+      "2026-05-13T05:58:07.129116Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported",
+      "2026-05-13T06:00:02.708499Z  WARN codex_core::plugins::discoverable: failed to load discoverable plugin suggestion linear@openai-curated: path does not exist or is not a directory",
+      "2026-05-13T05:59:03.830639Z  WARN codex_core::shell_snapshot: Failed to delete shell snapshot",
+    ];
+
+    for (const warning of warnings) {
+      assert.equal(shouldIgnoreStderrForLoopDetection(warning), true);
+    }
+  });
+
+  it("does not ignore genuine runtime errors", () => {
+    assert.equal(
+      shouldIgnoreStderrForLoopDetection("Error: command failed with exit code 1"),
+      false,
+    );
   });
 });
 

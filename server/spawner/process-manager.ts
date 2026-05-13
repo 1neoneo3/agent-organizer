@@ -139,6 +139,25 @@ const reviewerSessions = new Map<string, ReviewerSession>();
 
 const MAX_CONTEXT_RESETS = 3;
 
+export function shouldIgnoreStderrForLoopDetection(text: string): boolean {
+  return (
+    /\bWARN\s+codex_core/.test(text)
+    || text.includes("codex_core_skills::loader")
+    || text.includes("codex_core_plugins::manifest")
+    || text.includes("codex_core::plugins::discoverable")
+    || text.includes("codex_core::shell_snapshot")
+  );
+}
+
+export function normalizeStderrForLoop(text: string): string {
+  return text
+    .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.\d]*/g, "TIMESTAMP")
+    .replace(/line \d+/gi, "line N")
+    .replace(/:\d+:\d+/g, ":N:N")
+    .replace(/0x[0-9a-fA-F]+/g, "0xADDR")
+    .trim();
+}
+
 /**
  * Create a reviewer-panel coordination session for a task. Must be
  * called BEFORE the primary reviewer's `spawnAgent` invocation so that
@@ -1231,15 +1250,6 @@ export async function spawnAgent(
   const stderrPatternCounts = new Map<string, number>();
   let loopDetected = false;
 
-  function normalizeStderrForLoop(text: string): string {
-    return text
-      .replace(/\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.\d]*/g, "TIMESTAMP")
-      .replace(/line \d+/gi, "line N")
-      .replace(/:\d+:\d+/g, ":N:N")
-      .replace(/0x[0-9a-fA-F]+/g, "0xADDR")
-      .trim();
-  }
-
   // Flag to stop processing stdout after an interactive prompt is detected and process killed
   let interactivePromptKilled = false;
   let killChunkAssistantMessages: string[] = [];
@@ -1617,7 +1627,7 @@ export async function spawnAgent(
     ws.broadcast("cli_output", { task_id: task.id, kind: "stderr", message: text }, { taskId: task.id });
 
     // Loop detection: normalize and count repeated error patterns
-    if (!loopDetected) {
+    if (!loopDetected && !shouldIgnoreStderrForLoopDetection(text)) {
       const normalized = normalizeStderrForLoop(text);
       if (normalized.length > 20) {
         const count = (stderrPatternCounts.get(normalized) ?? 0) + 1;
