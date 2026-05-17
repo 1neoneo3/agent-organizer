@@ -1,5 +1,7 @@
+import type { DatabaseSync } from "node:sqlite";
 import type { Task } from "../types/runtime.js";
 import { deriveTaskFields, type TaskDerivedFields } from "../domain/task-derived-fields.js";
+import { inferControllerParentForTask } from "../domain/controller-parent.js";
 
 export type TaskUpdateKey = Exclude<keyof Task, "id">;
 
@@ -78,12 +80,22 @@ export const TASK_SUMMARY_KEYS: readonly TaskUpdateKey[] = [
  */
 export function buildTaskSummaryUpdate(
   task: Pick<Task, "id"> & Partial<Task>,
+  options: { db?: DatabaseSync } = {},
 ): Partial<Task> & { id: string } & TaskDerivedFields {
   const payload = pickTaskUpdate(task, TASK_SUMMARY_KEYS) as
     Partial<Task> & { id: string } & Partial<TaskDerivedFields>;
+  const controllerParent = options.db
+    ? inferControllerParentForTask(options.db, {
+        controller_stage: task.controller_stage ?? null,
+        directive_id: task.directive_id ?? null,
+        parent_task_id: task.parent_task_id ?? null,
+        parent_task_number: task.parent_task_number ?? null,
+      })
+    : null;
   const derived = deriveTaskFields({
-    parent_task_id: task.parent_task_id ?? null,
-    parent_task_number: task.parent_task_number ?? null,
+    parent_task_id: task.parent_task_id ?? controllerParent?.id ?? null,
+    parent_task_number: task.parent_task_number ?? controllerParent?.task_number ?? null,
+    parent_task_title: task.parent_task_title ?? controllerParent?.title ?? null,
     split_index: task.split_index ?? null,
     split_total: task.split_total ?? null,
     description: task.description ?? null,

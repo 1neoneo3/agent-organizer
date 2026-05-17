@@ -52,7 +52,7 @@ export function createWebhooksRouter(ctx: RuntimeContext): Router {
         },
         broadcastTaskUpdate: (taskId) => {
           const task = ctx.db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Task | undefined;
-          if (task) ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+          if (task) ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task, { db: ctx.db }));
         },
         // Fire the auto-dispatcher immediately so downstream tasks that
         // were waiting on this one start without waiting for the next

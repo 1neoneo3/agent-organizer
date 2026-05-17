@@ -61,6 +61,10 @@ import {
 } from "../domain/task-settings.js";
 import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
 import { reconcileControllerDirective } from "../controller/orchestrator.js";
+import {
+  fetchControllerParentsByDirectiveIds,
+  inferControllerParentForTask,
+} from "../domain/controller-parent.js";
 
 // Accept overrides as a flat string→string record on create/update so
 // callers can seed stage toggles (default_enable_refinement, review_mode,
@@ -392,9 +396,9 @@ function splitRefinementPlanIntoTasks(
   }
 
   const updatedParent = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-  ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(updatedParent));
+  ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(updatedParent, { db }));
   for (const child of childTasks) {
-    ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(child));
+    ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(child, { db }));
   }
 
   const mode = options.controllerMode ? "Controller Mode task split" : "Task split";
@@ -609,13 +613,35 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
   ].join(", ");
 
   function attachDerivedFields(rows: unknown[]): unknown[] {
+    const controllerParentByDirectiveId = fetchControllerParentsByDirectiveIds(
+      db,
+      rows
+        .filter((raw) => {
+          const r = raw as {
+            controller_stage?: string | null;
+            directive_id?: string | null;
+            parent_task_id?: string | null;
+            parent_task_number?: string | null;
+            _desc_head?: string | null;
+          };
+          const parentNumber = r.parent_task_number ?? deriveParentTaskNumber(r._desc_head ?? null);
+          return r.controller_stage === "integrate" && typeof r.directive_id === "string" && !r.parent_task_id && !parentNumber;
+        })
+        .map((raw) => (raw as { directive_id: string }).directive_id),
+    );
     const parentNumberByRow = rows.map((raw) => {
       const r = raw as { parent_task_number?: string | null; _desc_head?: string | null };
-      return r.parent_task_number ?? deriveParentTaskNumber(r._desc_head ?? null);
+      const parentNumber = r.parent_task_number ?? deriveParentTaskNumber(r._desc_head ?? null);
+      if (parentNumber) return parentNumber;
+      const directiveId = (raw as { directive_id?: string | null }).directive_id;
+      return directiveId ? controllerParentByDirectiveId.get(directiveId)?.task_number ?? null : null;
     });
     const parentIds = Array.from(new Set(
       rows
-        .map((raw) => (raw as { parent_task_id?: string | null }).parent_task_id)
+        .map((raw) => {
+          const r = raw as { parent_task_id?: string | null; directive_id?: string | null };
+          return r.parent_task_id ?? (r.directive_id ? controllerParentByDirectiveId.get(r.directive_id)?.id ?? null : null);
+        })
         .filter((id): id is string => typeof id === "string" && id.length > 0),
     ));
     const parentNumbers = Array.from(new Set(
@@ -659,12 +685,14 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         has_refinement_plan?: number | boolean;
       } & Record<string, unknown>;
       const out: Record<string, unknown> = { ...r };
+      const directiveId = typeof r.directive_id === "string" ? r.directive_id : null;
+      const controllerParent = directiveId ? controllerParentByDirectiveId.get(directiveId) ?? null : null;
       const parentNumber = parentNumberByRow[index] ?? null;
-      const parentId = r.parent_task_id ?? (parentNumber ? parentIdByNumber.get(parentNumber) ?? null : null);
+      const parentId = r.parent_task_id ?? controllerParent?.id ?? (parentNumber ? parentIdByNumber.get(parentNumber) ?? null : null);
       out.parent_task_id = parentId;
       out.parent_task_number = parentNumber;
       out.parent_task_title = parentId
-        ? parentTitleById.get(parentId) ?? (parentNumber ? parentTitleByNumber.get(parentNumber) ?? null : null)
+        ? parentTitleById.get(parentId) ?? controllerParent?.title ?? (parentNumber ? parentTitleByNumber.get(parentNumber) ?? null : null)
         : parentNumber ? parentTitleByNumber.get(parentNumber) ?? null : null;
       out.split_index = r.split_index ?? deriveSplitIndex(r._desc_head ?? null);
       out.child_task_numbers = deriveChildTaskNumbers(r._result_head ?? null);
@@ -704,10 +732,22 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     const parentNumber = typeof task.parent_task_number === "string"
       ? task.parent_task_number
       : deriveParentTaskNumber(typeof task.description === "string" ? task.description : null);
+    const controllerStage = typeof task.controller_stage === "string"
+      ? task.controller_stage as Task["controller_stage"]
+      : null;
+    const controllerParent = parentNumber ? null : inferControllerParentForTask(db, {
+      controller_stage: controllerStage,
+      directive_id: typeof task.directive_id === "string" ? task.directive_id : null,
+      parent_task_id: typeof task.parent_task_id === "string" ? task.parent_task_id : null,
+      parent_task_number: typeof task.parent_task_number === "string" ? task.parent_task_number : null,
+    });
+    const resolvedParentNumber = parentNumber ?? controllerParent?.task_number ?? null;
     const parent = typeof task.parent_task_id === "string"
       ? db.prepare("SELECT id, title FROM tasks WHERE id = ?").get(task.parent_task_id) as { id: string; title: string } | undefined
-      : parentNumber
-        ? db.prepare("SELECT id, title FROM tasks WHERE task_number = ? ORDER BY CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END, created_at DESC LIMIT 1").get(parentNumber) as { id: string; title: string } | undefined
+      : controllerParent
+        ? controllerParent
+        : resolvedParentNumber
+        ? db.prepare("SELECT id, title FROM tasks WHERE task_number = ? ORDER BY CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END, created_at DESC LIMIT 1").get(resolvedParentNumber) as { id: string; title: string } | undefined
         : undefined;
     const splitIndex = typeof task.split_index === "number"
       ? task.split_index
@@ -716,7 +756,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     sendMeasuredJson(res, "/tasks/:id", t0, {
       ...task,
       parent_task_id: task.parent_task_id ?? parent?.id ?? null,
-      parent_task_number: parentNumber,
+      parent_task_number: resolvedParentNumber,
       parent_task_title: parentTitle,
       split_index: splitIndex,
     });
@@ -812,7 +852,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     logRepositoryAutoDetectWarning(db, id, project_path ?? null, primaryRepoUrl);
 
     let task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
-    ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+    ws.broadcast("task_update", buildTaskSummaryUpdate(task, { db }));
 
     task = autoDispatchTask(db, ws, id, {
       autoAssign: AUTO_ASSIGN_TASK_ON_CREATE,
@@ -937,7 +977,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     if (task.directive_id && task.controller_stage) {
       reconcileControllerDirective(ctx, task.directive_id);
     }
-    ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+    ws.broadcast("task_update", buildTaskSummaryUpdate(task, { db }));
 
     // Trigger auto-QA on manual status change to qa_testing
     if (updates.status === "qa_testing") {
@@ -1082,7 +1122,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     );
 
     const updated = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
-    ws.broadcast("task_update", buildTaskSummaryUpdate(updated));
+    ws.broadcast("task_update", buildTaskSummaryUpdate(updated, { db }));
     res.json({ task: updated, index, checked, total });
   });
 
@@ -1359,7 +1399,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     approvedTaskForSpawn = updatedTask;
-    ws.broadcast("task_update", buildTaskSummaryUpdate(updatedTask));
+    ws.broadcast("task_update", buildTaskSummaryUpdate(updatedTask, { db }));
 
     // After refinement approval → auto-dispatch to in_progress if agent is idle
     if (isRefinement && next === "in_progress" && approvedAgentForSpawn && approvedTaskForSpawn) {
@@ -1616,7 +1656,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         if (isRefinementRevision) {
           const freshTask = fetchTaskById(db, task.id);
           if (freshTask) {
-            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
+            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask, { db }));
           }
         }
         return res.json({ sent: true, restarted, feedback_path: feedbackPath });
@@ -1632,7 +1672,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         if (isRefinementRevision) {
           const freshTask = fetchTaskById(db, task.id);
           if (freshTask) {
-            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
+            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask, { db }));
           }
         }
         return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
@@ -1643,7 +1683,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         if (isRefinementRevision) {
           const freshTask = fetchTaskById(db, task.id);
           if (freshTask) {
-            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
+            ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask, { db }));
           }
         }
         return res.json({ sent: true, restarted: false, feedback_path: feedbackPath });
@@ -1695,7 +1735,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
 
     const freshTask = fetchTaskById(db, task.id) as Task;
     if (previousStatus === "refinement") {
-      ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask));
+      ws.broadcast("task_update", buildTaskSummaryUpdate(freshTask, { db }));
     }
     try {
       await taskSpawner(db, ws, agent, freshTask, { continuePrompt: content, previousStatus });

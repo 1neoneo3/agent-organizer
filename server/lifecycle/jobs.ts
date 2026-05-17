@@ -175,7 +175,7 @@ export function recoverInProgressOrphans(
         }
 
         const freshTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as Task | undefined;
-        ws.broadcast("task_update", freshTask ? buildTaskSummaryUpdate(freshTask) : { id: task.id, status: "refinement" as const, completed_at: now });
+        ws.broadcast("task_update", freshTask ? buildTaskSummaryUpdate(freshTask, { db }) : { id: task.id, status: "refinement" as const, completed_at: now });
         continue;
       }
     }

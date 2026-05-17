@@ -10,6 +10,7 @@ import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 import { getTaskRevisionUi } from "./task-revision-ui.js";
 import { getHumanReviewRunUi } from "./task-human-review-ui.js";
 import type { TaskCardBlockers, TaskBlockerRef } from "./task-blockers.js";
+import { formatControllerTaskTitle } from "./task-display.js";
 
 const SIZE_LABEL: Record<string, string> = {
   small: "S",
@@ -205,6 +206,7 @@ function TaskCardInner({ task, blockers, assignedAgent, activeAgent, idleAgents,
   const activeHumanReviewAgent =
     activeAgent && activeAgent.id !== task.assigned_agent_id ? activeAgent : null;
   const humanReviewRunUi = getHumanReviewRunUi(task, activeHumanReviewAgent);
+  const displayTitle = formatControllerTaskTitle(task);
 
   return (
     <div
@@ -238,7 +240,7 @@ function TaskCardInner({ task, blockers, assignedAgent, activeAgent, idleAgents,
             {task.task_number && (
               <span style={{ color: "var(--text-secondary)", marginRight: "4px", fontSize: "11px", fontWeight: 600, fontFamily: "var(--font-mono)" }}>{task.task_number}</span>
             )}
-            <span style={{ wordBreak: "break-word" }}>{task.title}</span>
+            <span style={{ wordBreak: "break-word" }}>{displayTitle}</span>
           </div>
           {/* Parent/child relationship + blocker display.
               parent_task_number / child_task_numbers are server-derived

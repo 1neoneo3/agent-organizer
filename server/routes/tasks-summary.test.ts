@@ -250,6 +250,53 @@ describe("GET /tasks summary", () => {
     assert.equal(child.parent_task_title, "Current T04");
   });
 
+  it("infers controller integrate parent metadata from sibling split tasks", async () => {
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO directives (
+        id, title, content, status, project_path, controller_mode, controller_stage,
+        created_at, updated_at
+      ) VALUES ('directive-integrate', 'Controller: #920 親のController作業', 'content', 'active', '/tmp/project', 1, 'integrate', ?, ?)`,
+    ).run(now + 1, now + 1);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number, created_at, updated_at
+      ) VALUES ('controller-parent', '親のController作業', 'parent', 'done', 'large', '#920', ?, ?)`,
+    ).run(now + 2, now + 2);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number,
+        parent_task_id, parent_task_number, directive_id, controller_stage,
+        created_at, updated_at
+      ) VALUES ('controller-child', '実装子タスク', 'child', 'done', 'small', '#921',
+        'controller-parent', '#920', 'directive-integrate', 'implement', ?, ?)`,
+    ).run(now + 3, now + 3);
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, status, task_size, task_number,
+        directive_id, controller_stage, created_at, updated_at
+      ) VALUES ('controller-integrate', 'Integrate controller results', 'integrate', 'inbox', 'small', 'T02',
+        'directive-integrate', 'integrate', ?, ?)`,
+    ).run(now + 4, now + 4);
+
+    const listRes = await fetch(`${baseUrl}/tasks?status=inbox`);
+    assert.equal(listRes.status, 200);
+    const tasks = (await listRes.json()) as Array<Record<string, unknown>>;
+    const integrate = tasks.find((task) => task.id === "controller-integrate");
+
+    assert.ok(integrate);
+    assert.equal(integrate.parent_task_id, "controller-parent");
+    assert.equal(integrate.parent_task_number, "#920");
+    assert.equal(integrate.parent_task_title, "親のController作業");
+
+    const detailRes = await fetch(`${baseUrl}/tasks/controller-integrate`);
+    assert.equal(detailRes.status, 200);
+    const detail = (await detailRes.json()) as Record<string, unknown>;
+    assert.equal(detail.parent_task_id, "controller-parent");
+    assert.equal(detail.parent_task_number, "#920");
+    assert.equal(detail.parent_task_title, "親のController作業");
+  });
+
   it("returns tasks ordered by priority DESC, created_at DESC", async () => {
     const res = await fetch(`${baseUrl}/tasks`);
     assert.equal(res.status, 200);

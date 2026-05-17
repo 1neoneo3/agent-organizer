@@ -11,6 +11,7 @@ import { buildAgentViewState } from "./agent-view.js";
 import { getResumeActionState } from "./task-resume.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
+import { formatControllerTaskTitle } from "./task-display.js";
 
 /**
  * Layout mode for the task detail view.
@@ -89,6 +90,12 @@ function formatDuration(ms: number | null): string {
   const totalDays = Math.floor(totalHours / 24);
   const remHour = totalHours % 24;
   return remHour === 0 ? `${totalDays}d` : `${totalDays}d ${remHour}h`;
+}
+
+function formatParentStep(task: Task): string | null {
+  if (typeof task.split_index !== "number") return null;
+  if (typeof task.split_total !== "number") return `Step ${task.split_index}`;
+  return `Step ${task.split_index}/${task.split_total}`;
 }
 
 /**
@@ -258,6 +265,9 @@ export function TaskDetailModal({
       : undefined;
   const status = STATUS_LABELS[task.status] ?? { label: task.status, color: "var(--status-inbox)" };
   const sizeLabel = SIZE_LABELS[task.task_size] ?? task.task_size;
+  const parentStep = formatParentStep(task);
+  const hasParentInfo = Boolean(task.parent_task_number);
+  const displayTitle = formatControllerTaskTitle(task);
 
   /**
    * Pin toggle: if we're already pinned to `side`, revert to modal.
@@ -293,7 +303,7 @@ export function TaskDetailModal({
                   {task.task_number}
                 </span>
               )}
-              {task.title}
+              {displayTitle}
             </h2>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
               <span style={{
@@ -352,6 +362,34 @@ export function TaskDetailModal({
                 </span>
               )}
             </div>
+            {hasParentInfo && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  marginTop: "10px",
+                  padding: "7px 8px",
+                  border: "1px solid color-mix(in srgb, var(--status-qa) 42%, var(--border-default))",
+                  borderRadius: "6px",
+                  background: "color-mix(in srgb, var(--status-qa) 12%, var(--bg-secondary))",
+                }}
+              >
+                <span style={{ color: "var(--status-qa)", fontSize: "11px", fontWeight: 700 }}>Parent Task</span>
+                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)", fontSize: "11px", fontWeight: 700 }}>
+                  {task.parent_task_number}
+                </span>
+                {task.parent_task_title && (
+                  <span style={{ color: "var(--text-primary)", fontSize: "12px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                    {task.parent_task_title}
+                  </span>
+                )}
+                {parentStep && (
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "var(--text-tertiary)" }}>{parentStep}</span>
+                )}
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
             {onLayoutModeChange && (
