@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { RuntimeContext, Directive, Task } from "../types/runtime.js";
 import { buildTaskSummaryUpdate } from "../ws/update-payloads.js";
+import {
+  findControllerParentTask,
+  formatIntegrateTaskTitle,
+} from "../domain/controller-parent.js";
 
 export const CONTROLLER_STAGES = ["implement", "verify", "integrate"] as const;
 export type ControllerStage = (typeof CONTROLLER_STAGES)[number];
@@ -105,6 +109,7 @@ function createIntegrateChild(ctx: RuntimeContext, directive: Directive, tasks: 
   const existing = tasks.find((task) => task.controller_stage === "integrate");
   if (existing) return existing;
 
+  const parent = findControllerParentTask(ctx.db, directive, tasks);
   const dependencyStage = tasks.some((task) => task.controller_stage === "verify") ? "verify" : "implement";
   const dependencyTaskNumbers = tasks
     .filter((task) => task.controller_stage === dependencyStage && task.task_number)
@@ -116,21 +121,24 @@ function createIntegrateChild(ctx: RuntimeContext, directive: Directive, tasks: 
     `INSERT INTO tasks (
        id, title, description, project_path, status, priority, task_size,
        directive_id, task_number, depends_on, controller_stage,
-       write_scope, planned_files, created_at, updated_at
-     ) VALUES (?, ?, ?, ?, 'inbox', 0, 'small', ?, ?, ?, 'integrate', NULL, NULL, ?, ?)`,
+       parent_task_id, parent_task_number, write_scope, planned_files,
+       created_at, updated_at
+     ) VALUES (?, ?, ?, ?, 'inbox', 0, 'small', ?, ?, ?, 'integrate', ?, ?, NULL, NULL, ?, ?)`,
   ).run(
     id,
-    "Integrate controller results",
+    formatIntegrateTaskTitle(parent),
     "Aggregate completed controller child results and produce the final directive result.",
     directive.project_path,
     directive.id,
     nextGeneratedTaskNumber(tasks),
     dependsOnJson,
+    parent?.id ?? null,
+    parent?.task_number ?? null,
     now,
     now,
   );
   const task = ctx.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as unknown as Task;
-  ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+  ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task, { db: ctx.db }));
   return task;
 }
 
@@ -366,7 +374,7 @@ export function splitDirectiveIntoControllerTasks(
   const updatedDirective = fetchDirective(ctx.db, directive.id)!;
   ctx.ws.broadcast("directive_update", updatedDirective);
   for (const task of createdTasks) {
-    ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+    ctx.ws.broadcast("task_update", buildTaskSummaryUpdate(task, { db: ctx.db }));
   }
 
   return { directive: updatedDirective, tasks: createdTasks };

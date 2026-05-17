@@ -105,7 +105,7 @@ export function syncGithubIssues(
         "UPDATE tasks SET title = ?, description = ?, project_path = ?, updated_at = ? WHERE id = ?"
       ).run(title, description, projectPath, now, existing.id);
       const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(existing.id) as Task | undefined;
-      if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+      if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task, { db }));
       updated++;
       continue;
     }
@@ -120,7 +120,7 @@ export function syncGithubIssues(
     ).run(id, title, description, projectPath, priorityFromLabels(issue), nextTaskNumber(db), externalId, now, now);
 
     const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
-    if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task));
+    if (task) ws.broadcast("task_update", buildTaskSummaryUpdate(task, { db }));
     autoDispatchTask(db, ws, id, {
       autoAssign,
       autoRun,

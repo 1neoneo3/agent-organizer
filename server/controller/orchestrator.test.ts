@@ -441,6 +441,43 @@ describe("controller orchestrator", () => {
     assert.match(completed?.aggregated_result ?? "", /Integrated result/);
   });
 
+  it("labels generated integrate child with parent task context", () => {
+    const db = createDb();
+    const ws = createWs();
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+         id, title, status, task_size, task_number, created_at, updated_at
+       ) VALUES ('parent-42', '親タスクの固定 egress 対応', 'done', 'medium', '#42', ?, ?)`,
+    ).run(now, now);
+    const directive = insertDirective(db, {
+      title: "Controller: #42 親タスクの固定 egress 対応",
+    });
+    splitDirectiveIntoControllerTasks(createCtx(db, ws), directive, [
+      { task_number: "T01", title: "Implement A", controller_stage: "implement" },
+      { task_number: "T02", title: "Verify", controller_stage: "verify", depends_on: ["T01"] },
+    ]);
+    db.prepare(
+      "UPDATE tasks SET parent_task_id = 'parent-42', parent_task_number = '#42', status = 'done' WHERE directive_id = ?",
+    ).run(directive.id);
+
+    reconcileControllerDirective(createCtx(db, ws), directive.id);
+    reconcileControllerDirective(createCtx(db, ws), directive.id);
+
+    const integrate = db.prepare(
+      "SELECT title, parent_task_id, parent_task_number, depends_on FROM tasks WHERE directive_id = ? AND controller_stage = 'integrate'",
+    ).get(directive.id) as {
+      title: string;
+      parent_task_id: string | null;
+      parent_task_number: string | null;
+      depends_on: string | null;
+    };
+    assert.equal(integrate.title, "Integrate controller results: #42 親タスクの固定 egress 対応");
+    assert.equal(integrate.parent_task_id, "parent-42");
+    assert.equal(integrate.parent_task_number, "#42");
+    assert.equal(integrate.depends_on, '["T02"]');
+  });
+
   it("creates an integrate child after implement completes when verify stage is absent", () => {
     const db = createDb();
     const ws = createWs();
