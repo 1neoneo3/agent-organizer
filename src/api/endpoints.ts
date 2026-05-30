@@ -8,8 +8,20 @@ export const updateAgent = (id: string, data: Partial<Agent>) => api.put<Agent>(
 export const deleteAgent = (id: string) => api.delete<{ deleted: boolean }>(`/agents/${id}`);
 
 // Tasks
-export const fetchTasks = (status?: string) =>
-  api.get<TaskSummary[]>(status ? `/tasks?status=${status}` : "/tasks");
+export interface FetchTasksParams {
+  status?: string;
+  search?: string;
+}
+
+export const fetchTasks = (params?: FetchTasksParams | string) => {
+  const normalized = typeof params === "string" ? { status: params } : params;
+  const query = new URLSearchParams();
+  if (normalized?.status) query.set("status", normalized.status);
+  const search = normalized?.search?.trim();
+  if (search) query.set("search", search);
+  const suffix = query.toString();
+  return api.get<TaskSummary[]>(suffix ? `/tasks?${suffix}` : "/tasks");
+};
 export const fetchTask = (id: string) => api.get<Task>(`/tasks/${id}`);
 export const createTask = (data: Partial<Task>) => api.post<Task>("/tasks", data);
 export const updateTask = (id: string, data: Partial<Task>) => api.put<Task>(`/tasks/${id}`, data);

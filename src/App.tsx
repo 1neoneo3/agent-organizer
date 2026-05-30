@@ -9,7 +9,22 @@ import { useAppData } from "./hooks/useAppData.js";
 import { useTheme } from "./hooks/useTheme.js";
 
 function AppRoutes() {
-  const { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on, subscribeTask } = useAppData();
+  const {
+    agents,
+    tasks,
+    directives,
+    settings,
+    cliStatus,
+    interactivePrompts,
+    taskSearchQuery,
+    setTaskSearchQuery,
+    taskSearchLoading,
+    loading,
+    connected,
+    reload,
+    on,
+    subscribeTask,
+  } = useAppData();
   const { theme, toggleTheme, flavor, setFlavor, palette, setPalette, palettes, timeOfDay, toggleTimeOfDay, flavors } = useTheme();
   const navigate = useNavigate();
 
@@ -45,7 +60,19 @@ function AppRoutes() {
         }>
           <Route
             index
-            element={<TaskBoard tasks={tasks} agents={agents} interactivePrompts={interactivePrompts} onReload={reload} onSubscribeTask={subscribeTask} onWsEvent={on} />}
+            element={
+              <TaskBoard
+                tasks={tasks}
+                agents={agents}
+                interactivePrompts={interactivePrompts}
+                taskSearchQuery={taskSearchQuery}
+                taskSearchLoading={taskSearchLoading}
+                onTaskSearchChange={setTaskSearchQuery}
+                onReload={reload}
+                onSubscribeTask={subscribeTask}
+                onWsEvent={on}
+              />
+            }
           />
           <Route
             path="directives"

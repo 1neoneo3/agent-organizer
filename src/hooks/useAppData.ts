@@ -11,15 +11,18 @@ export function useAppData() {
   const [settings, setSettings] = useState<Settings>({});
   const [cliStatus, setCliStatus] = useState<CliStatus>({});
   const [interactivePrompts, setInteractivePrompts] = useState<Map<string, InteractivePrompt>>(new Map());
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [taskSearchLoading, setTaskSearchLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const { connected, on, subscribeTask } = useWebSocket();
   const hasInitialized = useRef(false);
 
   const reload = useCallback(async () => {
+    setTaskSearchLoading(taskSearchQuery.trim().length > 0);
     try {
       const [a, t, d, s, c, ip] = await Promise.all([
         fetchAgents(),
-        fetchTasks(),
+        fetchTasks({ search: taskSearchQuery }),
         fetchDirectives(),
         fetchSettings(),
         fetchCliStatus(),
@@ -40,8 +43,9 @@ export function useAppData() {
       console.error("Failed to load data:", err);
     } finally {
       setLoading(false);
+      setTaskSearchLoading(false);
     }
-  }, []);
+  }, [taskSearchQuery]);
 
   useEffect(() => {
     void reload();
@@ -65,9 +69,11 @@ export function useAppData() {
         setTasks((prev) => {
           const result = mergeTaskUpdate(prev, update);
           if (!result.found) {
-            void fetchTasks()
+            void fetchTasks({ search: taskSearchQuery })
               .then((fresh) => setTasks(fresh))
               .catch(() => void reload());
+          } else if (taskSearchQuery.trim().length > 0) {
+            void reload();
           }
           return result.next;
         });
@@ -118,7 +124,7 @@ export function useAppData() {
       }),
     ];
     return () => unsubs.forEach((fn) => fn());
-  }, [on, reload]);
+  }, [on, reload, taskSearchQuery]);
 
-  return { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on, subscribeTask };
+  return { agents, tasks, directives, settings, cliStatus, interactivePrompts, taskSearchQuery, setTaskSearchQuery, taskSearchLoading, loading, connected, reload, on, subscribeTask };
 }
