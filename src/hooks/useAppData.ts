@@ -3,6 +3,7 @@ import { fetchAgent, fetchAgents, fetchTask, fetchTasks, fetchSettings, fetchCli
 import { useWebSocket } from "./useWebSocket.js";
 import type { Agent, TaskSummary, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
 import { mergeAgentUpdate, mergeDirectiveUpdate, mergeTaskUpdate } from "./state-updates.js";
+import { createLatestRequestTracker } from "./latest-request.js";
 
 export function useAppData() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -11,22 +12,50 @@ export function useAppData() {
   const [settings, setSettings] = useState<Settings>({});
   const [cliStatus, setCliStatus] = useState<CliStatus>({});
   const [interactivePrompts, setInteractivePrompts] = useState<Map<string, InteractivePrompt>>(new Map());
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
+  const [taskSearchLoading, setTaskSearchLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const { connected, on, subscribeTask } = useWebSocket();
   const hasInitialized = useRef(false);
+  const reloadRequests = useRef(createLatestRequestTracker());
+  const taskListRequests = useRef(createLatestRequestTracker());
+  const reloadRef = useRef<() => Promise<void>>(async () => {});
+
+  const refreshTasksForSearch = useCallback(async (searchQuery: string) => {
+    const requestId = taskListRequests.current.start();
+    try {
+      const fresh = await fetchTasks({ search: searchQuery });
+      if (taskListRequests.current.isCurrent(requestId)) {
+        setTasks(fresh);
+      }
+    } catch (err) {
+      if (taskListRequests.current.isCurrent(requestId)) {
+        throw err;
+      }
+    }
+  }, []);
 
   const reload = useCallback(async () => {
+    const reloadRequestId = reloadRequests.current.start();
+    const taskListRequestId = taskListRequests.current.start();
+    const searchQuery = taskSearchQuery;
+    setTaskSearchLoading(searchQuery.trim().length > 0);
     try {
       const [a, t, d, s, c, ip] = await Promise.all([
         fetchAgents(),
-        fetchTasks(),
+        fetchTasks({ search: searchQuery }),
         fetchDirectives(),
         fetchSettings(),
         fetchCliStatus(),
         fetchInteractivePrompts(),
       ]);
+      if (!reloadRequests.current.isCurrent(reloadRequestId)) {
+        return;
+      }
       setAgents(a);
-      setTasks(t);
+      if (taskListRequests.current.isCurrent(taskListRequestId)) {
+        setTasks(t);
+      }
       setDirectives(d);
       setSettings(s);
       setCliStatus(c);
@@ -37,11 +66,20 @@ export function useAppData() {
       }
       setInteractivePrompts(promptMap);
     } catch (err) {
-      console.error("Failed to load data:", err);
+      if (reloadRequests.current.isCurrent(reloadRequestId)) {
+        console.error("Failed to load data:", err);
+      }
     } finally {
-      setLoading(false);
+      if (reloadRequests.current.isCurrent(reloadRequestId)) {
+        setLoading(false);
+        setTaskSearchLoading(false);
+      }
     }
-  }, []);
+  }, [taskSearchQuery]);
+
+  useEffect(() => {
+    reloadRef.current = reload;
+  }, [reload]);
 
   useEffect(() => {
     void reload();
@@ -50,12 +88,12 @@ export function useAppData() {
   // Re-fetch all data when WebSocket reconnects (recovers missed events including interactive prompts)
   useEffect(() => {
     if (connected && hasInitialized.current) {
-      void reload();
+      void reloadRef.current();
     }
     if (connected) {
       hasInitialized.current = true;
     }
-  }, [connected, reload]);
+  }, [connected]);
 
   // WebSocket updates
   useEffect(() => {
@@ -65,8 +103,10 @@ export function useAppData() {
         setTasks((prev) => {
           const result = mergeTaskUpdate(prev, update);
           if (!result.found) {
-            void fetchTasks()
-              .then((fresh) => setTasks(fresh))
+            void refreshTasksForSearch(taskSearchQuery)
+              .catch(() => void reload());
+          } else if (taskSearchQuery.trim().length > 0) {
+            void refreshTasksForSearch(taskSearchQuery)
               .catch(() => void reload());
           }
           return result.next;
@@ -118,7 +158,7 @@ export function useAppData() {
       }),
     ];
     return () => unsubs.forEach((fn) => fn());
-  }, [on, reload]);
+  }, [on, refreshTasksForSearch, reload, taskSearchQuery]);
 
-  return { agents, tasks, directives, settings, cliStatus, interactivePrompts, loading, connected, reload, on, subscribeTask };
+  return { agents, tasks, directives, settings, cliStatus, interactivePrompts, taskSearchQuery, setTaskSearchQuery, taskSearchLoading, loading, connected, reload, on, subscribeTask };
 }

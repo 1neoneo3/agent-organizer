@@ -703,12 +703,61 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     });
   }
 
+  function firstQueryValue(value: unknown): string | undefined {
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) {
+      const first = value.find((entry): entry is string => typeof entry === "string");
+      return first;
+    }
+    return undefined;
+  }
+
+  function escapeLikePattern(value: string): string {
+    return value.replace(/[\\%_]/g, (match) => `\\${match}`);
+  }
+
+  const TASK_SEARCH_COLS = [
+    "title",
+    "task_number",
+    "project_path",
+    "description",
+    "result",
+    "refinement_plan",
+    "planned_files",
+    "pr_url",
+    "repository_url",
+    "repository_urls",
+    "pr_urls",
+    "merged_pr_urls",
+    "external_source",
+    "external_id",
+    "review_branch",
+    "review_commit_sha",
+  ];
+
   router.get("/tasks", (req, res) => {
     const t0 = performance.now();
-    const status = req.query.status as string | undefined;
-    const rows = status
-      ? db.prepare(`SELECT ${TASK_SUMMARY_COLS}, ${TASK_DERIVED_COLS} FROM tasks WHERE status = ? ORDER BY priority DESC, created_at DESC`).all(status)
-      : db.prepare(`SELECT ${TASK_SUMMARY_COLS}, ${TASK_DERIVED_COLS} FROM tasks ORDER BY priority DESC, created_at DESC`).all();
+    const status = firstQueryValue(req.query.status);
+    const rawSearch = firstQueryValue(req.query.search) ?? firstQueryValue(req.query.q);
+    const search = rawSearch?.trim().slice(0, 200) ?? "";
+    const whereParts: string[] = [];
+    const params: string[] = [];
+
+    if (status) {
+      whereParts.push("status = ?");
+      params.push(status);
+    }
+
+    if (search) {
+      const likeParam = `%${escapeLikePattern(search)}%`;
+      whereParts.push(`(${TASK_SEARCH_COLS.map((col) => `COALESCE(${col}, '') LIKE ? ESCAPE '\\'`).join(" OR ")})`);
+      params.push(...TASK_SEARCH_COLS.map(() => likeParam));
+    }
+
+    const whereSql = whereParts.length > 0 ? ` WHERE ${whereParts.join(" AND ")}` : "";
+    const rows = db
+      .prepare(`SELECT ${TASK_SUMMARY_COLS}, ${TASK_DERIVED_COLS} FROM tasks${whereSql} ORDER BY priority DESC, created_at DESC`)
+      .all(...params);
     const tasks = attachDerivedFields(rows);
     sendMeasuredJson(res, "/tasks", t0, tasks);
   });

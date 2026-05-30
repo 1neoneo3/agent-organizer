@@ -18,6 +18,9 @@ interface TaskBoardProps {
   tasks: TaskSummary[];
   agents: Agent[];
   interactivePrompts: Map<string, InteractivePrompt>;
+  taskSearchQuery: string;
+  taskSearchLoading: boolean;
+  onTaskSearchChange: (query: string) => void;
   onReload: () => void;
   onSubscribeTask?: (taskId: string) => () => void;
   onWsEvent: (type: WSEventType, fn: (payload: unknown) => void) => () => void;
@@ -127,13 +130,24 @@ function loadDetailLayoutMode(): TaskDetailLayoutMode {
   return "modal";
 }
 
-export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubscribeTask, onWsEvent }: TaskBoardProps) {
+export function TaskBoard({
+  tasks,
+  agents,
+  interactivePrompts,
+  taskSearchQuery,
+  taskSearchLoading,
+  onTaskSearchChange,
+  onReload,
+  onSubscribeTask,
+  onWsEvent,
+}: TaskBoardProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [detailTask, setDetailTask] = useState<Task | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [logTaskId, setLogTaskId] = useState<string | null>(null);
+  const [taskSearchInput, setTaskSearchInput] = useState(taskSearchQuery);
   const [detailLayoutMode, setDetailLayoutModeState] = useState<TaskDetailLayoutMode>(loadDetailLayoutMode);
 
   // Persist the pin state so it survives reloads. Modal is the default and
@@ -149,6 +163,19 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   const { play } = useSfx();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  useEffect(() => {
+    setTaskSearchInput(taskSearchQuery);
+  }, [taskSearchQuery]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      if (taskSearchInput !== taskSearchQuery) {
+        onTaskSearchChange(taskSearchInput);
+      }
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [onTaskSearchChange, taskSearchInput, taskSearchQuery]);
 
   useEffect(() => {
     const taskParam = searchParams.get("task");
@@ -293,6 +320,8 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
   const pinnedPanelVisible = selectedTaskId !== null && detailLayoutMode !== "modal";
   const boardPaddingLeft = pinnedPanelVisible && detailLayoutMode === "pinned-left" ? `${PINNED_PANEL_WIDTH_PX}px` : undefined;
   const boardPaddingRight = pinnedPanelVisible && detailLayoutMode === "pinned-right" ? `${PINNED_PANEL_WIDTH_PX}px` : undefined;
+  const trimmedTaskSearchInput = taskSearchInput.trim();
+  const isTaskSearchActive = taskSearchQuery.trim().length > 0;
 
   return (
     <div
@@ -305,6 +334,80 @@ export function TaskBoard({ tasks, agents, interactivePrompts, onReload, onSubsc
         transition: "padding 150ms ease",
       }}
     >
+
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+        padding: "12px",
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "8px",
+      }}>
+        <div style={{ position: "relative", flex: "1 1 320px" }}>
+          <input
+            type="search"
+            value={taskSearchInput}
+            onChange={(event) => setTaskSearchInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setTaskSearchInput("");
+                onTaskSearchChange("");
+              }
+            }}
+            placeholder="Search past tasks..."
+            aria-label="Search past tasks"
+            style={{
+              width: "100%",
+              padding: "9px 36px 9px 12px",
+              borderRadius: "6px",
+              border: "1px solid var(--border-default)",
+              background: "var(--bg-primary)",
+              color: "var(--text-primary)",
+              fontSize: "13px",
+              outline: "none",
+            }}
+          />
+          {trimmedTaskSearchInput.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setTaskSearchInput("");
+                onTaskSearchChange("");
+              }}
+              aria-label="Clear task search"
+              title="Clear search"
+              style={{
+                position: "absolute",
+                right: "8px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                border: "none",
+                background: "transparent",
+                color: "var(--text-tertiary)",
+                cursor: "pointer",
+                fontSize: "16px",
+                lineHeight: 1,
+                padding: "2px",
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+        <span style={{
+          whiteSpace: "nowrap",
+          fontSize: "12px",
+          color: "var(--text-secondary)",
+        }}>
+          {taskSearchLoading
+            ? "Searching..."
+            : isTaskSearchActive
+              ? `${tasks.length} matching task${tasks.length === 1 ? "" : "s"}`
+              : `${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
+        </span>
+      </div>
+
 
       {/* Empty state */}
       {agents.length === 0 && tasks.length === 0 && !showAddAgent && (

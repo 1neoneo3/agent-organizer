@@ -322,6 +322,73 @@ describe("GET /tasks summary", () => {
     assert.equal(tasks[0]!.status, "done");
   });
 
+  it("searches summary tasks by keyword across task metadata and heavy fields", async () => {
+    db.prepare(
+      `UPDATE tasks
+       SET title = 'Fix onboarding search affordance',
+           description = 'Includes a hidden nebula-keyword in the task body',
+           result = 'Implemented search result polish',
+           refinement_plan = 'Plan mentions quick task discovery',
+           planned_files = ?,
+           project_path = '/workspace/nebula-project',
+           pr_url = 'https://github.com/org/repo/pull/123',
+           repository_url = 'https://github.com/org/repo',
+           external_source = 'linear',
+           external_id = 'AO-123'
+       WHERE id = 'task-a'`,
+    ).run(JSON.stringify([{ path: "src/search.ts", action: "modify" }]));
+
+    const titleRes = await fetch(`${baseUrl}/tasks?search=${encodeURIComponent("onboarding search")}`);
+    assert.equal(titleRes.status, 200);
+    const titleTasks = (await titleRes.json()) as Array<{ id: string }>;
+    assert.deepEqual(titleTasks.map((task) => task.id), ["task-a"]);
+
+    const descriptionRes = await fetch(`${baseUrl}/tasks?search=${encodeURIComponent("nebula-keyword")}`);
+    assert.equal(descriptionRes.status, 200);
+    const descriptionTasks = (await descriptionRes.json()) as Array<{ id: string }>;
+    assert.deepEqual(descriptionTasks.map((task) => task.id), ["task-a"]);
+
+    const plannedFilesRes = await fetch(`${baseUrl}/tasks?q=${encodeURIComponent("src/search.ts")}`);
+    assert.equal(plannedFilesRes.status, 200);
+    const plannedFilesTasks = (await plannedFilesRes.json()) as Array<{ id: string }>;
+    assert.deepEqual(plannedFilesTasks.map((task) => task.id), ["task-a"]);
+  });
+
+  it("combines status and keyword task filters", async () => {
+    db.prepare(
+      `UPDATE tasks
+       SET title = 'Shared search keyword active'
+       WHERE id = 'task-a'`,
+    ).run();
+    db.prepare(
+      `UPDATE tasks
+       SET title = 'Shared search keyword complete'
+       WHERE id = 'task-c'`,
+    ).run();
+
+    const res = await fetch(`${baseUrl}/tasks?status=done&search=${encodeURIComponent("Shared search keyword")}`);
+    assert.equal(res.status, 200);
+    const tasks = (await res.json()) as Array<{ id: string; status: string }>;
+
+    assert.deepEqual(tasks.map((task) => task.id), ["task-c"]);
+    assert.equal(tasks[0]!.status, "done");
+  });
+
+  it("treats LIKE wildcard characters in task search as literal text", async () => {
+    db.prepare(
+      `UPDATE tasks SET title = 'Literal 100%_done marker' WHERE id = 'task-a'`,
+    ).run();
+    db.prepare(
+      `UPDATE tasks SET title = 'Literal 100XYdone marker' WHERE id = 'task-b'`,
+    ).run();
+
+    const res = await fetch(`${baseUrl}/tasks?search=${encodeURIComponent("100%_")}`);
+    assert.equal(res.status, 200);
+    const tasks = (await res.json()) as Array<{ id: string }>;
+
+    assert.deepEqual(tasks.map((task) => task.id), ["task-a"]);
+  });
+
   it("returns empty array when no tasks match the status filter", async () => {
     const res = await fetch(`${baseUrl}/tasks?status=cancelled`);
     assert.equal(res.status, 200);
