@@ -19,6 +19,7 @@ export function useAppData() {
   const hasInitialized = useRef(false);
   const reloadRequests = useRef(createLatestRequestTracker());
   const taskListRequests = useRef(createLatestRequestTracker());
+  const reloadRef = useRef<() => Promise<void>>(async () => {});
 
   const refreshTasksForSearch = useCallback(async (searchQuery: string) => {
     const requestId = taskListRequests.current.start();
@@ -77,18 +78,22 @@ export function useAppData() {
   }, [taskSearchQuery]);
 
   useEffect(() => {
+    reloadRef.current = reload;
+  }, [reload]);
+
+  useEffect(() => {
     void reload();
   }, [reload]);
 
   // Re-fetch all data when WebSocket reconnects (recovers missed events including interactive prompts)
   useEffect(() => {
     if (connected && hasInitialized.current) {
-      void reload();
+      void reloadRef.current();
     }
     if (connected) {
       hasInitialized.current = true;
     }
-  }, [connected, reload]);
+  }, [connected]);
 
   // WebSocket updates
   useEffect(() => {
