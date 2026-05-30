@@ -3,6 +3,7 @@ import { fetchAgent, fetchAgents, fetchTask, fetchTasks, fetchSettings, fetchCli
 import { useWebSocket } from "./useWebSocket.js";
 import type { Agent, TaskSummary, Directive, Settings, CliStatus, InteractivePrompt } from "../types/index.js";
 import { mergeAgentUpdate, mergeDirectiveUpdate, mergeTaskUpdate } from "./state-updates.js";
+import { createLatestRequestTracker } from "./latest-request.js";
 
 export function useAppData() {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -16,20 +17,44 @@ export function useAppData() {
   const [loading, setLoading] = useState(true);
   const { connected, on, subscribeTask } = useWebSocket();
   const hasInitialized = useRef(false);
+  const reloadRequests = useRef(createLatestRequestTracker());
+  const taskListRequests = useRef(createLatestRequestTracker());
+
+  const refreshTasksForSearch = useCallback(async (searchQuery: string) => {
+    const requestId = taskListRequests.current.start();
+    try {
+      const fresh = await fetchTasks({ search: searchQuery });
+      if (taskListRequests.current.isCurrent(requestId)) {
+        setTasks(fresh);
+      }
+    } catch (err) {
+      if (taskListRequests.current.isCurrent(requestId)) {
+        throw err;
+      }
+    }
+  }, []);
 
   const reload = useCallback(async () => {
-    setTaskSearchLoading(taskSearchQuery.trim().length > 0);
+    const reloadRequestId = reloadRequests.current.start();
+    const taskListRequestId = taskListRequests.current.start();
+    const searchQuery = taskSearchQuery;
+    setTaskSearchLoading(searchQuery.trim().length > 0);
     try {
       const [a, t, d, s, c, ip] = await Promise.all([
         fetchAgents(),
-        fetchTasks({ search: taskSearchQuery }),
+        fetchTasks({ search: searchQuery }),
         fetchDirectives(),
         fetchSettings(),
         fetchCliStatus(),
         fetchInteractivePrompts(),
       ]);
+      if (!reloadRequests.current.isCurrent(reloadRequestId)) {
+        return;
+      }
       setAgents(a);
-      setTasks(t);
+      if (taskListRequests.current.isCurrent(taskListRequestId)) {
+        setTasks(t);
+      }
       setDirectives(d);
       setSettings(s);
       setCliStatus(c);
@@ -40,10 +65,14 @@ export function useAppData() {
       }
       setInteractivePrompts(promptMap);
     } catch (err) {
-      console.error("Failed to load data:", err);
+      if (reloadRequests.current.isCurrent(reloadRequestId)) {
+        console.error("Failed to load data:", err);
+      }
     } finally {
-      setLoading(false);
-      setTaskSearchLoading(false);
+      if (reloadRequests.current.isCurrent(reloadRequestId)) {
+        setLoading(false);
+        setTaskSearchLoading(false);
+      }
     }
   }, [taskSearchQuery]);
 
@@ -69,11 +98,11 @@ export function useAppData() {
         setTasks((prev) => {
           const result = mergeTaskUpdate(prev, update);
           if (!result.found) {
-            void fetchTasks({ search: taskSearchQuery })
-              .then((fresh) => setTasks(fresh))
+            void refreshTasksForSearch(taskSearchQuery)
               .catch(() => void reload());
           } else if (taskSearchQuery.trim().length > 0) {
-            void reload();
+            void refreshTasksForSearch(taskSearchQuery)
+              .catch(() => void reload());
           }
           return result.next;
         });
@@ -124,7 +153,7 @@ export function useAppData() {
       }),
     ];
     return () => unsubs.forEach((fn) => fn());
-  }, [on, reload, taskSearchQuery]);
+  }, [on, refreshTasksForSearch, reload, taskSearchQuery]);
 
   return { agents, tasks, directives, settings, cliStatus, interactivePrompts, taskSearchQuery, setTaskSearchQuery, taskSearchLoading, loading, connected, reload, on, subscribeTask };
 }
