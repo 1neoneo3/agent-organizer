@@ -56,6 +56,10 @@ function AppRoutes() {
             timeOfDay={timeOfDay}
             toggleTimeOfDay={toggleTimeOfDay}
             flavors={flavors}
+            taskSearchQuery={taskSearchQuery}
+            taskSearchLoading={taskSearchLoading}
+            onTaskSearchChange={setTaskSearchQuery}
+            taskCount={tasks.length}
           />
         }>
           <Route
@@ -65,9 +69,6 @@ function AppRoutes() {
                 tasks={tasks}
                 agents={agents}
                 interactivePrompts={interactivePrompts}
-                taskSearchQuery={taskSearchQuery}
-                taskSearchLoading={taskSearchLoading}
-                onTaskSearchChange={setTaskSearchQuery}
                 onReload={reload}
                 onSubscribeTask={subscribeTask}
                 onWsEvent={on}

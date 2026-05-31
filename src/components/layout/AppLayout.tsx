@@ -16,6 +16,10 @@ interface AppLayoutProps {
   timeOfDay: TimeOfDay;
   toggleTimeOfDay: () => void;
   flavors: readonly Flavor[];
+  taskSearchQuery: string;
+  taskSearchLoading: boolean;
+  onTaskSearchChange: (query: string) => void;
+  taskCount: number;
 }
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "ao:sidebar-collapsed";
@@ -28,7 +32,23 @@ function loadCollapsed(): boolean {
   return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
 }
 
-export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, palette, setPalette, palettes, timeOfDay, toggleTimeOfDay, flavors }: AppLayoutProps) {
+export function AppLayout({
+  connected,
+  theme,
+  toggleTheme,
+  flavor,
+  setFlavor,
+  palette,
+  setPalette,
+  palettes,
+  timeOfDay,
+  toggleTimeOfDay,
+  flavors,
+  taskSearchQuery,
+  taskSearchLoading,
+  onTaskSearchChange,
+  taskCount,
+}: AppLayoutProps) {
   const [collapsed, setCollapsedState] = useState<boolean>(loadCollapsed);
   const [nearLeftEdge, setNearLeftEdge] = useState(false);
   const [revealButtonFocused, setRevealButtonFocused] = useState(false);
@@ -85,6 +105,10 @@ export function AppLayout({ connected, theme, toggleTheme, flavor, setFlavor, pa
           timeOfDay={timeOfDay}
           toggleTimeOfDay={toggleTimeOfDay}
           flavors={flavors}
+          taskSearchQuery={taskSearchQuery}
+          taskSearchLoading={taskSearchLoading}
+          onTaskSearchChange={onTaskSearchChange}
+          taskCount={taskCount}
           onCollapse={() => setCollapsed(true)}
         />
       )}

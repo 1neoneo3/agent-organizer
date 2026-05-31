@@ -1,6 +1,6 @@
-import { NavLink } from "react-router";
-import type { ReactNode } from "react";
-import { CheckSquare, Compass, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose } from "lucide-react";
+import { NavLink, useLocation } from "react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { CheckSquare, Compass, Users, Settings, Sun, Moon, Plus, UserPlus, PanelLeftClose, Search, X } from "lucide-react";
 import type { Flavor, Palette, PaletteMeta, TimeOfDay } from "../../hooks/useTheme.js";
 
 type NavItem = { to: string; label: string; icon: ReactNode };
@@ -24,10 +24,57 @@ interface SidebarProps {
   timeOfDay: TimeOfDay;
   toggleTimeOfDay: () => void;
   flavors: readonly Flavor[];
+  taskSearchQuery: string;
+  taskSearchLoading: boolean;
+  onTaskSearchChange: (query: string) => void;
+  taskCount: number;
   onCollapse?: () => void;
 }
 
-export function Sidebar({ connected, palette, setPalette, palettes, timeOfDay, toggleTimeOfDay, onCollapse }: SidebarProps) {
+export function Sidebar({
+  connected,
+  palette,
+  setPalette,
+  palettes,
+  timeOfDay,
+  toggleTimeOfDay,
+  taskSearchQuery,
+  taskSearchLoading,
+  onTaskSearchChange,
+  taskCount,
+  onCollapse,
+}: SidebarProps) {
+  const location = useLocation();
+  const [taskSearchInput, setTaskSearchInput] = useState(taskSearchQuery);
+  const showTaskSearch = location.pathname === "/";
+  const trimmedTaskSearchInput = taskSearchInput.trim();
+  const isTaskSearchActive = taskSearchQuery.trim().length > 0;
+
+  useEffect(() => {
+    setTaskSearchInput(taskSearchQuery);
+  }, [taskSearchQuery]);
+
+  useEffect(() => {
+    if (!showTaskSearch && taskSearchQuery.trim().length > 0) {
+      onTaskSearchChange("");
+    }
+  }, [onTaskSearchChange, showTaskSearch, taskSearchQuery]);
+
+  useEffect(() => {
+    if (!showTaskSearch) return;
+    const timeout = window.setTimeout(() => {
+      if (taskSearchInput !== taskSearchQuery) {
+        onTaskSearchChange(taskSearchInput);
+      }
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [onTaskSearchChange, showTaskSearch, taskSearchInput, taskSearchQuery]);
+
+  const clearTaskSearch = () => {
+    setTaskSearchInput("");
+    onTaskSearchChange("");
+  };
+
   return (
     <aside
       className="flex flex-col h-full"
@@ -116,6 +163,91 @@ export function Sidebar({ connected, palette, setPalette, palettes, timeOfDay, t
           {connected ? "Connected" : "Disconnected"}
         </span>
       </div>
+
+      {showTaskSearch && (
+        <div style={{ padding: "0 12px 12px" }}>
+          <div style={{
+            position: "relative",
+          }}>
+            <Search
+              size={14}
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: "10px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                color: "var(--text-tertiary)",
+                pointerEvents: "none",
+              }}
+            />
+            <input
+              type="search"
+              value={taskSearchInput}
+              onChange={(event) => setTaskSearchInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  clearTaskSearch();
+                }
+              }}
+              placeholder="Search tasks..."
+              aria-label="Search tasks"
+              style={{
+                width: "100%",
+                height: "34px",
+                padding: "8px 34px 8px 30px",
+                borderRadius: "8px",
+                border: "1px solid var(--border-default)",
+                background: "var(--bg-primary)",
+                color: "var(--text-primary)",
+                fontSize: "12px",
+                outline: "none",
+              }}
+            />
+            {trimmedTaskSearchInput.length > 0 && (
+              <button
+                type="button"
+                onClick={clearTaskSearch}
+                aria-label="Clear task search"
+                title="Clear search"
+                style={{
+                  position: "absolute",
+                  right: "7px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: "20px",
+                  height: "20px",
+                  padding: 0,
+                  border: "none",
+                  borderRadius: "4px",
+                  background: "transparent",
+                  color: "var(--text-tertiary)",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; }}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          <div style={{
+            minHeight: "16px",
+            marginTop: "6px",
+            fontSize: "11px",
+            color: "var(--text-tertiary)",
+          }}>
+            {taskSearchLoading
+              ? "Searching..."
+              : isTaskSearchActive
+                ? `${taskCount} match${taskCount === 1 ? "" : "es"}`
+                : `${taskCount} tasks`}
+          </div>
+        </div>
+      )}
 
       {/* Navigation */}
       <nav style={{ flex: 1, padding: "0 8px", display: "flex", flexDirection: "column", gap: "1px" }}>
