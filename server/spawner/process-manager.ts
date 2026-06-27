@@ -612,9 +612,10 @@ export function persistRefinementPlanExtraction(
   );
 
   if (extraction.kind === "plan" && isUsableRefinementPlan(extraction.plan)) {
-    const plannedFiles = extractPlannedFilesFromPlan(extraction.plan);
+    const plan = applyAutoPlanReview(db, taskId, extraction.plan);
+    const plannedFiles = extractPlannedFilesFromPlan(plan);
     const plannedFilesJson = plannedFiles.length > 0 ? JSON.stringify(plannedFiles) : null;
-    updatePlanStmt.run(extraction.plan, now, now, plannedFilesJson, taskId);
+    updatePlanStmt.run(plan, now, now, plannedFilesJson, taskId);
     return;
   }
 
@@ -669,6 +670,275 @@ export function persistRefinementPlanExtraction(
     context.agentId,
   );
   stampRevisionCompletedStmt.run(now, taskId);
+}
+
+const AUTO_PLAN_REVIEW_START = "<!-- AO_AUTO_PLAN_REVIEW_START -->";
+const AUTO_PLAN_REVIEW_END = "<!-- AO_AUTO_PLAN_REVIEW_END -->";
+
+function hasAnyHeading(plan: string, headings: string[]): boolean {
+  return headings.some((heading) => new RegExp(`^##\\s+${heading}\\s*$`, "im").test(plan));
+}
+
+function applyAutoPlanReview(db: DatabaseSync, taskId: string, plan: string): string {
+  if (getSetting(db, "auto_plan_review", taskId) !== "true") return plan;
+
+  const task = db
+    .prepare("SELECT title, description FROM tasks WHERE id = ?")
+    .get(taskId) as { title: string; description: string | null } | undefined;
+  const taskTitle = task?.title?.trim() || taskId;
+  const taskDescription = task?.description?.trim() || "No task description was provided.";
+  const reviewContext = { taskTitle, taskDescription };
+  const cleaned = stripAutoPlanReviewArtifacts(plan);
+  const initialChecks = reviewPlanQuality(cleaned, reviewContext);
+  const repaired = initialChecks.every((check) => check.ok)
+    ? cleaned
+    : repairPlanForFailedChecks(cleaned, initialChecks, reviewContext);
+  const finalChecks = reviewPlanQuality(repaired, reviewContext);
+  const initialPassed = initialChecks.filter((check) => check.ok).length;
+  const finalPassed = finalChecks.filter((check) => check.ok).length;
+  const wasReplanned = repaired !== cleaned;
+
+  const reviewBlock = buildAutoPlanReviewBlock({
+    initialPassed,
+    finalPassed,
+    total: finalChecks.length,
+    initialChecks,
+    checks: finalChecks,
+    wasReplanned,
+  });
+
+  return repaired.replace(/\n?---END REFINEMENT---\s*$/, `\n\n${reviewBlock}\n\n---END REFINEMENT---`);
+}
+
+interface AutoPlanCheck {
+  key: string;
+  label: string;
+  ok: boolean;
+  comment: string;
+}
+
+function reviewPlanStructure(plan: string): AutoPlanCheck[] {
+  return [
+    {
+      key: "requirements",
+      label: "requirements / 要求",
+      ok: hasAnyHeading(plan, ["Business Requirements", "要求"]),
+      comment: "ユーザー視点の要求が明示されていること。",
+    },
+    {
+      key: "technical_requirements",
+      label: "technical requirements / 技術要件",
+      ok: hasAnyHeading(plan, ["Technical Requirements", "技術要件"]),
+      comment: "実装方針・制約が明示されていること。",
+    },
+    {
+      key: "acceptance_criteria",
+      label: "acceptance criteria / 受け入れ条件",
+      ok: hasAnyHeading(plan, ["Acceptance Criteria", "受け入れ条件"]) && /- \[[ xX]\]\s+\S/.test(plan),
+      comment: "チェック可能な完了条件が含まれていること。",
+    },
+    {
+      key: "files_to_modify",
+      label: "files to modify / 変更対象ファイル",
+      ok: hasAnyHeading(plan, ["Files to Modify", "変更対象ファイル"]) && /`[^`\n]+`/.test(plan),
+      comment: "変更対象ファイルが具体的に示されていること。",
+    },
+    {
+      key: "implementation_plan",
+      label: "implementation plan / 実装計画",
+      ok: hasAnyHeading(plan, ["Implementation Plan", "実装計画"]) && /^\s*\d+\.\s+\S/m.test(plan),
+      comment: "番号付きの実装手順が含まれていること。",
+    },
+    {
+      key: "risks",
+      label: "risks / リスク",
+      ok: hasAnyHeading(plan, ["Risks & Considerations", "リスク・注意点"]),
+      comment: "リスクや回帰確認観点が明示されていること。",
+    },
+  ];
+}
+
+function reviewPlanQuality(
+  plan: string,
+  context: { taskTitle: string; taskDescription: string },
+): AutoPlanCheck[] {
+  return [
+    ...reviewPlanStructure(plan),
+    ...reviewPlanSemantics(plan, context),
+  ];
+}
+
+function extractMeaningfulTerms(text: string): string[] {
+  const stopWords = new Set([
+    "the", "and", "for", "with", "that", "this", "from", "into", "make", "able",
+    "する", "できる", "よう", "こと", "ため", "これ", "それ", "ある", "ない",
+  ]);
+  return [...new Set(
+    text
+      .toLowerCase()
+      .match(/[a-z0-9_/-]{4,}|[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]{2,}/gu)
+      ?.filter((term) => !stopWords.has(term)) ?? [],
+  )].slice(0, 16);
+}
+
+function hasTaskTermOverlap(plan: string, context: { taskTitle: string; taskDescription: string }): boolean {
+  const terms = extractMeaningfulTerms(`${context.taskTitle}\n${context.taskDescription}`);
+  if (terms.length === 0) return true;
+  const normalizedPlan = plan.toLowerCase();
+  return terms.some((term) => normalizedPlan.includes(term));
+}
+
+function reviewPlanSemantics(
+  plan: string,
+  context: { taskTitle: string; taskDescription: string },
+): AutoPlanCheck[] {
+  return [
+    {
+      key: "semantic_task_alignment",
+      label: "semantic task alignment / タスク意図との整合",
+      ok: hasTaskTermOverlap(plan, context),
+      comment: "計画がタスク名・説明に含まれる主要な意図へ明示的に対応していること。",
+    },
+    {
+      key: "semantic_actionability",
+      label: "semantic actionability / 実行可能性",
+      ok:
+        /(?:inspect|identify|implement|update|add|verify|run|confirm|調査|特定|実装|更新|追加|検証|確認)/i.test(plan) &&
+        /^\s*\d+\.\s+\S/m.test(plan),
+      comment: "実装者が次に取る具体的な行動が読み取れること。",
+    },
+    {
+      key: "semantic_verification",
+      label: "semantic verification / 検証方針",
+      ok: /(?:test|typecheck|type check|build|lint|verify|verification|テスト|型チェック|ビルド|検証)/i.test(plan),
+      comment: "完了判定に必要な検証・テスト方針が意味として含まれていること。",
+    },
+    {
+      key: "semantic_scope_control",
+      label: "semantic scope control / スコープ制御",
+      ok: /(?:out of scope|scope|unchanged|regression|preserve|スコープ|変更しない|維持|回帰)/i.test(plan),
+      comment: "やらないこと・維持すべきこと・回帰リスクが明確であること。",
+    },
+  ];
+}
+
+function stripAutoPlanReviewArtifacts(plan: string): string {
+  return plan
+    .replace(new RegExp(`\\n?${AUTO_PLAN_REVIEW_START}[\\s\\S]*?${AUTO_PLAN_REVIEW_END}\\n?`, "g"), "\n")
+    .replace(/\n?## Auto Plan Improvements[\s\S]*?(?=\n## Auto Plan Review|\n---END REFINEMENT---)/g, "\n")
+    .trimEnd();
+}
+
+function repairPlanForFailedChecks(
+  plan: string,
+  checks: AutoPlanCheck[],
+  context: { taskTitle: string; taskDescription: string },
+): string {
+  const failed = checks.filter((check) => !check.ok);
+  if (failed.length === 0) return plan;
+
+  const lines = [
+    "## Auto Plan Improvements",
+    "",
+    "The automatic plan review found missing or incomplete plan sections, so Agent Organizer amended the plan before saving it.",
+    "",
+  ];
+
+  for (const check of failed) {
+    switch (check.key) {
+      case "requirements":
+        lines.push("## Business Requirements", "");
+        lines.push(`- Deliver the requested outcome for: ${context.taskTitle}`);
+        lines.push(`- Preserve the original intent: ${context.taskDescription.slice(0, 240)}`);
+        lines.push("- Keep existing user-visible behavior unchanged unless the task explicitly asks for a change.", "");
+        break;
+      case "technical_requirements":
+        lines.push("## Technical Requirements", "");
+        lines.push("- Reuse existing project patterns and nearby implementations before introducing new abstractions.");
+        lines.push("- Keep the implementation scoped to files required by this task.");
+        lines.push("- Add or update focused tests for the changed behavior where the repository already has a test pattern.", "");
+        break;
+      case "acceptance_criteria":
+        lines.push("## Acceptance Criteria", "");
+        lines.push("- [ ] The requested behavior is implemented and visible to the user/operator.");
+        lines.push("- [ ] Existing behavior outside the requested scope remains unchanged.");
+        lines.push("- [ ] Relevant tests, type checks, or build checks pass.", "");
+        break;
+      case "files_to_modify":
+        lines.push("## Files to Modify", "");
+        lines.push("- `TBD after implementation scan` — identify the concrete files during implementation before editing.", "");
+        break;
+      case "implementation_plan":
+        lines.push("## Implementation Plan", "");
+        lines.push("1. Inspect the existing code paths related to the task and confirm the exact files to edit.");
+        lines.push("2. Implement the smallest scoped change that satisfies the requirements.");
+        lines.push("3. Run focused verification and update the plan/checklist if implementation discovery changes the scope.", "");
+        break;
+      case "risks":
+        lines.push("## Risks & Considerations", "");
+        lines.push("- Auto-added sections may be less specific than a human-authored plan; the implementer must refine them during execution.");
+        lines.push("- Verify regressions around adjacent workflow/settings behavior before marking the task complete.", "");
+        break;
+      case "semantic_task_alignment":
+        lines.push("## Semantic Task Alignment", "");
+        lines.push(`- The plan must directly satisfy: ${context.taskTitle}`);
+        lines.push(`- Task intent to preserve while implementing: ${context.taskDescription.slice(0, 240)}`);
+        lines.push("- Re-check the final implementation against this intent before handing off to review.", "");
+        break;
+      case "semantic_actionability":
+        lines.push("## Actionability Improvements", "");
+        lines.push("1. Inspect the relevant code paths and identify the smallest safe change.");
+        lines.push("2. Update the implementation and any connected UI/API/state handling needed for the task intent.");
+        lines.push("3. Confirm the behavior end-to-end from the operator or user perspective.", "");
+        break;
+      case "semantic_verification":
+        lines.push("## Verification Plan", "");
+        lines.push("- Run the repository's focused tests for touched code where available.");
+        lines.push("- Run typecheck/build/lint commands when they exist in the project.");
+        lines.push("- Manually verify the user-visible workflow described by the task.", "");
+        break;
+      case "semantic_scope_control":
+        lines.push("## Scope Guardrails", "");
+        lines.push("- Preserve unrelated behavior and avoid opportunistic refactors.");
+        lines.push("- Keep changes limited to the task intent unless implementation discovery exposes a required dependency.");
+        lines.push("- Check adjacent regression risks before marking the task ready.", "");
+        break;
+    }
+  }
+
+  return plan.replace(/\n?---END REFINEMENT---\s*$/, `\n\n${lines.join("\n").trimEnd()}\n\n---END REFINEMENT---`);
+}
+
+function buildAutoPlanReviewBlock(options: {
+  initialPassed: number;
+  finalPassed: number;
+  total: number;
+  initialChecks: AutoPlanCheck[];
+  checks: AutoPlanCheck[];
+  wasReplanned: boolean;
+}): string {
+  const finalPass = options.finalPassed === options.total;
+  const initiallyFailedKeys = new Set(
+    options.initialChecks.filter((check) => !check.ok).map((check) => check.key),
+  );
+  return [
+    AUTO_PLAN_REVIEW_START,
+    "## Auto Plan Review",
+    "",
+    `Initial Status: ${options.initialPassed === options.total ? "PASS" : "NEEDS_IMPROVEMENT"} (${options.initialPassed}/${options.total})`,
+    `Replan Status: ${options.wasReplanned ? "AUTO_REPLANNED" : "UNCHANGED"}`,
+    `Final Status: ${finalPass ? "PASS" : "NEEDS_IMPROVEMENT"} (${options.finalPassed}/${options.total})`,
+    "",
+    "### Review Comments",
+    ...options.checks.map((check) => `- ${check.ok ? "✅" : "⚠️"} ${check.label}: ${check.comment}`),
+    "",
+    "### Improvement Status",
+    ...options.checks.map((check) => {
+      const status = !check.ok ? "Open" : initiallyFailedKeys.has(check.key) ? "Auto-fixed" : "Done";
+      return `- ${status} — ${check.label}`;
+    }),
+    AUTO_PLAN_REVIEW_END,
+  ].join("\n");
 }
 
 export function extractGithubArtifactsFromLogs(

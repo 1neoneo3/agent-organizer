@@ -290,6 +290,21 @@ export function SettingsPanel({ settings, onReload }: SettingsPanelProps) {
             </label>
 
             <label style={{ display: "block" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Auto Plan Review</span>
+              <select
+                style={inputStyle}
+                value={local.auto_plan_review ?? "false"}
+                onChange={(e) => update("auto_plan_review", e.target.value)}
+              >
+                <option value="false">Disabled</option>
+                <option value="true">Enabled</option>
+              </select>
+              <p style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px" }}>
+                When enabled, each completed plan gets an automatic structural and semantic review block. Missing or under-specified plan sections are amended before save, and review comments plus replan/improvement status are shown together with the plan.
+              </p>
+            </label>
+
+            <label style={{ display: "block" }}>
               <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)" }}>Test Generation Stage</span>
               <select
                 style={inputStyle}

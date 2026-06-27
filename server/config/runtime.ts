@@ -150,6 +150,7 @@ export const SETTINGS_DEFAULTS = {
   default_enable_test_generation: "true" as const, // "true" | "false"
   default_enable_refinement: "false" as const, // "true" | "false" — run planning agent before implementation
   refinement_auto_approve: "false" as const, // "true" | "false" — skip human approval of refinement plan
+  auto_plan_review: "false" as const, // "true" | "false" — append automatic review comments/status to completed plans
   // Optional quality-gate stages. Defaults match the fallback branch of
   // `resolveWorkflowToggle` (stage-pipeline.ts) and the `?? "false"`
   // defaults of the Settings UI, so seeding these keys does not alter
