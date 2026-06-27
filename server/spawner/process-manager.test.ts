@@ -1519,6 +1519,121 @@ describe("persistRefinementPlanExtraction", () => {
     assert.deepEqual(JSON.parse(row.planned_files ?? "[]"), ["src/revised.ts"]);
   });
 
+  it("appends auto plan review comments and improvement status when enabled", () => {
+    const db = createDb();
+    const task = insertTask(db, {
+      id: "tauto-plan-review",
+      status: "refinement",
+      title: "設定レビューコメントを表示する",
+      description: "設定画面でレビューコメントと改善状況を表示し、回帰テストで確認する。",
+    });
+    db.prepare("INSERT INTO settings (key, value) VALUES ('auto_plan_review', 'true')").run();
+
+    const plan = [
+      "---REFINEMENT PLAN---",
+      "## 要求",
+      "- 設定レビューコメントを表示する",
+      "- 設定から有効化できる",
+      "",
+      "## 技術要件",
+      "- 既存の設定保存を使う",
+      "",
+      "## 受け入れ条件",
+      "- [ ] レビューコメントが見える",
+      "",
+      "## 変更対象ファイル",
+      "- `src/components/settings/SettingsPanel.tsx` — 設定を追加",
+      "",
+      "## 実装計画",
+      "1. 設定画面にレビューコメントと改善状況を表示する項目を追加する",
+      "2. 回帰テストと型チェックで検証する",
+      "",
+      "## リスク・注意点",
+      "- 表示が長くなりすぎないこと",
+      "- 既存設定の回帰テストを行い、関連しない動作を維持する",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const row = db.prepare("SELECT refinement_plan FROM tasks WHERE id = ?").get(task.id) as {
+      refinement_plan: string | null;
+    };
+
+    assert.match(row.refinement_plan ?? "", /## Auto Plan Review/);
+    assert.match(row.refinement_plan ?? "", /Initial Status: PASS \(10\/10\)/);
+    assert.match(row.refinement_plan ?? "", /Replan Status: UNCHANGED/);
+    assert.match(row.refinement_plan ?? "", /Final Status: PASS \(10\/10\)/);
+    assert.match(row.refinement_plan ?? "", /### Review Comments/);
+    assert.match(row.refinement_plan ?? "", /### Improvement Status/);
+  });
+
+  it("auto-replans incomplete plans before saving when auto plan review is enabled", () => {
+    const db = createDb();
+    const task = insertTask(db, {
+      id: "tauto-plan-repair",
+      status: "refinement",
+      title: "Repair incomplete plan",
+      description: "Make failed plan reviews produce an amended implementation plan.",
+    });
+    db.prepare("INSERT INTO settings (key, value) VALUES ('auto_plan_review', 'true')").run();
+    const incompletePlan = [
+      "---REFINEMENT PLAN---",
+      "## Background",
+      "- Needs planning.",
+      "---END REFINEMENT---",
+    ].join("\n");
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan: incompletePlan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const row = db.prepare("SELECT refinement_plan FROM tasks WHERE id = ?").get(task.id) as {
+      refinement_plan: string | null;
+    };
+
+    assert.match(row.refinement_plan ?? "", /## Auto Plan Improvements/);
+    assert.match(row.refinement_plan ?? "", /## Business Requirements/);
+    assert.match(row.refinement_plan ?? "", /## Technical Requirements/);
+    assert.match(row.refinement_plan ?? "", /## Acceptance Criteria/);
+    assert.match(row.refinement_plan ?? "", /## Files to Modify/);
+    assert.match(row.refinement_plan ?? "", /## Implementation Plan/);
+    assert.match(row.refinement_plan ?? "", /## Risks & Considerations/);
+    assert.match(row.refinement_plan ?? "", /Initial Status: NEEDS_IMPROVEMENT \(1\/10\)/);
+    assert.match(row.refinement_plan ?? "", /Replan Status: AUTO_REPLANNED/);
+    assert.match(row.refinement_plan ?? "", /Final Status: PASS \(10\/10\)/);
+    assert.match(row.refinement_plan ?? "", /Auto-fixed — requirements \/ 要求/);
+    assert.match(row.refinement_plan ?? "", /Auto-fixed — semantic verification \/ 検証方針/);
+    assert.match(row.refinement_plan ?? "", /Done — semantic task alignment \/ タスク意図との整合/);
+  });
+
+  it("does not append auto plan review when disabled", () => {
+    const db = createDb();
+    const task = insertTask(db, { id: "tno-auto-plan-review", status: "refinement" });
+    const plan = "---REFINEMENT PLAN---\n## Requirements\n- X\n---END REFINEMENT---";
+
+    persistRefinementPlanExtraction(
+      db,
+      task.id,
+      { kind: "plan", plan },
+      { stage: "refinement", agentId: "agent-1", now: 5_000 },
+    );
+
+    const row = db.prepare("SELECT refinement_plan FROM tasks WHERE id = ?").get(task.id) as {
+      refinement_plan: string | null;
+    };
+
+    assert.equal(row.refinement_plan, plan);
+  });
+
   it("preserves an existing plan when a revision run has only markerless fallback output", () => {
     const db = createDb();
     const task = insertTask(db, { id: "tfallback-revise", status: "refinement" });

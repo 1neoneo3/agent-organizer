@@ -120,6 +120,7 @@ export const TASK_OVERRIDABLE_KEYS: readonly string[] = [
   "default_enable_test_generation",
   "default_enable_refinement",
   "refinement_auto_approve",
+  "auto_plan_review",
   "refinement_as_pr",
   "default_enable_human_review",
   "auto_human_review",
