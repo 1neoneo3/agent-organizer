@@ -6,6 +6,12 @@ export type HumanReviewAutoMarker =
   | "AWAITING_HUMAN"
   | "EXHAUSTED";
 
+export type HumanReviewAutoStatus =
+  | "started"
+  | "cleared"
+  | "awaiting_human"
+  | "exhausted";
+
 const MARKER_PREFIX = "[HUMAN_REVIEW_AUTO:";
 
 export function formatHumanReviewAutoMarker(marker: HumanReviewAutoMarker): string {
@@ -35,4 +41,18 @@ export function getLatestHumanReviewAutoMarker(
     .get(taskId) as { message: string } | undefined;
   const match = row?.message.match(/^\[HUMAN_REVIEW_AUTO:(STARTED|CLEARED|AWAITING_HUMAN|EXHAUSTED)\]/);
   return (match?.[1] as HumanReviewAutoMarker | undefined) ?? null;
+}
+
+export function markerToHumanReviewAutoStatus(
+  marker: HumanReviewAutoMarker | null,
+): HumanReviewAutoStatus | null {
+  if (!marker) return null;
+  return marker.toLowerCase() as HumanReviewAutoStatus;
+}
+
+export function getLatestHumanReviewAutoStatus(
+  db: DatabaseSync,
+  taskId: string,
+): HumanReviewAutoStatus | null {
+  return markerToHumanReviewAutoStatus(getLatestHumanReviewAutoMarker(db, taskId));
 }

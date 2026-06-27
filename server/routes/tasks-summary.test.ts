@@ -27,7 +27,8 @@ const SUMMARY_COLUMNS = [
   "pr_url", "external_source", "external_id", "review_branch",
   "review_commit_sha", "review_sync_status", "review_sync_error",
   "repository_url", "settings_overrides", "started_at", "completed_at",
-  "last_heartbeat_at", "auto_respawn_count", "created_at", "updated_at",
+  "last_heartbeat_at", "auto_respawn_count", "human_review_auto_status",
+  "created_at", "updated_at",
 ] as const;
 
 function createDb(): DatabaseSync {
@@ -141,6 +142,24 @@ describe("GET /tasks summary", () => {
         `GET /tasks should include '${col}', but it was missing`,
       );
     }
+  });
+
+  it("includes the latest auto human review status in the list response", async () => {
+    const now = Date.now();
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'system', ?, 'human_review', ?)",
+    ).run("task-a", "[HUMAN_REVIEW_AUTO:STARTED] agent=\"Reviewer\"", now);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'system', ?, 'human_review', ?)",
+    ).run("task-a", "[HUMAN_REVIEW_AUTO:EXHAUSTED] iterations reached max", now + 1);
+
+    const res = await fetch(`${baseUrl}/tasks`);
+    assert.equal(res.status, 200);
+    const tasks = (await res.json()) as Array<Record<string, unknown>>;
+    const task = tasks.find((entry) => entry.id === "task-a");
+
+    assert.ok(task);
+    assert.equal(task.human_review_auto_status, "exhausted");
   });
 
   it("returns explicit split parent metadata with the parent title", async () => {

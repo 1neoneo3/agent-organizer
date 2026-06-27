@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Task } from "../types/runtime.js";
 import { deriveTaskFields, type TaskDerivedFields } from "../domain/task-derived-fields.js";
 import { inferControllerParentForTask } from "../domain/controller-parent.js";
+import { getLatestHumanReviewAutoStatus } from "../domain/human-review-auto.js";
 
 export type TaskUpdateKey = Exclude<keyof Task, "id">;
 
@@ -63,6 +64,7 @@ export const TASK_SUMMARY_KEYS: readonly TaskUpdateKey[] = [
   "completed_at",
   "last_heartbeat_at",
   "auto_respawn_count",
+  "human_review_auto_status",
   "created_at",
   "updated_at",
 ] as const;
@@ -109,5 +111,7 @@ export function buildTaskSummaryUpdate(
   payload.split_total = derived.split_total;
   payload.child_task_numbers = derived.child_task_numbers;
   payload.has_refinement_plan = derived.has_refinement_plan;
+  payload.human_review_auto_status = task.human_review_auto_status ??
+    (options.db ? getLatestHumanReviewAutoStatus(options.db, task.id) : null);
   return payload as Partial<Task> & { id: string } & TaskDerivedFields;
 }

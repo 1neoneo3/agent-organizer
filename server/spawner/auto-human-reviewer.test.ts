@@ -220,6 +220,18 @@ describe("triggerAutoHumanReview", () => {
       undefined,
       "must keep the task in human_review when the cap is reached",
     );
+
+    const updatedAt = db.inserts.find((i) =>
+      i.sql.includes("UPDATE tasks SET updated_at"),
+    );
+    assert.ok(updatedAt, "must update the task timestamp so clients refresh");
+
+    const taskUpdate = ws.sent.find((entry) => entry.type === "task_update");
+    assert.deepEqual(taskUpdate?.payload, {
+      id: "t3",
+      updated_at: updatedAt.args[0],
+      human_review_auto_status: "exhausted",
+    });
   });
 
   it("skips when no idle reviewer is available", async () => {

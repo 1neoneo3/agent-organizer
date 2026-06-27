@@ -59,7 +59,7 @@ import {
   TASK_OVERRIDABLE_KEYS,
   validateOverridesPatch,
 } from "../domain/task-settings.js";
-import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
+import { getLatestHumanReviewAutoStatus, recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
 import { reconcileControllerDirective } from "../controller/orchestrator.js";
 import {
   fetchControllerParentsByDirectiveIds,
@@ -697,6 +697,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       out.split_index = r.split_index ?? deriveSplitIndex(r._desc_head ?? null);
       out.child_task_numbers = deriveChildTaskNumbers(r._result_head ?? null);
       out.has_refinement_plan = Boolean(r.has_refinement_plan);
+      out.human_review_auto_status = typeof r.id === "string"
+        ? getLatestHumanReviewAutoStatus(db, r.id)
+        : null;
       delete out._desc_head;
       delete out._result_head;
       return out;
@@ -808,6 +811,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       parent_task_number: resolvedParentNumber,
       parent_task_title: parentTitle,
       split_index: splitIndex,
+      human_review_auto_status: getLatestHumanReviewAutoStatus(db, task.id as string),
     });
   });
 
