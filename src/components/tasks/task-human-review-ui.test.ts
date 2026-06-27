@@ -34,13 +34,16 @@ describe("getHumanReviewRunUi", () => {
 
 describe("getHumanReviewLimitUi", () => {
   it("returns null when auto human review has not exhausted its budget", () => {
-    assert.equal(getHumanReviewLimitUi({ human_review_auto_status: "started" }), null);
-    assert.equal(getHumanReviewLimitUi({ human_review_auto_status: null }), null);
-    assert.equal(getHumanReviewLimitUi({}), null);
+    assert.equal(getHumanReviewLimitUi({ status: "human_review", human_review_auto_status: "started" }), null);
+    assert.equal(getHumanReviewLimitUi({ status: "human_review", human_review_auto_status: null }), null);
+  });
+
+  it("returns null after the task has left human_review", () => {
+    assert.equal(getHumanReviewLimitUi({ status: "done", human_review_auto_status: "exhausted" }), null);
   });
 
   it("returns badge and banner copy when the auto human review limit is reached", () => {
-    const ui = getHumanReviewLimitUi({ human_review_auto_status: "exhausted" });
+    const ui = getHumanReviewLimitUi({ status: "human_review", human_review_auto_status: "exhausted" });
 
     assert.deepEqual(ui, {
       badge: {

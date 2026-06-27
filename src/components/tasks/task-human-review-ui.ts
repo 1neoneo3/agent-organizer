@@ -49,9 +49,9 @@ export function getHumanReviewRunUi(
 }
 
 export function getHumanReviewLimitUi(
-  task: Pick<TaskSummary, "human_review_auto_status">,
+  task: Pick<TaskSummary, "status" | "human_review_auto_status">,
 ): HumanReviewLimitUi | null {
-  if (task.human_review_auto_status !== "exhausted") {
+  if (task.status !== "human_review" || task.human_review_auto_status !== "exhausted") {
     return null;
   }
 
