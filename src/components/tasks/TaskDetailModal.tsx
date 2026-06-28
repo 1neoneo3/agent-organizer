@@ -12,6 +12,7 @@ import { getResumeActionState } from "./task-resume.js";
 import { formatModelName } from "../../formatModelName.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 import { formatControllerTaskTitle } from "./task-display.js";
+import { getHumanReviewLimitUi } from "./task-human-review-ui.js";
 
 /**
  * Layout mode for the task detail view.
@@ -219,6 +220,7 @@ export function TaskDetailModal({
   const [selectedAgentId, setSelectedAgentId] = useState(idleAgents[0]?.id ?? "");
   const roleLabel = agent ? agentView.roleLabelById.get(agent.id) ?? null : null;
   const feedbackUi = getTaskFeedbackUi(task.status);
+  const humanReviewLimitUi = getHumanReviewLimitUi(task);
 
   const handleSendFeedback = async () => {
     if (!feedbackText.trim()) return;
@@ -359,6 +361,18 @@ export function TaskDetailModal({
                   background: "var(--accent-subtle)",
                 }}>
                   {roleLabel}
+                </span>
+              )}
+              {humanReviewLimitUi && (
+                <span style={{
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: humanReviewLimitUi.badge.color,
+                  background: humanReviewLimitUi.badge.background,
+                }}>
+                  {humanReviewLimitUi.badge.label}
                 </span>
               )}
             </div>
@@ -518,6 +532,25 @@ export function TaskDetailModal({
             </div>
           ) : (
             <>
+          {humanReviewLimitUi && (
+            <div
+              style={{
+                marginBottom: "16px",
+                padding: "10px 12px",
+                borderRadius: "8px",
+                border: "1px solid color-mix(in srgb, var(--status-human-review) 42%, var(--border-default))",
+                background: "color-mix(in srgb, var(--status-human-review) 10%, var(--bg-secondary))",
+              }}
+            >
+              <div style={{ fontSize: "12px", fontWeight: 700, color: humanReviewLimitUi.banner.color, marginBottom: "4px" }}>
+                {humanReviewLimitUi.banner.label}
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--text-secondary)", lineHeight: 1.45 }}>
+                {humanReviewLimitUi.banner.description}
+              </div>
+            </div>
+          )}
+
           {/* Repositories (supports multiple) */}
           {(() => {
             const urls = parseJsonArray(task.repository_urls) ?? (task.repository_url ? [task.repository_url] : []);

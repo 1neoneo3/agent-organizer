@@ -16,6 +16,7 @@ export interface Agent {
 }
 
 export type TaskStatus = "inbox" | "refinement" | "in_progress" | "test_generation" | "qa_testing" | "pr_review" | "human_review" | "done" | "cancelled";
+export type HumanReviewAutoStatus = "started" | "cleared" | "awaiting_human" | "exhausted";
 
 export interface TaskSummary {
   id: string;
@@ -51,6 +52,7 @@ export interface TaskSummary {
   completed_at: number | null;
   last_heartbeat_at: number | null;
   auto_respawn_count: number;
+  human_review_auto_status?: HumanReviewAutoStatus | null;
   created_at: number;
   updated_at: number;
 

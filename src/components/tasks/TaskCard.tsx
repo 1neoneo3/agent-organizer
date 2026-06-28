@@ -8,7 +8,7 @@ import { formatModelName } from "../../formatModelName.js";
 import { getResumeActionState } from "./task-resume.js";
 import { getTaskFeedbackUi } from "./task-feedback-ui.js";
 import { getTaskRevisionUi } from "./task-revision-ui.js";
-import { getHumanReviewRunUi } from "./task-human-review-ui.js";
+import { getHumanReviewLimitUi, getHumanReviewRunUi } from "./task-human-review-ui.js";
 import type { TaskCardBlockers, TaskBlockerRef } from "./task-blockers.js";
 import { formatControllerTaskTitle } from "./task-display.js";
 
@@ -206,6 +206,7 @@ function TaskCardInner({ task, blockers, assignedAgent, activeAgent, idleAgents,
   const activeHumanReviewAgent =
     activeAgent && activeAgent.id !== task.assigned_agent_id ? activeAgent : null;
   const humanReviewRunUi = getHumanReviewRunUi(task, activeHumanReviewAgent);
+  const humanReviewLimitUi = getHumanReviewLimitUi(task);
   const displayTitle = formatControllerTaskTitle(task);
 
   return (
@@ -361,6 +362,18 @@ function TaskCardInner({ task, blockers, assignedAgent, activeAgent, idleAgents,
               {humanReviewRunUi.badge.label}
             </span>
           )}
+          {humanReviewLimitUi && (
+            <span style={{
+              padding: "2px 6px",
+              background: humanReviewLimitUi.badge.background,
+              color: humanReviewLimitUi.badge.color,
+              borderRadius: "4px",
+              fontSize: "10px",
+              fontWeight: 600,
+            }}>
+              {humanReviewLimitUi.badge.label}
+            </span>
+          )}
           <span style={{
             display: "inline-flex",
             alignItems: "center",
@@ -479,11 +492,11 @@ function TaskCardInner({ task, blockers, assignedAgent, activeAgent, idleAgents,
           }}
         >
           <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--status-human-review)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
-            Human Review Required
+            {humanReviewLimitUi ? humanReviewLimitUi.banner.label : "Human Review Required"}
           </div>
-          {feedbackUi?.cardDescription && (
+          {(humanReviewLimitUi?.banner.description ?? feedbackUi?.cardDescription) && (
             <div style={{ fontSize: "10px", color: "var(--text-secondary)", marginBottom: "6px", lineHeight: 1.4 }}>
-              {feedbackUi.cardDescription}
+              {humanReviewLimitUi?.banner.description ?? feedbackUi?.cardDescription}
             </div>
           )}
           <div style={{ display: "flex", gap: "6px" }}>

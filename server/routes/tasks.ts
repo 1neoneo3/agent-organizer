@@ -59,7 +59,11 @@ import {
   TASK_OVERRIDABLE_KEYS,
   validateOverridesPatch,
 } from "../domain/task-settings.js";
-import { recordHumanReviewAutoMarker } from "../domain/human-review-auto.js";
+import {
+  getLatestHumanReviewAutoStatus,
+  getLatestHumanReviewAutoStatuses,
+  recordHumanReviewAutoMarker,
+} from "../domain/human-review-auto.js";
 import { reconcileControllerDirective } from "../controller/orchestrator.js";
 import {
   fetchControllerParentsByDirectiveIds,
@@ -673,6 +677,12 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
         parentTitleByNumber.set(parent.task_number, parent.title);
       }
     }
+    const humanReviewStatusByTaskId = getLatestHumanReviewAutoStatuses(
+      db,
+      rows
+        .map((raw) => (raw as { id?: unknown }).id)
+        .filter((id): id is string => typeof id === "string"),
+    );
 
     return rows.map((raw, index) => {
       const r = raw as {
@@ -697,6 +707,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       out.split_index = r.split_index ?? deriveSplitIndex(r._desc_head ?? null);
       out.child_task_numbers = deriveChildTaskNumbers(r._result_head ?? null);
       out.has_refinement_plan = Boolean(r.has_refinement_plan);
+      out.human_review_auto_status = typeof r.id === "string" ? humanReviewStatusByTaskId.get(r.id) ?? null : null;
       delete out._desc_head;
       delete out._result_head;
       return out;
@@ -808,6 +819,7 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
       parent_task_number: resolvedParentNumber,
       parent_task_title: parentTitle,
       split_index: splitIndex,
+      human_review_auto_status: getLatestHumanReviewAutoStatus(db, task.id as string),
     });
   });
 
@@ -1445,6 +1457,9 @@ export function createTasksRouter(ctx: RuntimeContext, deps: TasksRouterDeps = {
     db.prepare(
       "INSERT INTO task_logs (task_id, kind, message) VALUES (?, 'system', ?)"
     ).run(task.id, `${isRefinement ? "Refinement plan" : "Human review"} approved. Advancing to ${next}.`);
+    if (!isRefinement) {
+      recordHumanReviewAutoMarker(db, task.id, "CLEARED", "Approved by human reviewer.");
+    }
 
     const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(task.id) as unknown as Task;
     approvedTaskForSpawn = updatedTask;

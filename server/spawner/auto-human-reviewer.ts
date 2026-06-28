@@ -61,12 +61,19 @@ export async function triggerAutoHumanReview(
   const maxIterations = resolveMaxIterations(db, currentTask.id);
   const iterations = countAutoHumanReviewIterations(db, currentTask.id);
   if (iterations >= maxIterations) {
+    const now = Date.now();
     recordHumanReviewAutoMarker(db, currentTask.id, "EXHAUSTED");
+    db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").run(now, currentTask.id);
     logSystem(
       db,
       currentTask.id,
       `Auto Human Review stopped: iterations (${iterations}) reached max (${maxIterations}). Leaving task in human_review for manual decision.`,
     );
+    ws.broadcast("task_update", {
+      id: currentTask.id,
+      updated_at: now,
+      human_review_auto_status: "exhausted",
+    });
     return;
   }
 

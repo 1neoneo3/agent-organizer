@@ -67,6 +67,7 @@ export interface Task {
   completed_at: number | null;
   last_heartbeat_at?: number | null;
   auto_respawn_count: number;
+  human_review_auto_status?: "started" | "cleared" | "awaiting_human" | "exhausted" | null;
   created_at: number;
   updated_at: number;
 }

@@ -749,3 +749,42 @@ describe("POST /tasks/:id/approve refinement implementer assignment", () => {
     }
   });
 });
+
+describe("POST /tasks/:id/approve human review", () => {
+  it("clears exhausted auto human review state after manual approval", async () => {
+    const db = initializeDb(":memory:");
+    const now = Date.now();
+    db.prepare(
+      `INSERT INTO tasks (
+        id, title, description, assigned_agent_id, status, task_size, task_number,
+        created_at, updated_at
+      ) VALUES (?, 'Approve human review', 'Approve human review test', NULL, 'human_review', 'medium', '#720', ?, ?)`,
+    ).run("task-human-review-approve", now, now);
+    db.prepare(
+      "INSERT INTO task_logs (task_id, kind, message, stage, created_at) VALUES (?, 'system', ?, 'human_review', ?)",
+    ).run("task-human-review-approve", "[HUMAN_REVIEW_AUTO:EXHAUSTED] iterations reached max", now - 10_000);
+
+    const { server, baseUrl, events } = await startServer(db, {});
+
+    try {
+      const response = await fetch(`${baseUrl}/tasks/task-human-review-approve/approve`, { method: "POST" });
+      assert.equal(response.status, 200);
+
+      const task = db.prepare("SELECT status FROM tasks WHERE id = ?").get("task-human-review-approve") as { status: string };
+      assert.equal(task.status, "done");
+
+      const latestMarker = db.prepare(
+        "SELECT message FROM task_logs WHERE task_id = ? AND kind = 'system' AND message LIKE '[HUMAN_REVIEW_AUTO:%' ORDER BY created_at DESC, id DESC LIMIT 1",
+      ).get("task-human-review-approve") as { message: string };
+      assert.match(latestMarker.message, /^\[HUMAN_REVIEW_AUTO:CLEARED\]/);
+
+      const taskUpdate = events.find((event) => event.type === "task_update");
+      assert.ok(taskUpdate);
+      assert.equal((taskUpdate.payload as { status?: string }).status, "done");
+      assert.equal((taskUpdate.payload as { human_review_auto_status?: string }).human_review_auto_status, "cleared");
+    } finally {
+      await closeServer(server);
+      db.close();
+    }
+  });
+});
